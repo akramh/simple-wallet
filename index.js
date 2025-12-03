@@ -3,17 +3,27 @@ import { Wallet } from './wallet.js';
 import fs from 'fs';
 import qrcode from 'qrcode-terminal';
 import { ethers } from 'ethers';
+import chalk from 'chalk';
+import { validatePasswordLength, hasExistingWallets, needsMigration, encryptMnemonic } from './crypto-utils.js';
+import * as ui from './ui-helpers.js';
 
 const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
 const wallet = new Wallet(config);
 
+// Global password cache (in-memory only)
+let masterPassword = null;
+let currentWalletName = null;
+
 async function main() {
-  console.log('=================================');
-  console.log('    Simple Crypto Wallet');
-  console.log('=================================');
-  console.log(`Network: ${config.networks[config.network].name}\n`);
+  ui.clearScreen();
+  ui.showHeader(null, null, config.networks[config.network].name);
 
   await wallet.initialize();
+
+  // Check if migration is needed
+  if (needsMigration()) {
+    await migrateExistingWallets();
+  }
 
   const existingWallets = wallet.getAllWallets();
   const walletNames = Object.keys(existingWallets);
@@ -25,39 +35,165 @@ async function main() {
   }
 }
 
+// Password management functions
+async function promptMasterPasswordSetup() {
+  console.log('\n═══════════════════════════════════════');
+  console.log('    🔐 Master Password Setup');
+  console.log('═══════════════════════════════════════');
+  console.log('\nThis password will encrypt ALL your wallets.');
+  console.log('⚠️  You CANNOT recover your password if you forget it!');
+  console.log('Minimum 8 characters required.\n');
+
+  while (true) {
+    const { password } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'password',
+        message: 'Create master password:',
+        mask: '*'
+      }
+    ]);
+
+    if (!validatePasswordLength(password)) {
+      console.log('\n❌ Password must be at least 8 characters\n');
+      continue;
+    }
+
+    const { confirm } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'confirm',
+        message: 'Confirm master password:',
+        mask: '*'
+      }
+    ]);
+
+    if (password !== confirm) {
+      console.log('\n❌ Passwords do not match. Please try again.\n');
+      continue;
+    }
+
+    masterPassword = password;
+    console.log('\n✅ Master password set successfully!\n');
+    return password;
+  }
+}
+
+async function promptMasterPassword() {
+  const { password } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'password',
+      message: 'Enter master password:',
+      mask: '*'
+    }
+  ]);
+
+  return password;
+}
+
+async function ensureMasterPassword() {
+  if (!masterPassword) {
+    masterPassword = await promptMasterPassword();
+  }
+  return masterPassword;
+}
+
+async function migrateExistingWallets() {
+  console.log('\n⚠️  MIGRATION REQUIRED\n');
+  console.log('Your wallets are stored in plaintext format.');
+  console.log('For security, they need to be encrypted with a password.\n');
+
+  const { proceed } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'proceed',
+      message: 'Proceed with migration?',
+      default: true
+    }
+  ]);
+
+  if (!proceed) {
+    console.log('\n❌ Migration cancelled. Exiting for security.\n');
+    process.exit(0);
+  }
+
+  try {
+    // Set up master password
+    const password = await promptMasterPasswordSetup();
+
+    // Read existing wallets
+    const data = fs.readFileSync('./wallets.json', 'utf8');
+    const wallets = JSON.parse(data);
+
+    // Backup original file
+    fs.writeFileSync('./wallets.json.backup', data);
+    console.log('✅ Backup created: wallets.json.backup\n');
+
+    // Migrate each wallet
+    let migratedCount = 0;
+    for (const [name, walletData] of Object.entries(wallets)) {
+      if (walletData.mnemonic && !walletData.encryptedMnemonic) {
+        console.log(`Encrypting wallet: ${name}...`);
+
+        const { encrypted, salt } = encryptMnemonic(walletData.mnemonic, password);
+
+        wallets[name].encryptedMnemonic = encrypted;
+        wallets[name].salt = salt;
+        delete wallets[name].mnemonic; // Remove plaintext
+
+        migratedCount++;
+      }
+    }
+
+    // Save encrypted wallets
+    fs.writeFileSync('./wallets.json', JSON.stringify(wallets, null, 2));
+
+    console.log(`\n✅ Successfully encrypted ${migratedCount} wallet(s)!`);
+    console.log('Original backup: wallets.json.backup\n');
+
+  } catch (error) {
+    console.log(`\n❌ Migration error: ${error.message}\n`);
+    process.exit(1);
+  }
+}
+
 async function selectWalletMenu(existingWallets) {
+  ui.clearScreen();
+  ui.showHeader();
+
+  ui.showSection('Select Wallet');
+  console.log('');
+
   const walletChoices = Object.keys(existingWallets).map(name => {
     const walletData = existingWallets[name];
 
-    // Always derive Account 1's address from mnemonic to ensure consistency
-    // Using standard BIP-44 derivation path: m/44'/60'/0'/0/0
+    // Get primary address from accounts (already saved)
     let primaryAddress = 'No accounts';
-    if (walletData.mnemonic) {
-      try {
-        const path = `m/44'/60'/0'/0/0`;
-        const hdWallet = ethers.HDNodeWallet.fromPhrase(walletData.mnemonic, "", path);
-        primaryAddress = hdWallet.address.toLowerCase();
-      } catch (error) {
-        primaryAddress = 'Error deriving address';
-      }
+    if (walletData.accounts && walletData.accounts[0]) {
+      primaryAddress = walletData.accounts[0].address.substring(0, 12) + '...';
     }
 
     const accountCount = walletData.accounts ? Object.keys(walletData.accounts).length : 1;
 
-    return {
-      name: `${name} - ${primaryAddress} (${accountCount} account${accountCount !== 1 ? 's' : ''})`,
-      value: name
-    };
+    return ui.menuChoice(
+      name,
+      `${primaryAddress} (${accountCount} account${accountCount !== 1 ? 's' : ''})`,
+      name
+    );
   });
 
-  walletChoices.push({ name: '➕ Add New Wallet', value: 'add_new' });
-  walletChoices.push({ name: '❌ Exit', value: 'exit' });
+  walletChoices.push(new inquirer.Separator());
+  walletChoices.push(ui.menuChoice('Add New Wallet', '', 'add_new'));
+  walletChoices.push(ui.menuChoice('Exit', '', 'exit'));
 
   const { selectedWallet } = await inquirer.prompt([
     {
       type: 'list',
       name: 'selectedWallet',
       message: 'Select a wallet:',
+      loop: false,
+      pageSize: 25,
       choices: walletChoices
     }
   ]);
@@ -65,32 +201,53 @@ async function selectWalletMenu(existingWallets) {
   if (selectedWallet === 'add_new') {
     await initialMenu();
   } else if (selectedWallet === 'exit') {
-    console.log('Goodbye!');
+    ui.showSuccess('Goodbye!');
     process.exit(0);
   } else {
-    const walletData = wallet.loadWallet(selectedWallet);
-    if (walletData) {
-      console.log(`\n✅ Loaded wallet: ${walletData.address}\n`);
-      await mainMenu(selectedWallet);
-    } else {
-      console.log('\n❌ Failed to load wallet\n');
-      await selectWalletMenu(existingWallets);
+    // Load wallet with password
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+      try {
+        const password = await ensureMasterPassword();
+        const walletData = wallet.loadWallet(selectedWallet, password);
+        if (walletData) {
+          ui.showSuccess(`Loaded wallet: ${walletData.address}`);
+          await mainMenu(selectedWallet);
+          return;
+        }
+      } catch (error) {
+        attempts++;
+        ui.showError(`Incorrect password (${attempts}/${maxAttempts})`, []);
+        masterPassword = null; // Clear cached password
+
+        if (attempts >= maxAttempts) {
+          ui.showWarning('Too many failed attempts. Returning to menu.');
+          await selectWalletMenu(existingWallets);
+          return;
+        }
+      }
     }
   }
 }
 
 async function initialMenu() {
+  ui.showInfo('No wallet loaded. Create a new wallet or import an existing one.');
+  console.log('');
+
   const { action } = await inquirer.prompt([
     {
       type: 'list',
       name: 'action',
-      message: 'What would you like to do?',
+      message: 'Select an action:',
       choices: [
-        { name: '🆕 Create New Wallet', value: 'create' },
-        { name: '📥 Import Existing Wallet', value: 'import' },
-        { name: '⚙️  Change Network', value: 'network' },
-        { name: '🔙 Back to Wallet Selection', value: 'back' },
-        { name: '❌ Exit', value: 'exit' }
+        ui.menuChoice('Create New Wallet', 'Generate a new wallet', 'create'),
+        ui.menuChoice('Import Existing Wallet', 'Restore from recovery phrase', 'import'),
+        new inquirer.Separator(''),
+        ui.menuChoice('Change Network', 'Switch between networks', 'network'),
+        ui.menuChoice('Back to Wallet Selection', '', 'back'),
+        ui.menuChoice('Exit', '', 'exit')
       ]
     }
   ]);
@@ -121,20 +278,30 @@ async function initialMenu() {
 }
 
 async function createWallet() {
-  console.log('\n🔐 Creating new wallet...\n');
+  ui.clearScreen();
+  ui.showHeader();
+  ui.showLoading('Creating new wallet...');
 
-  const walletData = wallet.createNewWallet();
+  // Check if first-time setup
+  const isFirstWallet = !hasExistingWallets();
 
-  console.log('✅ Wallet created successfully!\n');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('📍 Address:', walletData.address);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('\n🔑 IMPORTANT: Save your mnemonic phrase!');
-  console.log('This is the ONLY way to recover your wallet.\n');
-  console.log('Mnemonic Phrase:');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log(walletData.mnemonic);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+  // Get password (setup or use cached)
+  let password;
+  if (isFirstWallet) {
+    password = await promptMasterPasswordSetup();
+  } else {
+    password = await ensureMasterPassword();
+  }
+
+  const walletData = wallet.createNewWallet(password);
+
+  ui.clearScreen();
+  ui.showHeader();
+  ui.showSuccess('Wallet created successfully!');
+  console.log('');
+
+  ui.showAccountInfo(walletData.address);
+  ui.showMnemonic(walletData.mnemonic);
 
   const answers = await inquirer.prompt([
     {
@@ -173,6 +340,17 @@ async function createWallet() {
 async function importWallet() {
   console.log('\n📥 Import Wallet\n');
 
+  // Check if first-time setup
+  const isFirstWallet = !hasExistingWallets();
+
+  // Get password (setup or use cached)
+  let password;
+  if (isFirstWallet) {
+    password = await promptMasterPasswordSetup();
+  } else {
+    password = await ensureMasterPassword();
+  }
+
   const { mnemonic } = await inquirer.prompt([
     {
       type: 'input',
@@ -189,7 +367,7 @@ async function importWallet() {
   ]);
 
   try {
-    const walletData = wallet.importWallet(mnemonic.trim());
+    const walletData = wallet.importWallet(mnemonic.trim(), password);
     console.log('\n✅ Wallet imported successfully!');
     console.log('📍 Address:', walletData.address, '\n');
 
@@ -231,27 +409,43 @@ async function importWallet() {
   }
 }
 
-async function mainMenu(currentWalletName) {
+async function mainMenu(walletName) {
+  currentWalletName = walletName;
   const currentAddress = wallet.getAddress();
   const accountIndex = wallet.currentAccountIndex;
 
-  console.log(`\n💼 Current Account: Account ${accountIndex + 1} (${currentAddress.substring(0, 10)}...)`);
+  ui.clearScreen();
+  ui.showHeader(walletName, accountIndex, config.networks[config.network].name, currentAddress);
 
   const { action } = await inquirer.prompt([
     {
       type: 'list',
       name: 'action',
-      message: 'What would you like to do?',
+      message: 'Select an action:',
+      loop: false,
+      pageSize: 25,
       choices: [
-        { name: '💰 Check Balance', value: 'balance' },
-        { name: '📤 Send Crypto', value: 'send' },
-        { name: '📥 Receive (Show Address)', value: 'receive' },
-        { name: '👤 Manage Accounts', value: 'accounts' },
-        { name: '🔑 Show Private Key & Secret Phrase', value: 'secrets' },
-        { name: '⚙️  Change Network', value: 'network' },
-        { name: '🔄 Switch Wallet', value: 'switch' },
-        { name: '🗑️  Delete Current Wallet', value: 'delete' },
-        { name: '❌ Exit', value: 'exit' }
+        new inquirer.Separator(ui.menuSeparator().line),
+        new inquirer.Separator('  ACCOUNT ACTIONS'),
+        new inquirer.Separator(ui.menuSeparator().line),
+        ui.menuChoice('Check Balance', 'View your current balance', 'balance'),
+        ui.menuChoice('Send Transaction', 'Send ETH to another address', 'send'),
+        ui.menuChoice('Receive', 'Show your address & QR code', 'receive'),
+        new inquirer.Separator(''),
+        new inquirer.Separator(ui.menuSeparator().line),
+        new inquirer.Separator('  WALLET MANAGEMENT'),
+        new inquirer.Separator(ui.menuSeparator().line),
+        ui.menuChoice('Manage Accounts', 'Switch or create accounts', 'accounts'),
+        ui.menuChoice('Switch Wallet', 'Load a different wallet', 'switch'),
+        new inquirer.Separator(''),
+        new inquirer.Separator(ui.menuSeparator().line),
+        new inquirer.Separator('  ADVANCED'),
+        new inquirer.Separator(ui.menuSeparator().line),
+        ui.menuChoice('Show Secrets', 'View private key & mnemonic', 'secrets'),
+        ui.menuChoice('Change Network', 'Switch between networks', 'network'),
+        ui.menuChoice('Delete Wallet', 'Remove current wallet', 'delete'),
+        new inquirer.Separator(''),
+        ui.menuChoice('Exit', '', 'exit')
       ]
     }
   ]);
@@ -288,35 +482,57 @@ async function mainMenu(currentWalletName) {
 }
 
 async function checkBalance(currentWalletName) {
+  const address = wallet.getAddress();
+  ui.clearScreen();
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
+
   try {
-    const address = wallet.getAddress();
-    console.log('\n💰 Checking balance...');
-    console.log('⏳ Please wait, fetching data from blockchain...\n');
+    ui.showLoading('Fetching balance from blockchain...');
+    console.log('');
 
     const balance = await wallet.getBalance();
 
-    console.log('✅ Balance retrieved successfully!\n');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('📍 Address:', address);
-    console.log('💵 Balance:', balance, 'ETH');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    ui.showSuccess('Balance retrieved successfully!');
+    ui.showAccountInfo(address, balance);
+
   } catch (error) {
-    console.log('\n❌ Error:', error.message);
-    console.log('\n💡 Tip: If requests keep timing out, try changing the network RPC endpoint in config.json\n');
+    ui.showError(
+      error.message,
+      [
+        'Check your internet connection',
+        'Verify the network RPC endpoint in config.json',
+        'Try switching to a different network'
+      ]
+    );
   }
+
+  await inquirer.prompt([{
+    type: 'input',
+    name: 'continue',
+    message: 'Press Enter to continue...'
+  }]);
 
   await mainMenu(currentWalletName);
 }
 
 async function sendCrypto(currentWalletName) {
-  console.log('\n📤 Send Crypto\n');
+  const address = wallet.getAddress();
+  ui.clearScreen();
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
+
+  ui.showSection('Send Transaction');
+  ui.showInfo('Press Ctrl+C to cancel at any time');
+  console.log('');
 
   const answers = await inquirer.prompt([
     {
       type: 'input',
       name: 'toAddress',
-      message: 'Recipient address:',
+      message: 'Recipient address (or leave empty to cancel):',
       validate: (input) => {
+        if (!input || input.trim() === '') {
+          return true; // Allow empty to cancel
+        }
         if (!input.startsWith('0x') || input.length !== 42) {
           return 'Please enter a valid Ethereum address';
         }
@@ -327,7 +543,11 @@ async function sendCrypto(currentWalletName) {
       type: 'input',
       name: 'amount',
       message: 'Amount (in ETH):',
+      when: (answers) => answers.toAddress && answers.toAddress.trim() !== '',
       validate: (input) => {
+        if (!input || input.trim() === '') {
+          return true; // Allow empty to cancel
+        }
         const num = parseFloat(input);
         if (isNaN(num) || num <= 0) {
           return 'Please enter a valid amount';
@@ -339,26 +559,46 @@ async function sendCrypto(currentWalletName) {
       type: 'confirm',
       name: 'confirm',
       message: (answers) => `Send ${answers.amount} ETH to ${answers.toAddress}?`,
+      when: (answers) => answers.toAddress && answers.toAddress.trim() !== '' && answers.amount && answers.amount.trim() !== '',
       default: false
     }
   ]);
 
-  if (!answers.confirm) {
-    console.log('\n❌ Transaction cancelled\n');
+  // Check if user cancelled
+  if (!answers.toAddress || answers.toAddress.trim() === '' ||
+      !answers.amount || answers.amount.trim() === '' ||
+      !answers.confirm) {
+    ui.showWarning('Transaction cancelled');
     await mainMenu(currentWalletName);
     return;
   }
 
   try {
+    ui.showLoading('Sending transaction to the network...');
     const receipt = await wallet.sendTransaction(answers.toAddress, answers.amount);
-    console.log('\n✅ Transaction confirmed!');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('📋 Hash:', receipt.hash);
-    console.log('📦 Block:', receipt.blockNumber);
-    console.log('⛽ Gas Used:', receipt.gasUsed);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    ui.showSuccess('Transaction confirmed!');
+    console.log('');
+    ui.showTransactionDetails(receipt, config.network);
+    console.log('');
+
+    await inquirer.prompt([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
   } catch (error) {
-    console.log('\n❌ Transaction failed:', error.message, '\n');
+    ui.showError(`Transaction failed: ${error.message}`, [
+      'Verify you have sufficient balance for the transaction and gas fees',
+      'Check that the recipient address is valid',
+      'Ensure your network connection is stable'
+    ]);
+
+    await inquirer.prompt([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
   }
 
   await mainMenu(currentWalletName);
@@ -366,84 +606,95 @@ async function sendCrypto(currentWalletName) {
 
 async function showReceiveAddress(currentWalletName) {
   const address = wallet.getAddress();
+  ui.clearScreen();
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
-  console.log('\n📥 Receive Crypto\n');
-  console.log('Share this address to receive ETH:\n');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log(address);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+  ui.showSection('Receive Crypto');
+  ui.showInfo('Share this address to receive ETH');
+  console.log('');
 
-  console.log('Scan QR Code:\n');
+  ui.showSeparator();
+  console.log(ui.formatAddress(address));
+  ui.showSeparator();
+
+  console.log('\n' + chalk.white.bold('Scan QR Code:\n'));
   qrcode.generate(address, { small: true });
   console.log('');
+
+  await inquirer.prompt([{
+    type: 'input',
+    name: 'continue',
+    message: 'Press Enter to continue...'
+  }]);
 
   await mainMenu(currentWalletName);
 }
 
 async function showWalletSecrets(currentWalletName) {
-  console.log('\n🔑 Wallet Secrets\n');
+  const address = wallet.getAddress();
+  ui.clearScreen();
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
-  const { confirmShow } = await inquirer.prompt([
-    {
-      type: 'confirm',
-      name: 'confirmShow',
-      message: '⚠️  WARNING: This will display sensitive information. Make sure no one is watching your screen. Continue?',
-      default: false
-    }
-  ]);
+  ui.showWarning('This will display sensitive information');
+  ui.showWarning('Make sure no one is watching your screen');
 
-  if (!confirmShow) {
-    console.log('\n❌ Cancelled\n');
-    await mainMenu(currentWalletName);
-    return;
-  }
+  // Require password re-entry for security
+  const password = await promptMasterPassword();
 
   try {
-    const address = wallet.getAddress();
-    const privateKey = wallet.wallet.privateKey;
-    const mnemonic = wallet.mnemonic;
+    const privateKey = wallet.getPrivateKey(password);
+    const mnemonic = wallet.getMnemonic(password);
 
-    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('⚠️  KEEP THIS INFORMATION SECRET AND SECURE!');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    ui.clearScreen();
+    ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
-    console.log('Wallet Name:', currentWalletName || 'Unknown');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('📍 Address:');
-    console.log(address);
-    console.log('\n🔐 Private Key:');
-    console.log(privateKey);
-    console.log('\n🔑 Secret Phrase (12 words):');
-    console.log(mnemonic);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    console.log(chalk.red.bold('⚠  KEEP THIS INFORMATION SECRET AND SECURE!\n'));
 
-    console.log('⚠️  SECURITY REMINDERS:');
-    console.log('• Never share your private key or secret phrase with anyone');
-    console.log('• Anyone with these can access your funds');
-    console.log('• Store them securely offline');
-    console.log('• Clear your terminal history if needed\n');
+    ui.showSeparator();
+    console.log(chalk.gray('Wallet:       ') + chalk.white(currentWalletName || 'Unknown'));
+    console.log(chalk.gray('Address:      ') + ui.formatAddress(address));
+    console.log(chalk.gray('Private Key:  ') + ui.formatTxHash(privateKey));
+    ui.showSeparator();
+
+    console.log('');
+    ui.showMnemonic(mnemonic);
+
+    console.log(chalk.red.bold('⚠  SECURITY REMINDERS'));
+    console.log(chalk.white('  • Never share your private key or secret phrase with anyone'));
+    console.log(chalk.white('  • Anyone with these can access your funds'));
+    console.log(chalk.white('  • Store them securely offline'));
+    console.log(chalk.white('  • Clear your terminal history if needed\n'));
 
     const { whatNext } = await inquirer.prompt([
       {
         type: 'list',
         name: 'whatNext',
         message: 'What would you like to do?',
+        loop: false,
         choices: [
-          { name: '🔙 Back to Main Menu', value: 'back' },
-          { name: '❌ Exit (Clear Screen)', value: 'exit' }
+          ui.menuChoice('Back to Main Menu', '', 'back'),
+          ui.menuChoice('Exit (Clear Screen)', '', 'exit')
         ]
       }
     ]);
 
     if (whatNext === 'exit') {
-      console.clear();
-      console.log('\n✅ Screen cleared. Goodbye!\n');
+      ui.clearScreen();
+      ui.showSuccess('Screen cleared. Goodbye!');
       process.exit(0);
     } else {
       await mainMenu(currentWalletName);
     }
   } catch (error) {
-    console.log('\n❌ Error retrieving wallet secrets:', error.message, '\n');
+    ui.showError(`Error retrieving wallet secrets: ${error.message}`, [
+      'Verify your password is correct',
+      'Ensure the wallet is properly loaded'
+    ]);
+    await inquirer.prompt([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
     await mainMenu(currentWalletName);
   }
 }

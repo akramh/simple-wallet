@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import fs from 'fs';
+import { encryptMnemonic, decryptMnemonic } from './crypto-utils.js';
 
 export class Wallet {
   constructor(config) {
@@ -7,6 +8,8 @@ export class Wallet {
     this.wallet = null;
     this.provider = null;
     this.mnemonic = null;
+    this.encryptedMnemonic = null;
+    this.salt = null;
     this.currentAccountIndex = 0;
   }
 
@@ -31,10 +34,15 @@ export class Wallet {
     }
   }
 
-  createNewWallet() {
+  createNewWallet(password) {
     // Create a random mnemonic using ethers
     const randomWallet = ethers.Wallet.createRandom();
     this.mnemonic = randomWallet.mnemonic.phrase;
+
+    // Encrypt mnemonic with password
+    const { encrypted, salt } = encryptMnemonic(this.mnemonic, password);
+    this.encryptedMnemonic = encrypted;
+    this.salt = salt;
 
     // Derive Account 1 (index 0) using the standard BIP-44 path
     this.currentAccountIndex = 0;
@@ -47,9 +55,15 @@ export class Wallet {
     };
   }
 
-  importWallet(mnemonic, accountIndex = 0) {
+  importWallet(mnemonic, password, accountIndex = 0) {
     try {
       this.mnemonic = mnemonic;
+
+      // Encrypt mnemonic with password
+      const { encrypted, salt } = encryptMnemonic(this.mnemonic, password);
+      this.encryptedMnemonic = encrypted;
+      this.salt = salt;
+
       this.currentAccountIndex = accountIndex;
       this.wallet = this._deriveAccount(accountIndex).connect(this.provider);
 
@@ -151,6 +165,10 @@ export class Wallet {
       throw new Error('No wallet loaded');
     }
 
+    if (!this.encryptedMnemonic || !this.salt) {
+      throw new Error('Wallet not properly encrypted');
+    }
+
     let wallets = {};
     try {
       if (fs.existsSync('wallets.json')) {
@@ -167,7 +185,8 @@ export class Wallet {
     // Get or create wallet entry
     if (!wallets[walletName]) {
       wallets[walletName] = {
-        mnemonic: this.mnemonic,
+        encryptedMnemonic: this.encryptedMnemonic,
+        salt: this.salt,
         createdAt: new Date().toISOString(),
         accounts: {}
       };
@@ -189,19 +208,42 @@ export class Wallet {
     return walletName;
   }
 
-  loadWallet(walletName, accountIndex = null) {
+  loadWallet(walletName, password, accountIndex = null) {
     try {
       const wallets = JSON.parse(fs.readFileSync('wallets.json', 'utf8'));
 
       if (walletName && wallets[walletName]) {
         const walletData = wallets[walletName];
+
+        // Decrypt mnemonic (throws if password wrong)
+        const mnemonic = decryptMnemonic(
+          walletData.encryptedMnemonic,
+          password,
+          walletData.salt
+        );
+
+        // Store encrypted version and salt
+        this.encryptedMnemonic = walletData.encryptedMnemonic;
+        this.salt = walletData.salt;
+        this.mnemonic = mnemonic;
+
         const indexToLoad = accountIndex !== null ? accountIndex : (walletData.currentAccountIndex || 0);
-        return this.importWallet(walletData.mnemonic, indexToLoad);
+        this.currentAccountIndex = indexToLoad;
+        this.wallet = this._deriveAccount(indexToLoad).connect(this.provider);
+
+        return {
+          address: this.wallet.address.toLowerCase(),
+          mnemonic: this.mnemonic,
+          privateKey: this.wallet.privateKey
+        };
       }
 
       return null;
     } catch (error) {
-      return null;
+      if (error.message && error.message.includes('Unsupported state or unable to authenticate data')) {
+        throw new Error('Incorrect password');
+      }
+      throw error;
     }
   }
 
@@ -237,5 +279,30 @@ export class Wallet {
     } catch (error) {
       return false;
     }
+  }
+
+  getPrivateKey(password) {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+
+    if (!this.encryptedMnemonic || !this.salt) {
+      throw new Error('No encrypted wallet loaded');
+    }
+
+    // Verify password by attempting to decrypt
+    decryptMnemonic(this.encryptedMnemonic, password, this.salt);
+
+    // Return the private key from the already-derived wallet
+    return this.wallet.privateKey;
+  }
+
+  getMnemonic(password) {
+    if (!this.encryptedMnemonic || !this.salt) {
+      throw new Error('No encrypted wallet loaded');
+    }
+
+    // Decrypt and return mnemonic
+    return decryptMnemonic(this.encryptedMnemonic, password, this.salt);
   }
 }
