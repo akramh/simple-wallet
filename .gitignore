@@ -2,7 +2,9 @@ node_modules/
 wallet.json
 wallets.json
 wallets.json.backup
+wallets.json.tmp
 wallet-key
+backup-*.json
 *.log
 .env
 .claude/

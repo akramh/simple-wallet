@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import fs from 'fs';
-import { encryptMnemonic, decryptMnemonic } from './crypto-utils.js';
+import { encryptMnemonic, decryptMnemonic, validateMnemonic, safeWriteJSON, safeReadJSON } from './crypto-utils.js';
 
 export class Wallet {
   constructor(config) {
@@ -13,6 +13,38 @@ export class Wallet {
     this.currentAccountIndex = 0;
   }
 
+  /**
+   * Retry RPC requests with exponential backoff
+   * @param {Function} operation - Async function to retry
+   * @param {number} maxRetries - Maximum number of retries
+   * @param {number} baseDelay - Base delay in ms
+   * @returns {Promise} - Result of operation
+   */
+  async _retryRpcRequest(operation, maxRetries = 3, baseDelay = 1000) {
+    let lastError;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const result = await Promise.race([
+          operation(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Request timeout')), 30000)
+          )
+        ]);
+        return result;
+      } catch (error) {
+        lastError = error;
+
+        if (attempt < maxRetries - 1) {
+          const delay = baseDelay * Math.pow(2, attempt);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
   async initialize() {
     const networkConfig = this.config.networks[this.config.network];
     this.provider = new ethers.JsonRpcProvider(
@@ -20,14 +52,13 @@ export class Wallet {
       networkConfig.chainId
     );
 
-    // Test connection
+    // Test connection with retry
     try {
-      await Promise.race([
-        this.provider.getBlockNumber(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Connection timeout')), 5000)
-        )
-      ]);
+      await this._retryRpcRequest(
+        () => this.provider.getBlockNumber(),
+        2,
+        2000
+      );
     } catch (error) {
       console.log('\n⚠️  Warning: RPC connection slow or unavailable');
       console.log('Network operations may take longer than usual\n');
@@ -56,8 +87,15 @@ export class Wallet {
   }
 
   importWallet(mnemonic, password, accountIndex = 0) {
+    // Validate mnemonic format first
+    const normalizedMnemonic = mnemonic.trim().toLowerCase();
+
+    if (!validateMnemonic(normalizedMnemonic)) {
+      throw new Error('Invalid mnemonic phrase format. Must be 12, 15, 18, 21, or 24 words.');
+    }
+
     try {
-      this.mnemonic = mnemonic;
+      this.mnemonic = normalizedMnemonic;
 
       // Encrypt mnemonic with password
       const { encrypted, salt } = encryptMnemonic(this.mnemonic, password);
@@ -73,7 +111,7 @@ export class Wallet {
         privateKey: this.wallet.privateKey
       };
     } catch (error) {
-      throw new Error('Invalid mnemonic phrase');
+      throw new Error('Invalid mnemonic phrase or unable to derive wallet');
     }
   }
 
@@ -113,12 +151,11 @@ export class Wallet {
     }
 
     try {
-      const balance = await Promise.race([
-        this.provider.getBalance(this.wallet.address),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Request timeout after 15 seconds')), 15000)
-        )
-      ]);
+      const balance = await this._retryRpcRequest(
+        () => this.provider.getBalance(this.wallet.address),
+        3,
+        1000
+      );
       return ethers.formatEther(balance);
     } catch (error) {
       if (error.message.includes('timeout')) {
@@ -141,22 +178,91 @@ export class Wallet {
     }
 
     try {
+      const value = ethers.parseEther(amount);
+
+      // 1. Check balance first
+      const balance = await this._retryRpcRequest(
+        () => this.provider.getBalance(this.wallet.address)
+      );
+
+      // 2. Estimate gas
+      let gasLimit;
+      let gasPrice;
+      try {
+        gasLimit = await this._retryRpcRequest(() =>
+          this.provider.estimateGas({
+            to: toAddress,
+            value: value,
+            from: this.wallet.address
+          })
+        );
+
+        // Add 20% buffer to gas limit
+        gasLimit = (gasLimit * 120n) / 100n;
+
+        // Get current gas price
+        const feeData = await this._retryRpcRequest(() =>
+          this.provider.getFeeData()
+        );
+        gasPrice = feeData.gasPrice;
+      } catch (gasError) {
+        // Fallback gas limit if estimation fails
+        gasLimit = 21000n;
+        gasPrice = ethers.parseUnits('20', 'gwei');
+      }
+
+      // 3. Calculate total cost (amount + gas)
+      const estimatedGasCost = gasLimit * gasPrice;
+      const totalCost = value + estimatedGasCost;
+
+      // 4. Validate sufficient balance
+      if (balance < totalCost) {
+        const balanceEth = ethers.formatEther(balance);
+        const neededEth = ethers.formatEther(totalCost);
+        const gasCostEth = ethers.formatEther(estimatedGasCost);
+        throw new Error(
+          `Insufficient balance. You have ${balanceEth} ETH but need ${neededEth} ETH (${amount} ETH + ~${gasCostEth} ETH gas)`
+        );
+      }
+
+      // 5. Send transaction
       const tx = await this.wallet.sendTransaction({
         to: toAddress,
-        value: ethers.parseEther(amount)
+        value: value,
+        gasLimit: gasLimit
       });
 
       console.log(`\nTransaction sent! Hash: ${tx.hash}`);
       console.log('Waiting for confirmation...');
 
-      const receipt = await tx.wait();
+      // 6. Wait for confirmation with timeout
+      const receipt = await this._retryRpcRequest(
+        () => tx.wait(),
+        5,
+        2000
+      );
+
       return {
         hash: receipt.hash,
         blockNumber: receipt.blockNumber,
         gasUsed: receipt.gasUsed.toString()
       };
     } catch (error) {
-      throw new Error(`Transaction failed: ${error.message}`);
+      // Provide more helpful error messages
+      if (error.message.includes('insufficient funds')) {
+        throw new Error('Insufficient funds for transaction');
+      }
+      if (error.message.includes('nonce')) {
+        throw new Error('Transaction nonce error. Please try again.');
+      }
+      if (error.message.includes('gas')) {
+        throw new Error(`Gas estimation failed: ${error.message}`);
+      }
+      if (error.code === 'CALL_EXCEPTION') {
+        throw new Error('Transaction would fail. Check recipient address and amount.');
+      }
+
+      throw error;
     }
   }
 
@@ -169,14 +275,8 @@ export class Wallet {
       throw new Error('Wallet not properly encrypted');
     }
 
-    let wallets = {};
-    try {
-      if (fs.existsSync('wallets.json')) {
-        wallets = JSON.parse(fs.readFileSync('wallets.json', 'utf8'));
-      }
-    } catch (error) {
-      wallets = {};
-    }
+    // Use safe read
+    const wallets = safeReadJSON('wallets.json');
 
     if (!walletName) {
       walletName = this.wallet.address.substring(0, 10);
@@ -201,7 +301,9 @@ export class Wallet {
     // Update current account
     wallets[walletName].currentAccountIndex = this.currentAccountIndex;
 
-    fs.writeFileSync('wallets.json', JSON.stringify(wallets, null, 2));
+    // Use safe write (atomic with backup)
+    safeWriteJSON('wallets.json', wallets);
+
     console.log(`\nWallet saved as "${walletName}"`);
     console.log('WARNING: Keep this file secure and back up your mnemonic phrase!');
 
@@ -210,7 +312,7 @@ export class Wallet {
 
   loadWallet(walletName, password, accountIndex = null) {
     try {
-      const wallets = JSON.parse(fs.readFileSync('wallets.json', 'utf8'));
+      const wallets = safeReadJSON('wallets.json');
 
       if (walletName && wallets[walletName]) {
         const walletData = wallets[walletName];
@@ -249,7 +351,7 @@ export class Wallet {
 
   getWalletAccounts(walletName) {
     try {
-      const wallets = JSON.parse(fs.readFileSync('wallets.json', 'utf8'));
+      const wallets = safeReadJSON('wallets.json');
       if (wallets[walletName] && wallets[walletName].accounts) {
         return wallets[walletName].accounts;
       }
@@ -261,10 +363,8 @@ export class Wallet {
 
   getAllWallets() {
     try {
-      if (!fs.existsSync('wallets.json')) {
-        return {};
-      }
-      return JSON.parse(fs.readFileSync('wallets.json', 'utf8'));
+      const wallets = safeReadJSON('wallets.json');
+      return wallets;
     } catch (error) {
       return {};
     }
@@ -272,12 +372,95 @@ export class Wallet {
 
   deleteWallet(walletName) {
     try {
-      const wallets = JSON.parse(fs.readFileSync('wallets.json', 'utf8'));
+      const wallets = safeReadJSON('wallets.json');
       delete wallets[walletName];
-      fs.writeFileSync('wallets.json', JSON.stringify(wallets, null, 2));
+      safeWriteJSON('wallets.json', wallets);
       return true;
     } catch (error) {
       return false;
+    }
+  }
+
+  /**
+   * Export wallet to encrypted backup file
+   * @param {string} walletName - Name of wallet to export
+   * @param {string} exportPath - Path to export file
+   * @returns {boolean} - Success status
+   */
+  exportWallet(walletName, exportPath) {
+    try {
+      const wallets = safeReadJSON('wallets.json');
+
+      if (!wallets[walletName]) {
+        throw new Error('Wallet not found');
+      }
+
+      const exportData = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        wallet: {
+          name: walletName,
+          ...wallets[walletName]
+        }
+      };
+
+      fs.writeFileSync(exportPath, JSON.stringify(exportData, null, 2));
+      return true;
+    } catch (error) {
+      throw new Error(`Export failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Import wallet from encrypted backup file
+   * @param {string} importPath - Path to import file
+   * @param {string} password - Password to verify wallet
+   * @returns {string} - Imported wallet name
+   */
+  importFromBackup(importPath, password) {
+    try {
+      const backupData = JSON.parse(fs.readFileSync(importPath, 'utf8'));
+
+      if (!backupData.wallet || !backupData.wallet.encryptedMnemonic) {
+        throw new Error('Invalid backup file format');
+      }
+
+      // Verify password can decrypt the wallet
+      try {
+        decryptMnemonic(
+          backupData.wallet.encryptedMnemonic,
+          password,
+          backupData.wallet.salt
+        );
+      } catch {
+        throw new Error('Incorrect password for backup file');
+      }
+
+      const wallets = safeReadJSON('wallets.json');
+      let walletName = backupData.wallet.name;
+
+      // Handle name conflicts
+      let counter = 1;
+      const originalName = walletName;
+      while (wallets[walletName]) {
+        walletName = `${originalName}_${counter}`;
+        counter++;
+      }
+
+      // Import wallet
+      wallets[walletName] = {
+        encryptedMnemonic: backupData.wallet.encryptedMnemonic,
+        salt: backupData.wallet.salt,
+        createdAt: backupData.wallet.createdAt,
+        accounts: backupData.wallet.accounts || {},
+        currentAccountIndex: backupData.wallet.currentAccountIndex || 0
+      };
+
+      safeWriteJSON('wallets.json', wallets);
+
+      return walletName;
+    } catch (error) {
+      throw new Error(`Import failed: ${error.message}`);
     }
   }
 

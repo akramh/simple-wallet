@@ -4,7 +4,7 @@ import fs from 'fs';
 import qrcode from 'qrcode-terminal';
 import { ethers } from 'ethers';
 import chalk from 'chalk';
-import { validatePasswordLength, hasExistingWallets, needsMigration, encryptMnemonic } from './crypto-utils.js';
+import { validatePasswordLength, hasExistingWallets, needsMigration, encryptMnemonic, validateMnemonic } from './crypto-utils.js';
 import * as ui from './ui-helpers.js';
 
 const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
@@ -244,6 +244,7 @@ async function initialMenu() {
       choices: [
         ui.menuChoice('Create New Wallet', 'Generate a new wallet', 'create'),
         ui.menuChoice('Import Existing Wallet', 'Restore from recovery phrase', 'import'),
+        ui.menuChoice('Import from Backup', 'Restore from backup file', 'import_backup'),
         new inquirer.Separator(''),
         ui.menuChoice('Change Network', 'Switch between networks', 'network'),
         ui.menuChoice('Back to Wallet Selection', '', 'back'),
@@ -258,6 +259,9 @@ async function initialMenu() {
       break;
     case 'import':
       await importWallet();
+      break;
+    case 'import_backup':
+      await importWalletFromBackup();
       break;
     case 'network':
       await changeNetwork();
@@ -409,6 +413,90 @@ async function importWallet() {
   }
 }
 
+async function importWalletFromBackup() {
+  ui.clearScreen();
+  ui.showHeader();
+
+  ui.showSection('Import from Backup');
+  ui.showInfo('Restore a wallet from an encrypted backup file');
+  console.log('');
+
+  const { backupPath } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'backupPath',
+      message: 'Backup file path:',
+      validate: (input) => {
+        if (!input || input.trim().length === 0) {
+          return 'Please enter a valid file path';
+        }
+        if (!fs.existsSync(input)) {
+          return 'File does not exist';
+        }
+        return true;
+      }
+    }
+  ]);
+
+  // Get password for the backup
+  const { backupPassword } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'backupPassword',
+      message: 'Enter password for backup file:',
+      mask: '*'
+    }
+  ]);
+
+  try {
+    const importedWalletName = wallet.importFromBackup(backupPath, backupPassword);
+
+    // Set master password if this is first wallet
+    const isFirstWallet = Object.keys(wallet.getAllWallets()).length === 1;
+    if (isFirstWallet) {
+      masterPassword = backupPassword;
+    } else {
+      // Ensure cached password matches
+      if (masterPassword !== backupPassword) {
+        ui.showWarning('Backup password differs from master password');
+        ui.showInfo('Re-enter your master password to continue using other wallets');
+        masterPassword = null;
+        await ensureMasterPassword();
+      }
+    }
+
+    ui.showSuccess(`Wallet imported successfully as: ${importedWalletName}`);
+
+    await inquirer.prompt([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    // Load the imported wallet
+    const walletData = wallet.loadWallet(importedWalletName, backupPassword);
+    if (walletData) {
+      await mainMenu(importedWalletName);
+    } else {
+      await initialMenu();
+    }
+  } catch (error) {
+    ui.showError(`Import failed: ${error.message}`, [
+      'Verify the backup file is valid',
+      'Check that the password is correct',
+      'Ensure the file has not been corrupted'
+    ]);
+
+    await inquirer.prompt([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    await initialMenu();
+  }
+}
+
 async function mainMenu(walletName) {
   currentWalletName = walletName;
   const currentAddress = wallet.getAddress();
@@ -442,6 +530,7 @@ async function mainMenu(walletName) {
         new inquirer.Separator('  ADVANCED'),
         new inquirer.Separator(ui.menuSeparator().line),
         ui.menuChoice('Show Secrets', 'View private key & mnemonic', 'secrets'),
+        ui.menuChoice('Export Wallet', 'Backup wallet to file', 'export'),
         ui.menuChoice('Change Network', 'Switch between networks', 'network'),
         ui.menuChoice('Delete Wallet', 'Remove current wallet', 'delete'),
         new inquirer.Separator(''),
@@ -465,6 +554,9 @@ async function mainMenu(walletName) {
       break;
     case 'secrets':
       await showWalletSecrets(currentWalletName);
+      break;
+    case 'export':
+      await exportWallet(currentWalletName);
       break;
     case 'network':
       await changeNetwork();
@@ -697,6 +789,54 @@ async function showWalletSecrets(currentWalletName) {
     }]);
     await mainMenu(currentWalletName);
   }
+}
+
+async function exportWallet(currentWalletName) {
+  const address = wallet.getAddress();
+  ui.clearScreen();
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
+
+  ui.showSection('Export Wallet');
+  ui.showInfo('Create an encrypted backup of your wallet');
+  console.log('');
+
+  const { exportPath } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'exportPath',
+      message: 'Export file path:',
+      default: `./backup-${currentWalletName}-${Date.now()}.json`,
+      validate: (input) => {
+        if (!input || input.trim().length === 0) {
+          return 'Please enter a valid file path';
+        }
+        if (fs.existsSync(input)) {
+          return 'File already exists. Choose a different path.';
+        }
+        return true;
+      }
+    }
+  ]);
+
+  try {
+    wallet.exportWallet(currentWalletName, exportPath);
+    ui.showSuccess(`Wallet exported successfully to: ${exportPath}`);
+    ui.showWarning('Keep this backup file secure!');
+    ui.showInfo('This file contains your encrypted wallet and can be imported later');
+  } catch (error) {
+    ui.showError(`Export failed: ${error.message}`, [
+      'Check that you have write permissions for the destination',
+      'Ensure the wallet is properly loaded'
+    ]);
+  }
+
+  await inquirer.prompt([{
+    type: 'input',
+    name: 'continue',
+    message: 'Press Enter to continue...'
+  }]);
+
+  await mainMenu(currentWalletName);
 }
 
 async function manageAccounts(currentWalletName) {
