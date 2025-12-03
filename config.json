@@ -1,0 +1,15 @@
+{
+  "network": "sepolia",
+  "networks": {
+    "sepolia": {
+      "name": "Sepolia Testnet",
+      "rpcUrl": "https://ethereum-sepolia-rpc.publicnode.com",
+      "chainId": 11155111
+    },
+    "mainnet": {
+      "name": "Ethereum Mainnet",
+      "rpcUrl": "https://ethereum-rpc.publicnode.com",
+      "chainId": 1
+    }
+  }
+}
