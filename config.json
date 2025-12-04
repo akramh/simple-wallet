@@ -1,5 +1,5 @@
 {
-  "network": "Sepolia Ether",
+  "network": "sepolia",
   "networks": {
     "sepolia": {
       "name": "Sepolia Testnet",
