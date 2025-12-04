@@ -408,34 +408,36 @@ function AccountMenu({
             </label>
 
             {createdMnemonic && (
-              {/* Keep the phrase masked by default to avoid accidental exposure */}
-              <div className="mnemonic-panel">
-                <div className="mnemonic-panel-header">
-                  <span>Recovery phrase</span>
-                  <div className="mnemonic-actions">
-                    <button
-                      className="btn btn-secondary btn-inline"
-                      onClick={() => {
-                        navigator.clipboard.writeText(createdMnemonic);
-                        setToast('Copied');
-                        if (toastTimer.current) clearTimeout(toastTimer.current);
-                        toastTimer.current = setTimeout(() => setToast(''), 1400);
-                      }}
-                    >
-                      Copy
-                    </button>
-                    <button
-                      className="btn btn-secondary btn-inline"
-                      onClick={() => setShowCreatedMnemonic(v => !v)}
-                    >
-                      {showCreatedMnemonic ? 'Hide' : 'Reveal'}
-                    </button>
+              <>
+                {/* Keep the phrase masked by default to avoid accidental exposure */}
+                <div className="mnemonic-panel">
+                  <div className="mnemonic-panel-header">
+                    <span>Recovery phrase</span>
+                    <div className="mnemonic-actions">
+                      <button
+                        className="btn btn-secondary btn-inline"
+                        onClick={() => {
+                          navigator.clipboard.writeText(createdMnemonic);
+                          setToast('Copied');
+                          if (toastTimer.current) clearTimeout(toastTimer.current);
+                          toastTimer.current = setTimeout(() => setToast(''), 1400);
+                        }}
+                      >
+                        Copy
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-inline"
+                        onClick={() => setShowCreatedMnemonic(v => !v)}
+                      >
+                        {showCreatedMnemonic ? 'Hide' : 'Reveal'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className={`mnemonic-box inline ${showCreatedMnemonic ? 'revealed' : 'masked'}`}>
+                    {showCreatedMnemonic ? createdMnemonic : '•••• •••• •••• •••• •••• •••• •••• ••••'}
                   </div>
                 </div>
-                <div className={`mnemonic-box inline ${showCreatedMnemonic ? 'revealed' : 'masked'}`}>
-                  {showCreatedMnemonic ? createdMnemonic : '•••• •••• •••• •••• •••• •••• •••• ••••'}
-                </div>
-              </div>
+              </>
             )}
 
             <button
