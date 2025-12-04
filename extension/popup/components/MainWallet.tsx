@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SettingsView from './SettingsView';
 
 interface Props {
   address: string;
@@ -20,7 +21,7 @@ interface TokenBalance {
   error?: string;
 }
 
-type View = 'portfolio' | 'send';
+type View = 'portfolio' | 'send' | 'settings';
 
 function MainWallet({ address, network, onLock }: Props) {
   const [view, setView] = useState<View>('portfolio');
@@ -183,9 +184,21 @@ function MainWallet({ address, network, onLock }: Props) {
           >
             Send
           </button>
+          <button
+            className={`tab ${view === 'settings' ? 'active' : ''}`}
+            onClick={() => setView('settings')}
+          >
+            Settings
+          </button>
         </div>
 
-        {view === 'portfolio' ? (
+        {view === 'settings' ? (
+          <SettingsView
+            currentAddress={address}
+            onAccountSwitch={() => window.location.reload()}
+            onWalletSwitch={() => window.location.reload()}
+          />
+        ) : view === 'portfolio' ? (
           <>
             {/* Main Balance */}
             <div className="wallet-card">

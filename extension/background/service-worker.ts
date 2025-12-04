@@ -201,6 +201,36 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!isUnlocked) throw new Error('Wallet is locked');
       return { address: walletService!.getAddress() };
 
+    case 'GET_ACCOUNTS':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      const accounts = walletService!.getWalletAccounts('default');
+      return { accounts };
+
+    case 'CREATE_ACCOUNT':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      const currentAccounts = walletService!.getWalletAccounts('default');
+      const nextIndex = Object.keys(currentAccounts).length;
+      const newAccount = walletService!.switchAccount(nextIndex);
+      walletService!.saveWallet('default');
+      return { success: true, address: newAccount.address, index: newAccount.accountIndex };
+
+    case 'SWITCH_ACCOUNT':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      const switchedAccount = walletService!.switchAccount(payload.index);
+      return { success: true, address: switchedAccount.address, index: switchedAccount.accountIndex };
+
+    case 'GET_ALL_WALLETS':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      const allWallets = walletService!.getAllWallets();
+      return { wallets: allWallets };
+
+    case 'DELETE_WALLET':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      const deleted = walletService!.deleteWallet(payload.name);
+      return { success: deleted };
+
     // dApp provider methods
     case 'ETH_ACCOUNTS':
       if (!isUnlocked) return { accounts: [] };
