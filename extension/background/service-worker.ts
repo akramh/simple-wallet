@@ -5,6 +5,7 @@ import { ChromeStorageAdapter } from '../../src/chrome-storage.js';
 import { createProviderFactory } from '../../src/providers.js';
 import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
+import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import type { Config } from '../../src/types/index.js';
 
 // Set up WebCrypto for browser environment
@@ -16,6 +17,7 @@ let isUnlocked = false;
 let currentWalletName = 'default'; // Track currently loaded wallet
 let autoLockTimer: NodeJS.Timeout | null = null;
 const AUTO_LOCK_TIMEOUT = 15 * 60 * 1000; // 15 minutes
+let transactionHistory: TransactionHistoryManager | null = null;
 
 // Default configuration
 const defaultConfig: Config & { network: string } = {
@@ -127,6 +129,11 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       walletService!.saveWallet(walletName);
       currentWalletName = walletName;
       isUnlocked = true;
+
+      // Initialize transaction history for this wallet
+      const createStorage = await ChromeStorageAdapter.create();
+      transactionHistory = new TransactionHistoryManager(createStorage, currentWalletName);
+
       resetAutoLockTimer();
       return {
         success: true,
@@ -144,6 +151,11 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       walletService!.saveWallet(importWalletName);
       currentWalletName = importWalletName;
       isUnlocked = true;
+
+      // Initialize transaction history for this wallet
+      const importStorage = await ChromeStorageAdapter.create();
+      transactionHistory = new TransactionHistoryManager(importStorage, currentWalletName);
+
       resetAutoLockTimer();
       return {
         success: true,
@@ -158,6 +170,11 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       }
       currentWalletName = unlockWalletName;
       isUnlocked = true;
+
+      // Initialize transaction history for this wallet
+      const storage = await ChromeStorageAdapter.create();
+      transactionHistory = new TransactionHistoryManager(storage, currentWalletName);
+
       resetAutoLockTimer();
       return {
         success: true,
@@ -184,12 +201,56 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'SEND_TRANSACTION':
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      const result = await walletService!.sendToken(
-        payload.token,
-        payload.toAddress,
-        payload.amount
-      );
-      return { result };
+
+      const fromAddress = walletService!.getAddress();
+      const network = walletService!.config.network;
+
+      try {
+        const result = await walletService!.sendToken(
+          payload.token,
+          payload.toAddress,
+          payload.amount
+        );
+
+        // Track transaction in history
+        if (transactionHistory && result.hash) {
+          transactionHistory.addTransaction({
+            hash: result.hash,
+            from: fromAddress,
+            to: payload.toAddress,
+            value: payload.amount,
+            network: network,
+            status: TransactionStatus.PENDING,
+            type: TransactionType.SEND,
+            timestamp: Date.now(),
+            tokenSymbol: payload.token.symbol,
+            tokenAddress: payload.token.address
+          });
+
+          // Start monitoring for confirmation
+          monitorTransaction(result.hash, network);
+        }
+
+        return { result };
+      } catch (error: any) {
+        // If transaction was submitted but failed, still track it
+        if (error.transactionHash) {
+          transactionHistory?.addTransaction({
+            hash: error.transactionHash,
+            from: fromAddress,
+            to: payload.toAddress,
+            value: payload.amount,
+            network: network,
+            status: TransactionStatus.FAILED,
+            type: TransactionType.SEND,
+            timestamp: Date.now(),
+            tokenSymbol: payload.token.symbol,
+            tokenAddress: payload.token.address,
+            error: error.message
+          });
+        }
+        throw error;
+      }
 
     case 'SWITCH_NETWORK':
       await walletService!.setNetwork(payload.network);
@@ -197,6 +258,16 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'GET_NETWORKS':
       return { networks: walletService!.config.networks };
+
+    case 'GET_TRANSACTION_HISTORY':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      const transactions = transactionHistory?.getAllTransactions() || [];
+      return { transactions };
+
+    case 'GET_TRANSACTIONS_BY_NETWORK':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      const networkTxs = transactionHistory?.getTransactionsByNetwork(payload.network) || [];
+      return { transactions: networkTxs };
 
     case 'ADD_CUSTOM_TOKEN':
       walletService!.addCustomToken(walletService!.config.network, payload.token);
@@ -213,7 +284,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'GET_ACCOUNTS':
       if (!isUnlocked) throw new Error('Wallet is locked');
       const accounts = walletService!.getWalletAccounts(currentWalletName);
-      return { accounts, currentWalletName };
+      const currentAccountIndex = walletService!.getCurrentAccountIndex();
+      return { accounts, currentWalletName, currentAccountIndex };
 
     case 'CREATE_ACCOUNT':
       if (!isUnlocked) throw new Error('Wallet is locked');
@@ -228,10 +300,11 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
       const switchedAccount = walletService!.switchAccount(payload.index);
+      walletService!.saveWallet(currentWalletName); // Save the wallet with new active account
       return { success: true, address: switchedAccount.address, index: switchedAccount.accountIndex };
 
     case 'GET_ALL_WALLETS':
-      if (!isUnlocked) throw new Error('Wallet is locked');
+      // Allow getting wallet list even when locked (needed for unlock screen)
       const allWallets = walletService!.getAllWallets();
       return { wallets: allWallets };
 
@@ -266,6 +339,51 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     default:
       throw new Error(`Unknown message type: ${type}`);
   }
+}
+
+// Monitor transaction for confirmation
+async function monitorTransaction(txHash: string, network: string) {
+  if (!walletService || !transactionHistory) return;
+
+  const maxAttempts = 60; // Monitor for up to 5 minutes (60 * 5 seconds)
+  let attempts = 0;
+
+  const checkTransaction = async () => {
+    try {
+      const provider = walletService!.wallet?.provider;
+      if (!provider) return;
+
+      const receipt = await provider.getTransactionReceipt(txHash);
+
+      if (receipt) {
+        // Transaction confirmed
+        const status = receipt.status === 1 ? TransactionStatus.CONFIRMED : TransactionStatus.FAILED;
+
+        transactionHistory!.updateTransactionStatus(
+          txHash,
+          status,
+          receipt.blockNumber,
+          receipt.status === 0 ? 'Transaction reverted' : undefined
+        );
+
+        console.log(`Transaction ${txHash} ${status}`);
+      } else if (attempts < maxAttempts) {
+        // Still pending, check again in 5 seconds
+        attempts++;
+        setTimeout(checkTransaction, 5000);
+      }
+    } catch (error) {
+      console.error('Error monitoring transaction:', error);
+      // Retry on error
+      if (attempts < maxAttempts) {
+        attempts++;
+        setTimeout(checkTransaction, 5000);
+      }
+    }
+  };
+
+  // Start monitoring
+  setTimeout(checkTransaction, 5000);
 }
 
 // Initialize on install

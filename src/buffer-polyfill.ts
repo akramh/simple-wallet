@@ -1,8 +1,10 @@
 // Buffer polyfill for browser environments
 // Provides minimal Buffer API needed for the wallet
 
+// Create a wrapper class instead of extending Uint8Array directly to avoid type conflicts
 export class BufferPolyfill extends Uint8Array {
-  static from(data: any, encoding?: string): BufferPolyfill {
+  // Custom from method that supports Buffer-like encoding parameter
+  static fromBuffer(data: string | Uint8Array | ArrayBuffer | number[], encoding?: string): BufferPolyfill {
     if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
       return new BufferPolyfill(data);
     }
@@ -64,7 +66,27 @@ export class BufferPolyfill extends Uint8Array {
 
 // Install Buffer polyfill globally if not present
 if (typeof globalThis.Buffer === 'undefined') {
-  (globalThis as any).Buffer = BufferPolyfill;
+  // Create a wrapper that mimics Node.js Buffer.from behavior
+  const BufferWrapper = class extends BufferPolyfill {
+    static from(data: any, encodingOrOffset?: any, length?: any): BufferPolyfill {
+      // If called with string and encoding, use fromBuffer
+      if (typeof data === 'string' && typeof encodingOrOffset === 'string') {
+        return BufferPolyfill.fromBuffer(data, encodingOrOffset);
+      }
+      // If called with Uint8Array or ArrayBuffer
+      if (data instanceof Uint8Array || data instanceof ArrayBuffer) {
+        return new BufferPolyfill(data);
+      }
+      // If called with array
+      if (Array.isArray(data)) {
+        return new BufferPolyfill(new Uint8Array(data));
+      }
+      // Default: try to use parent Uint8Array.from
+      return new BufferPolyfill(Uint8Array.from(data, encodingOrOffset, length));
+    }
+  };
+
+  (globalThis as any).Buffer = BufferWrapper;
 }
 
 export default BufferPolyfill;

@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import SettingsView from './SettingsView';
+import Header from './Header';
+import AccountMenu from './AccountMenu';
+import ReceiveView from './ReceiveView';
+import ActivityView from './ActivityView';
 
 interface Props {
   address: string;
@@ -21,14 +25,17 @@ interface TokenBalance {
   error?: string;
 }
 
-type View = 'portfolio' | 'send' | 'settings';
+type View = 'assets' | 'activity' | 'receive' | 'send' | 'settings';
 
 function MainWallet({ address, network, onLock }: Props) {
-  const [view, setView] = useState<View>('portfolio');
+  const [view, setView] = useState<View>('assets');
   const [portfolio, setPortfolio] = useState<TokenBalance[]>([]);
   const [networks, setNetworks] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [currentWalletName, setCurrentWalletName] = useState('default');
+  const [currentAccountIndex, setCurrentAccountIndex] = useState(0);
 
   // Send form state
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
@@ -45,9 +52,10 @@ function MainWallet({ address, network, onLock }: Props) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [portfolioResponse, networksResponse] = await Promise.all([
+      const [portfolioResponse, networksResponse, accountsResponse] = await Promise.all([
         chrome.runtime.sendMessage({ type: 'GET_PORTFOLIO' }),
-        chrome.runtime.sendMessage({ type: 'GET_NETWORKS' })
+        chrome.runtime.sendMessage({ type: 'GET_NETWORKS' }),
+        chrome.runtime.sendMessage({ type: 'GET_ACCOUNTS' })
       ]);
 
       if (portfolioResponse.portfolio) {
@@ -55,6 +63,12 @@ function MainWallet({ address, network, onLock }: Props) {
       }
       if (networksResponse.networks) {
         setNetworks(networksResponse.networks);
+      }
+      if (accountsResponse.currentWalletName) {
+        setCurrentWalletName(accountsResponse.currentWalletName);
+      }
+      if (accountsResponse.currentAccountIndex !== undefined) {
+        setCurrentAccountIndex(accountsResponse.currentAccountIndex);
       }
     } catch (error) {
       console.error('Failed to load data:', error);
@@ -74,14 +88,15 @@ function MainWallet({ address, network, onLock }: Props) {
     onLock();
   };
 
-  const handleNetworkChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newNetwork = e.target.value;
+  const handleNetworkChange = async (newNetwork: string) => {
     try {
       await chrome.runtime.sendMessage({
         type: 'SWITCH_NETWORK',
         payload: { network: newNetwork }
       });
-      window.location.reload();
+      setTimeout(() => {
+        loadData();
+      }, 300);
     } catch (error) {
       console.error('Failed to switch network:', error);
     }
@@ -134,77 +149,101 @@ function MainWallet({ address, network, onLock }: Props) {
     return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
   };
 
+  const formatBalance = (balance: string | number) => {
+    const num = typeof balance === 'string' ? parseFloat(balance) : balance;
+
+    if (num === 0) return '0';
+
+    // For very small amounts (less than 0.0001), show up to 8 decimals
+    if (num < 0.0001) {
+      return num.toFixed(8).replace(/\.?0+$/, '');
+    }
+
+    // For small amounts (less than 1), show up to 6 decimals
+    if (num < 1) {
+      return num.toFixed(6).replace(/\.?0+$/, '');
+    }
+
+    // For larger amounts, show up to 4 decimals
+    return num.toFixed(4).replace(/\.?0+$/, '');
+  };
+
   const nativeToken = portfolio.find(p => p.token.type === 'native');
   const nativeBalance = nativeToken ? parseFloat(nativeToken.balance) : 0;
 
   return (
     <div className="container">
-      <div className="header">
-        <h1>Simple Wallet</h1>
-        <button onClick={handleLock}>Lock</button>
-      </div>
+      <Header
+        network={network}
+        networks={networks}
+        currentAddress={address}
+        currentWalletName={currentWalletName}
+        currentAccountIndex={currentAccountIndex}
+        onNetworkChange={handleNetworkChange}
+        onAccountMenuClick={() => setShowAccountMenu(true)}
+        onLock={handleLock}
+      />
 
-      <div className="content">
-        {/* Network Selector */}
-        <div className="network-selector">
-          <div className="form-group">
-            <label>Network</label>
-            <select value={network} onChange={handleNetworkChange}>
-              {Object.entries(networks).map(([key, net]: [string, any]) => (
-                <option key={key} value={key}>
-                  {net.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+      {showAccountMenu && (
+        <AccountMenu
+          currentAddress={address}
+          onClose={() => setShowAccountMenu(false)}
+          onAccountSwitch={() => {
+            loadData();
+            setShowAccountMenu(false);
+          }}
+          onOpenSettings={() => setView('settings')}
+        />
+      )}
 
-        {/* Address Display */}
-        <div className="wallet-card">
-          <div className="balance-label">Address</div>
-          <div className="address">
-            {formatAddress(address)}
-            <button className="copy-btn" onClick={handleCopyAddress}>
-              Copy
-            </button>
-          </div>
-        </div>
-
-        {/* View Tabs */}
-        <div className="tabs">
+      {view !== 'settings' && (
+        <div className="top-nav">
           <button
-            className={`tab ${view === 'portfolio' ? 'active' : ''}`}
-            onClick={() => setView('portfolio')}
+            className={`nav-item ${view === 'assets' ? 'active' : ''}`}
+            onClick={() => setView('assets')}
           >
-            Portfolio
+            <span className="nav-icon">💰</span>
+            <span>Assets</span>
           </button>
           <button
-            className={`tab ${view === 'send' ? 'active' : ''}`}
+            className={`nav-item ${view === 'receive' ? 'active' : ''}`}
+            onClick={() => setView('receive')}
+          >
+            <span className="nav-icon">📥</span>
+            <span>Receive</span>
+          </button>
+          <button
+            className={`nav-item ${view === 'send' ? 'active' : ''}`}
             onClick={() => setView('send')}
           >
-            Send
+            <span className="nav-icon">📤</span>
+            <span>Send</span>
           </button>
           <button
-            className={`tab ${view === 'settings' ? 'active' : ''}`}
-            onClick={() => setView('settings')}
+            className={`nav-item ${view === 'activity' ? 'active' : ''}`}
+            onClick={() => setView('activity')}
           >
-            Settings
+            <span className="nav-icon">📊</span>
+            <span>Activity</span>
           </button>
         </div>
+      )}
 
+      <div className="content">
         {view === 'settings' ? (
           <SettingsView
             currentAddress={address}
-            onAccountSwitch={() => window.location.reload()}
-            onWalletSwitch={() => window.location.reload()}
+            onAccountSwitch={() => loadData()}
+            onWalletSwitch={() => loadData()}
           />
-        ) : view === 'portfolio' ? (
+        ) : view === 'assets' ? (
           <>
             {/* Main Balance */}
             <div className="wallet-card">
               <div className="balance-label">Total Balance</div>
               <div className="balance">
-                {nativeBalance.toFixed(4)} {nativeToken?.token.symbol || 'ETH'}
+                <span className="balance-amount">{formatBalance(nativeBalance)}</span>
+                <span className="balance-symbol">{nativeToken?.token.symbol || 'ETH'}</span>
               </div>
               <button
                 className="btn btn-secondary"
@@ -234,7 +273,7 @@ function MainWallet({ address, network, onLock }: Props) {
                     </div>
                     <div className="token-balance">
                       <div className="token-amount">
-                        {item.error ? 'Error' : parseFloat(item.balance).toFixed(4)}
+                        {item.error ? 'Error' : formatBalance(item.balance)}
                       </div>
                     </div>
                   </div>
@@ -242,7 +281,18 @@ function MainWallet({ address, network, onLock }: Props) {
               </div>
             )}
           </>
-        ) : (
+        ) : view === 'activity' ? (
+          <ActivityView
+            currentAddress={address}
+            network={network}
+          />
+        ) : view === 'receive' ? (
+          <ReceiveView
+            address={address}
+            network={network}
+            networks={networks}
+          />
+        ) : view === 'send' ? (
           /* Send Form */
           <form onSubmit={handleSend}>
             <div className="form-group">
@@ -257,7 +307,7 @@ function MainWallet({ address, network, onLock }: Props) {
                 <option value="">Select a token</option>
                 {portfolio.map((item, index) => (
                   <option key={index} value={item.token.symbol}>
-                    {item.token.symbol} ({parseFloat(item.balance).toFixed(4)})
+                    {item.token.symbol} ({formatBalance(item.balance)})
                   </option>
                 ))}
               </select>
@@ -294,7 +344,7 @@ function MainWallet({ address, network, onLock }: Props) {
               {sendLoading ? 'Sending...' : 'Send'}
             </button>
           </form>
-        )}
+        ) : null}
       </div>
     </div>
   );

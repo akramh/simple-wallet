@@ -4,10 +4,10 @@ interface Props {
   onWalletCreated: () => void;
 }
 
-type Tab = 'create' | 'import';
+type Screen = 'choice' | 'create-password' | 'import-password' | 'import-mnemonic' | 'show-mnemonic';
 
 function WelcomeScreen({ onWalletCreated }: Props) {
-  const [activeTab, setActiveTab] = useState<Tab>('create');
+  const [screen, setScreen] = useState<Screen>('choice');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [mnemonic, setMnemonic] = useState('');
@@ -15,7 +15,6 @@ function WelcomeScreen({ onWalletCreated }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [generatedMnemonic, setGeneratedMnemonic] = useState('');
-  const [step, setStep] = useState<'form' | 'show-mnemonic'>('form');
 
   const validatePassword = () => {
     if (password.length < 8) {
@@ -45,7 +44,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
         setError(response.error);
       } else {
         setGeneratedMnemonic(response.mnemonic);
-        setStep('show-mnemonic');
+        setScreen('show-mnemonic');
       }
     } catch (err: any) {
       setError(err.message || 'Failed to create wallet');
@@ -90,7 +89,97 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     onWalletCreated();
   };
 
-  if (step === 'show-mnemonic') {
+  // Choice Screen - Initial selection
+  if (screen === 'choice') {
+    return (
+      <div className="container">
+        <div className="header">
+          <h1>Simple Crypto Wallet</h1>
+        </div>
+        <div className="content">
+          <div className="welcome-message">
+            <p>Welcome to Simple Crypto Wallet</p>
+            <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
+              Manage your crypto assets securely
+            </p>
+          </div>
+
+          <div className="choice-buttons">
+            <button
+              className="btn btn-primary btn-large"
+              onClick={() => setScreen('create-password')}
+            >
+              Create a Wallet
+            </button>
+            <button
+              className="btn btn-secondary btn-large"
+              onClick={() => setScreen('import-password')}
+            >
+              Import your own
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Create Wallet - Password Screen
+  if (screen === 'create-password') {
+    return (
+      <div className="container">
+        <div className="header">
+          <button className="btn-back" onClick={() => setScreen('choice')}>
+            ← Back
+          </button>
+          <h1>Create Wallet</h1>
+        </div>
+        <div className="content">
+          <div className="form-group">
+            <label>Wallet Name</label>
+            <input
+              type="text"
+              value={walletName}
+              onChange={(e) => setWalletName(e.target.value)}
+              placeholder="default"
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter password (min 8 characters)"
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Confirm Password</label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Confirm password"
+            />
+          </div>
+
+          {error && <div className="error">{error}</div>}
+
+          <button
+            className="btn btn-primary"
+            onClick={handleCreate}
+            disabled={loading}
+          >
+            {loading ? 'Creating...' : 'Create Wallet'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show Mnemonic Screen
+  if (screen === 'show-mnemonic') {
     return (
       <div className="container">
         <div className="header">
@@ -119,124 +208,108 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     );
   }
 
-  return (
-    <div className="container">
-      <div className="header">
-        <h1>Simple Crypto Wallet</h1>
-      </div>
-      <div className="content">
-        <div className="tabs">
-          <button
-            className={`tab ${activeTab === 'create' ? 'active' : ''}`}
-            onClick={() => setActiveTab('create')}
-          >
-            Create Wallet
+  // Import Wallet - Password Screen (Step 1)
+  if (screen === 'import-password') {
+    return (
+      <div className="container">
+        <div className="header">
+          <button className="btn-back" onClick={() => setScreen('choice')}>
+            ← Back
           </button>
+          <h1>Import Wallet</h1>
+        </div>
+        <div className="content">
+          <p style={{ marginBottom: '20px', color: '#666' }}>
+            First, create a password to secure your wallet
+          </p>
+
+          <div className="form-group">
+            <label>Wallet Name</label>
+            <input
+              type="text"
+              value={walletName}
+              onChange={(e) => setWalletName(e.target.value)}
+              placeholder="default"
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter password (min 8 characters)"
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Confirm Password</label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Confirm password"
+            />
+          </div>
+
+          {error && <div className="error">{error}</div>}
+
           <button
-            className={`tab ${activeTab === 'import' ? 'active' : ''}`}
-            onClick={() => setActiveTab('import')}
+            className="btn btn-primary"
+            onClick={() => {
+              setError('');
+              if (!validatePassword()) return;
+              setScreen('import-mnemonic');
+            }}
           >
-            Import Wallet
+            Next
           </button>
         </div>
-
-        {activeTab === 'create' ? (
-          <>
-            <div className="form-group">
-              <label>Wallet Name</label>
-              <input
-                type="text"
-                value={walletName}
-                onChange={(e) => setWalletName(e.target.value)}
-                placeholder="default"
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password (min 8 characters)"
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Confirm Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Confirm password"
-              />
-            </div>
-
-            {error && <div className="error">{error}</div>}
-
-            <button
-              className="btn btn-primary"
-              onClick={handleCreate}
-              disabled={loading}
-            >
-              {loading ? 'Creating...' : 'Create Wallet'}
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="form-group">
-              <label>Wallet Name</label>
-              <input
-                type="text"
-                value={walletName}
-                onChange={(e) => setWalletName(e.target.value)}
-                placeholder="default"
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Recovery Phrase</label>
-              <textarea
-                value={mnemonic}
-                onChange={(e) => setMnemonic(e.target.value)}
-                placeholder="Enter your 12-word recovery phrase"
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password (min 8 characters)"
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Confirm Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Confirm password"
-              />
-            </div>
-
-            {error && <div className="error">{error}</div>}
-
-            <button
-              className="btn btn-primary"
-              onClick={handleImport}
-              disabled={loading}
-            >
-              {loading ? 'Importing...' : 'Import Wallet'}
-            </button>
-          </>
-        )}
       </div>
-    </div>
-  );
+    );
+  }
+
+  // Import Wallet - Mnemonic Screen (Step 2)
+  if (screen === 'import-mnemonic') {
+    return (
+      <div className="container">
+        <div className="header">
+          <button className="btn-back" onClick={() => setScreen('import-password')}>
+            ← Back
+          </button>
+          <h1>Import Wallet</h1>
+        </div>
+        <div className="content">
+          <p style={{ marginBottom: '20px', color: '#666' }}>
+            Enter your 12-word recovery phrase
+          </p>
+
+          <div className="form-group">
+            <label>Recovery Phrase</label>
+            <textarea
+              value={mnemonic}
+              onChange={(e) => setMnemonic(e.target.value)}
+              placeholder="Enter your 12-word recovery phrase separated by spaces"
+              rows={4}
+            />
+          </div>
+
+          {error && <div className="error">{error}</div>}
+
+          <button
+            className="btn btn-primary"
+            onClick={handleImport}
+            disabled={loading}
+          >
+            {loading ? 'Importing...' : 'Import Wallet'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export default WelcomeScreen;
