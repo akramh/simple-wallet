@@ -34,16 +34,18 @@ function AccountMenu({
   const [status, setStatus] = useState<{ type: 'error' | 'success' | '';
     message: string; }>({ type: '', message: '' });
   const [search, setSearch] = useState('');
-  const [createWalletName, setCreateWalletName] = useState(() => `wallet-${Math.floor(Math.random() * 1000)}`);
-  const [importWalletName, setImportWalletName] = useState(() => `wallet-${Math.floor(Math.random() * 1000)}`);
   const [importMnemonic, setImportMnemonic] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [setActiveOnCreate, setSetActiveOnCreate] = useState(true);
-  const [setActiveOnImport, setSetActiveOnImport] = useState(true);
+  const [createStep, setCreateStep] = useState<'form' | 'success'>('form');
+  const [importStep, setImportStep] = useState<'form' | 'success'>('form');
   const [showCreatedMnemonic, setShowCreatedMnemonic] = useState(false);
   const [createdMnemonic, setCreatedMnemonic] = useState('');
+  const [createdWalletName, setCreatedWalletName] = useState('');
+  const [importedWalletName, setImportedWalletName] = useState('');
   const [toast, setToast] = useState('');
+  const [pendingCreateName, setPendingCreateName] = useState<string>('wallet1');
+  const [pendingImportName, setPendingImportName] = useState<string>('wallet1');
   const toastTimer = React.useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -88,6 +90,25 @@ function AccountMenu({
     }
   };
 
+  const getNextWalletName = async (): Promise<string> => {
+    const base = 'wallet';
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_ALL_WALLETS' });
+      const names = response?.wallets ? Object.keys(response.wallets) : [];
+      let max = 0;
+      names.forEach((name: string) => {
+        const match = name.match(/^wallet(\d+)$/);
+        if (match) {
+          max = Math.max(max, parseInt(match[1], 10));
+        }
+      });
+      return `${base}${max + 1 || 1}`;
+    } catch (err) {
+      console.warn('Failed to compute next wallet name, defaulting to wallet1', err);
+      return `${base}1`;
+    }
+  };
+
   const handleSwitchAccount = async (index: number) => {
     const account = accounts.find(a => a.index === index);
     if (account?.address === currentAddress) {
@@ -119,11 +140,9 @@ function AccountMenu({
     try {
       await chrome.runtime.sendMessage({ type: 'CREATE_ACCOUNT' });
       await loadAccounts();
-      setTimeout(() => {
-        onAccountSwitch();
-        onStateChange?.();
-        onClose();
-      }, 300);
+      onAccountSwitch();
+      onStateChange?.();
+      setStatus({ type: 'success', message: 'Account created and selected' });
     } catch (err) {
       console.error('Failed to create account:', err);
       setStatus({ type: 'error', message: 'Failed to create account' });
@@ -163,7 +182,7 @@ function AccountMenu({
   };
 
   const handleCreateWallet = async () => {
-    const finalName = createWalletName.trim() || `wallet-${Math.floor(Math.random() * 1000)}`;
+    const finalName = pendingCreateName || (await getNextWalletName());
 
     setLoading(true);
     setStatus({ type: '', message: '' });
@@ -177,17 +196,15 @@ function AccountMenu({
         setStatus({ type: 'error', message: response.error });
       } else {
         setStatus({ type: 'success', message: `Created wallet "${finalName}"` });
-        setCreateWalletName(`wallet-${Math.floor(Math.random() * 1000)}`);
         setCreatedMnemonic(response.mnemonic || '');
-        setShowCreatedMnemonic(false);
+        setShowCreatedMnemonic(true);
+        setCreatedWalletName(finalName);
+        setCreateStep('success');
         await Promise.all([loadWallets(), loadAccounts()]);
-        if (setActiveOnCreate) {
-          await chrome.runtime.sendMessage({ type: 'UNLOCK_WALLET', payload: { name: finalName } });
-        }
+        await chrome.runtime.sendMessage({ type: 'UNLOCK_WALLET', payload: { name: finalName } });
         onWalletSwitch?.();
         onStateChange?.();
-        setShowCreateModal(false);
-        onClose();
+        setPendingCreateName(await getNextWalletName());
       }
     } catch (err) {
       console.error('Failed to create wallet:', err);
@@ -198,7 +215,7 @@ function AccountMenu({
   };
 
   const handleImportWallet = async () => {
-    const finalName = importWalletName.trim() || `wallet-${Math.floor(Math.random() * 1000)}`;
+    const finalName = pendingImportName || (await getNextWalletName());
     if (!importMnemonic.trim()) {
       setStatus({ type: 'error', message: 'Please paste a recovery phrase' });
       return;
@@ -221,15 +238,13 @@ function AccountMenu({
       } else {
         setStatus({ type: 'success', message: `Imported wallet "${finalName}"` });
         setImportMnemonic('');
-        setImportWalletName(`wallet-${Math.floor(Math.random() * 1000)}`);
+        setImportedWalletName(finalName);
+        setImportStep('success');
         await Promise.all([loadWallets(), loadAccounts()]);
-        if (setActiveOnImport) {
-          await chrome.runtime.sendMessage({ type: 'UNLOCK_WALLET', payload: { name: finalName } });
-        }
+        await chrome.runtime.sendMessage({ type: 'UNLOCK_WALLET', payload: { name: finalName } });
         onWalletSwitch?.();
         onStateChange?.();
-        setShowImportModal(false);
-        onClose();
+        setPendingImportName(await getNextWalletName());
       }
     } catch (err) {
       console.error('Failed to import wallet:', err);
@@ -268,6 +283,40 @@ function AccountMenu({
           </div>
           <button className="close-btn" onClick={onClose}>×</button>
         </div>
+
+        {(() => {
+          const activeAccount = accounts.find(a => a.address === currentAddress);
+          if (!activeAccount) return null;
+          return (
+            <div className="account-menu-section" style={{ paddingBottom: 0 }}>
+              <div className="section-title" style={{ marginBottom: 4 }}>Active wallet & account</div>
+              <div className="account-item active" style={{ cursor: 'default' }}>
+                <div className="account-details" style={{ gap: 4 }}>
+                  <div className="account-name">{currentWalletName || 'Wallet'} — Account {activeAccount.index + 1}</div>
+                  <div className="account-address">{formatAddress(activeAccount.address)}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {(() => {
+          const activeAccount = accounts.find(a => a.address === currentAddress);
+          if (!activeAccount) return null;
+          return (
+            <div className="account-menu-section" style={{ paddingBottom: 0 }}>
+              <div className="section-title" style={{ marginBottom: 4 }}>Active account</div>
+              <div className="account-item active" style={{ cursor: 'default' }}>
+                <div className="account-avatar">{activeAccount.address.substring(2, 4).toUpperCase()}</div>
+                <div className="account-details">
+                  <div className="account-name">Account {activeAccount.index + 1}</div>
+                  <div className="account-address">{formatAddress(activeAccount.address)}</div>
+                </div>
+                <span className="active-badge">✓</span>
+              </div>
+            </div>
+          );
+        })()}
 
         {status.message && (
           <div className={`alert ${status.type === 'error' ? 'alert-error' : 'alert-success'} account-menu-alert`}>
@@ -341,10 +390,16 @@ function AccountMenu({
               <div className="section-sub">Switch or add a wallet.</div>
             </div>
             <div className="section-actions-inline">
-              <button className="section-cta" onClick={() => setShowImportModal(true)}>
+              <button className="section-cta" onClick={async () => {
+                setPendingImportName(await getNextWalletName());
+                setShowImportModal(true);
+              }}>
                 Import
               </button>
-              <button className="section-cta" onClick={() => setShowCreateModal(true)}>
+              <button className="section-cta" onClick={async () => {
+                setPendingCreateName(await getNextWalletName());
+                setShowCreateModal(true);
+              }}>
                 Create
               </button>
             </div>
@@ -380,7 +435,7 @@ function AccountMenu({
             <div className="modal-header">
               <div>
                 <div className="section-title">Create wallet</div>
-                <div className="section-sub">Optional name; defaults auto.</div>
+                <div className="section-sub">Auto-named: {pendingCreateName}</div>
               </div>
               <button className="close-btn" onClick={() => setShowCreateModal(false)}>×</button>
             </div>
@@ -391,28 +446,12 @@ function AccountMenu({
               </div>
             )}
 
-            <input
-              type="text"
-              placeholder="Wallet name (optional)"
-              value={createWalletName}
-              onChange={(e) => setCreateWalletName(e.target.value)}
-            />
-
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={setActiveOnCreate}
-                onChange={(e) => setSetActiveOnCreate(e.target.checked)}
-              />
-              <span>Set as active after creating</span>
-            </label>
-
-            {createdMnemonic && (
+            {createStep === 'success' && createdMnemonic && (
               <>
                 {/* Keep the phrase masked by default to avoid accidental exposure */}
                 <div className="mnemonic-panel">
                   <div className="mnemonic-panel-header">
-                    <span>Recovery phrase</span>
+                    <span>Recovery phrase — {createdWalletName}</span>
                     <div className="mnemonic-actions">
                       <button
                         className="btn btn-secondary btn-inline"
@@ -440,13 +479,29 @@ function AccountMenu({
               </>
             )}
 
-            <button
-              className="btn btn-primary"
-              onClick={handleCreateWallet}
-              disabled={loading}
-            >
-              {loading ? 'Working...' : 'Create wallet'}
-            </button>
+            {createStep === 'form' && (
+              <button
+                className="btn btn-primary"
+                onClick={handleCreateWallet}
+                disabled={loading}
+              >
+                {loading ? 'Working...' : 'Create wallet'}
+              </button>
+            )}
+
+            {createStep === 'success' && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setShowCreateModal(false);
+                  setCreateStep('form');
+                  setShowCreatedMnemonic(false);
+                  setStatus({ type: '', message: '' });
+                }}
+              >
+                Done
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -457,7 +512,7 @@ function AccountMenu({
             <div className="modal-header">
               <div>
                 <div className="section-title">Import wallet</div>
-                <div className="section-sub">Paste a recovery phrase (12+ words).</div>
+                <div className="section-sub">Auto-named: {pendingImportName}</div>
               </div>
               <button className="close-btn" onClick={() => setShowImportModal(false)}>×</button>
             </div>
@@ -468,36 +523,42 @@ function AccountMenu({
               </div>
             )}
 
-            <input
-              type="text"
-              placeholder="Wallet name (optional)"
-              value={importWalletName}
-              onChange={(e) => setImportWalletName(e.target.value)}
-            />
+            {importStep === 'form' && (
+              <>
+                <textarea
+                  rows={3}
+                  placeholder="Recovery phrase"
+                  value={importMnemonic}
+                  onChange={(e) => setImportMnemonic(e.target.value)}
+                />
 
-            <textarea
-              rows={3}
-              placeholder="Recovery phrase"
-              value={importMnemonic}
-              onChange={(e) => setImportMnemonic(e.target.value)}
-            />
+                <button
+                  className="btn btn-primary"
+                  onClick={handleImportWallet}
+                  disabled={loading || importMnemonic.trim().split(/\s+/).length < 12}
+                >
+                  {loading ? 'Working...' : 'Import wallet'}
+                </button>
+              </>
+            )}
 
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={setActiveOnImport}
-                onChange={(e) => setSetActiveOnImport(e.target.checked)}
-              />
-              <span>Set as active after import</span>
-            </label>
-
-            <button
-              className="btn btn-primary"
-              onClick={handleImportWallet}
-              disabled={loading || importMnemonic.trim().split(/\s+/).length < 12}
-            >
-              {loading ? 'Working...' : 'Import wallet'}
-            </button>
+            {importStep === 'success' && (
+              <>
+                <div className="alert alert-success" style={{ marginBottom: '12px' }}>
+                  Wallet {importedWalletName || pendingImportName} imported and unlocked.
+                </div>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setShowImportModal(false);
+                    setImportStep('form');
+                    setStatus({ type: '', message: '' });
+                  }}
+                >
+                  Go to wallet
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

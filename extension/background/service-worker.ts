@@ -20,6 +20,44 @@ const AUTO_LOCK_TIMEOUT = 15 * 60 * 1000; // 15 minutes
 let transactionHistory: TransactionHistoryManager | null = null;
 let sessionPassword: string | null = null;
 
+// Configure action to open side panel
+const SIDE_PANEL_PATH = 'extension/sidepanel/sidepanel.html';
+
+const configureSidePanel = async (tabId?: number) => {
+  if (!chrome.sidePanel?.setPanelBehavior) return;
+  try {
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+    if (tabId && chrome.sidePanel.setOptions) {
+      await chrome.sidePanel.setOptions({ tabId, path: SIDE_PANEL_PATH });
+    }
+  } catch (error) {
+    console.error('Failed to configure side panel:', error);
+  }
+};
+
+chrome.runtime.onInstalled.addListener(() => configureSidePanel());
+chrome.runtime.onStartup.addListener(() => configureSidePanel());
+
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!chrome.sidePanel?.open || !tab) return;
+  try {
+    if (chrome.sidePanel.setOptions) {
+      await chrome.sidePanel.setOptions({ tabId: tab.id, path: SIDE_PANEL_PATH });
+    }
+    // Try tab-scoped open first
+    if (tab.id) {
+      await chrome.sidePanel.open({ tabId: tab.id });
+      return;
+    }
+    // Fallback to window-scoped open
+    if (tab.windowId) {
+      await chrome.sidePanel.open({ windowId: tab.windowId });
+    }
+  } catch (error) {
+    console.error('Failed to open side panel:', error);
+  }
+});
+
 // Default configuration
 const defaultConfig: Config & { network: string } = {
   network: 'sepolia',

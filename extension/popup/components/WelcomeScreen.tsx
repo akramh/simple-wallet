@@ -5,34 +5,18 @@ interface Props {
   onWalletCreated: () => void;
 }
 
-type Screen =
-  | 'choice'
-  | 'create-mnemonic'
-  | 'create-password'
-  | 'import-mnemonic'
-  | 'import-password';
+type Screen = 'choice' | 'create-mnemonic' | 'import-mnemonic';
+
+const DEFAULT_EXTENSION_PASSWORD = 'session-extension-password';
 
 function WelcomeScreen({ onWalletCreated }: Props) {
   const [screen, setScreen] = useState<Screen>('choice');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [mnemonic, setMnemonic] = useState('');
-  const [walletName, setWalletName] = useState('default');
+  const [walletName, setWalletName] = useState('wallet1');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [generatedMnemonic, setGeneratedMnemonic] = useState('');
-
-  const validatePassword = () => {
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
-      return false;
-    }
-    if (password !== confirmPassword) {
-      setError('Passwords do not match');
-      return false;
-    }
-    return true;
-  };
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
 
   const validateMnemonicInput = (phrase: string) => {
     const words = phrase.trim().split(/\s+/);
@@ -43,18 +27,36 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     return true;
   };
 
-  const goToCreateFlow = () => {
+  const getNextWalletName = async (): Promise<string> => {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_ALL_WALLETS' });
+      const names = response?.wallets ? Object.keys(response.wallets) : [];
+      const base = 'wallet';
+      let max = 0;
+      names.forEach((name: string) => {
+        const match = name.match(/^wallet(\d+)$/);
+        if (match) {
+          max = Math.max(max, parseInt(match[1], 10));
+        }
+      });
+      return `${base}${max + 1 || 1}`;
+    } catch (err) {
+      console.warn('Failed to load wallets for naming, defaulting to wallet1', err);
+      return 'wallet1';
+    }
+  };
+
+  const goToCreateFlow = async () => {
     const random = ethers.Wallet.createRandom();
     setGeneratedMnemonic(random.mnemonic.phrase);
-    setPassword('');
-    setConfirmPassword('');
-    setWalletName('default');
+    setCopyState('idle');
+    const nextName = await getNextWalletName();
+    setWalletName(nextName);
     setScreen('create-mnemonic');
   };
 
-  const handleCreateAfterPassword = async () => {
+  const handleCreateFinalize = async () => {
     setError('');
-    if (!validatePassword()) return;
     if (!generatedMnemonic) {
       setError('Missing generated recovery phrase. Please try again.');
       return;
@@ -64,7 +66,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'IMPORT_WALLET',
-        payload: { mnemonic: generatedMnemonic, password, name: walletName }
+        payload: { mnemonic: generatedMnemonic, password: DEFAULT_EXTENSION_PASSWORD, name: walletName }
       });
 
       if (response.error) {
@@ -81,14 +83,13 @@ function WelcomeScreen({ onWalletCreated }: Props) {
 
   const handleImport = async () => {
     setError('');
-    if (!validatePassword()) return;
     if (!mnemonic.trim() || !validateMnemonicInput(mnemonic)) return;
 
     setLoading(true);
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'IMPORT_WALLET',
-        payload: { mnemonic: mnemonic.trim(), password, name: walletName }
+        payload: { mnemonic: mnemonic.trim(), password: DEFAULT_EXTENSION_PASSWORD, name: walletName }
       });
 
       if (response.error) {
@@ -104,7 +105,10 @@ function WelcomeScreen({ onWalletCreated }: Props) {
   };
 
   const handleCopyMnemonic = () => {
-    navigator.clipboard.writeText(generatedMnemonic);
+    if (!generatedMnemonic) return;
+    navigator.clipboard.writeText(generatedMnemonic)
+      .then(() => setCopyState('copied'))
+      .catch(() => setCopyState('error'));
   };
 
   // Choice Screen - Initial selection
@@ -125,13 +129,17 @@ function WelcomeScreen({ onWalletCreated }: Props) {
           <div className="choice-buttons">
             <button
               className="btn btn-primary btn-large"
-              onClick={goToCreateFlow}
+              onClick={() => goToCreateFlow()}
             >
               Create a Wallet
             </button>
             <button
               className="btn btn-secondary btn-large"
-              onClick={() => setScreen('import-password')}
+              onClick={async () => {
+                const nextName = await getNextWalletName();
+                setWalletName(nextName);
+                setScreen('import-mnemonic');
+              }}
             >
               Import your own
             </button>
@@ -153,7 +161,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
         </div>
         <div className="content">
           <div className="mnemonic-warning">
-            <strong>Save this recovery phrase.</strong> Anyone with this phrase can access your wallet.
+            <strong>Save these 12 words.</strong> Save to a password manager, or write down and store in a secure place. Do not share with anyone.
           </div>
 
           <div className="mnemonic-box">
@@ -161,75 +169,27 @@ function WelcomeScreen({ onWalletCreated }: Props) {
           </div>
 
           <div className="action-buttons">
-            <button className="btn btn-secondary" onClick={handleCopyMnemonic}>
-              Copy
+            <button className="btn btn-secondary" onClick={handleCopyMnemonic} disabled={!generatedMnemonic}>
+              {copyState === 'copied' ? 'Copied' : 'Copy'}
             </button>
-            <button className="btn btn-primary" onClick={() => setScreen('create-password')}>
-              Continue
+            <button className="btn btn-primary" onClick={handleCreateFinalize} disabled={loading}>
+              {loading ? 'Creating...' : 'Continue'}
             </button>
           </div>
+
+          {copyState === 'error' && (
+            <div className="alert alert-error" style={{ marginTop: '10px' }}>
+              Could not copy. Please manually copy the words.
+            </div>
+          )}
+          {error && <div className="error" style={{ marginTop: '10px' }}>{error}</div>}
         </div>
       </div>
     );
   }
 
-  // Create Wallet - Password Screen
-  if (screen === 'create-password') {
-    return (
-      <div className="container">
-        <div className="header">
-          <button className="btn-back" onClick={() => setScreen('create-mnemonic')}>
-            ← Back
-          </button>
-          <h1>Secure Wallet</h1>
-        </div>
-        <div className="content">
-          <div className="form-group">
-            <label>Wallet Name</label>
-            <input
-              type="text"
-              value={walletName}
-              onChange={(e) => setWalletName(e.target.value)}
-              placeholder="default"
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password (min 8 characters)"
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Confirm Password</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Confirm password"
-            />
-          </div>
-
-          {error && <div className="error">{error}</div>}
-
-          <button
-            className="btn btn-primary"
-            onClick={handleCreateAfterPassword}
-            disabled={loading}
-          >
-            {loading ? 'Creating...' : 'Create Wallet'}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Import Wallet - Password Screen (Step 1)
-  if (screen === 'import-password') {
+  // Import Wallet
+  if (screen === 'import-mnemonic') {
     return (
       <div className="container">
         <div className="header">
@@ -244,78 +204,16 @@ function WelcomeScreen({ onWalletCreated }: Props) {
           </p>
 
           <div className="form-group">
-            <label>Wallet Name</label>
-            <input
-              type="text"
-              value={walletName}
-              onChange={(e) => setWalletName(e.target.value)}
-              placeholder="default"
-            />
-          </div>
-
-          <div className="form-group">
             <label>Recovery Phrase</label>
             <textarea
               value={mnemonic}
               onChange={(e) => setMnemonic(e.target.value)}
-              placeholder="Enter your recovery phrase"
-              rows={4}
+              placeholder="Enter your 12-24 word phrase"
+              rows={3}
             />
           </div>
 
           {error && <div className="error">{error}</div>}
-
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setError('');
-              if (!mnemonic.trim() || !validateMnemonicInput(mnemonic)) return;
-              setScreen('import-password');
-            }}
-          >
-            Next: Set Password
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Import Wallet - Password Screen (Step 2)
-  if (screen === 'import-password') {
-    return (
-      <div className="container">
-        <div className="header">
-          <button className="btn-back" onClick={() => setScreen('import-mnemonic')}>
-            ← Back
-          </button>
-          <h1>Secure Imported Wallet</h1>
-        </div>
-        <div className="content">
-          <p style={{ marginBottom: '20px', color: '#666' }}>
-            Set a master password to encrypt this wallet. Use the same password across wallets.
-          </p>
-
-          {error && <div className="error">{error}</div>}
-
-          <div className="form-group">
-            <label>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password (min 8 characters)"
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Confirm Password</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Confirm password"
-            />
-          </div>
 
           <button
             className="btn btn-primary"

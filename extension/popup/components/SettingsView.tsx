@@ -20,7 +20,7 @@ interface Props {
 }
 
 function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onStateChange, onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<'accounts' | 'wallets' | 'advanced'>('accounts');
+  const [activeTab, setActiveTab] = useState<'accounts'>('accounts');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [currentWalletName, setCurrentWalletName] = useState('');
@@ -289,24 +289,7 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
         )}
       </div>
       <div className="tabs">
-        <button
-          className={`tab ${activeTab === 'accounts' ? 'active' : ''}`}
-          onClick={() => setActiveTab('accounts')}
-        >
-          Accounts
-        </button>
-        <button
-          className={`tab ${activeTab === 'wallets' ? 'active' : ''}`}
-          onClick={() => setActiveTab('wallets')}
-        >
-          Wallets
-        </button>
-        <button
-          className={`tab ${activeTab === 'advanced' ? 'active' : ''}`}
-          onClick={() => setActiveTab('advanced')}
-        >
-          Advanced
-        </button>
+        <button className="tab active">Accounts</button>
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -366,196 +349,8 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
           )}
         </div>
       )}
-
-      {activeTab === 'wallets' && (
-        <div className="wallets-pane">
-          {(createError || createSuccess) && (
-            <div className={`alert ${createError ? 'alert-error' : 'alert-success'}`}>
-              {createError || createSuccess}
-            </div>
-          )}
-
-          {createMnemonic && (
-            <div className="alert alert-success mnemonic-alert">
-              <div className="mnemonic-row">
-                <span>Recovery phrase ready.</span>
-                <div className="mnemonic-actions">
-                  <button
-                    className="btn btn-secondary btn-inline"
-                    onClick={() => {
-                      navigator.clipboard.writeText(createMnemonic);
-                      setCopyNotice('Copied recovery phrase');
-                      if (copyTimer.current) {
-                        clearTimeout(copyTimer.current);
-                      }
-                      copyTimer.current = setTimeout(() => setCopyNotice(''), 1600);
-                    }}
-                  >
-                    Copy
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-inline"
-                    onClick={() => setShowMnemonic(prev => !prev)}
-                  >
-                    {showMnemonic ? 'Hide' : 'Show'}
-                  </button>
-                </div>
-              </div>
-              {showMnemonic && (
-                <div className="mnemonic-box inline">
-                  {createMnemonic}
-                </div>
-              )}
-            </div>
-          )}
-
-          {(importError || importSuccess) && (
-            <div className={`alert ${importError ? 'alert-error' : 'alert-success'}`}>
-              {importError || importSuccess}
-            </div>
-          )}
-
-          {copyNotice && (
-            <div className="alert alert-success" style={{ marginTop: -4 }}>
-              {copyNotice}
-            </div>
-          )}
-
-          <div className="wallets-actions">
-            <div className="wallet-action-card">
-              <div className="wallet-action-header">
-                <h4>Create wallet</h4>
-                <p>Uses your master password automatically.</p>
-              </div>
-              <div className="wallet-action-body">
-                <input
-                  type="text"
-                  placeholder="Wallet name"
-                  value={createWalletName}
-                  onChange={e => setCreateWalletName(e.target.value)}
-                />
-                <button
-                  className="btn btn-primary"
-                  onClick={handleCreateWallet}
-                  disabled={loading || !createWalletName.trim()}
-                >
-                  {loading ? 'Working...' : 'Create'}
-                </button>
-              </div>
-            </div>
-
-            <div className="wallet-action-card">
-              <div className="wallet-action-header">
-                <h4>Import wallet</h4>
-                <p>Paste a recovery phrase. Master password is reused.</p>
-              </div>
-              <div className="wallet-action-body">
-                <input
-                  type="text"
-                  placeholder="Wallet name"
-                  value={importWalletName}
-                  onChange={e => setImportWalletName(e.target.value)}
-                />
-                <textarea
-                  placeholder="Recovery phrase"
-                  value={importMnemonic}
-                  onChange={e => setImportMnemonic(e.target.value)}
-                  rows={3}
-                />
-                <button
-                  className="btn btn-secondary"
-                  onClick={handleImportWallet}
-                  disabled={loading || importMnemonic.trim().split(/\s+/).length < 12 || !importWalletName.trim()}
-                >
-                  {loading ? 'Working...' : 'Import'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="wallet-list">
-            {wallets
-              .slice()
-              .sort((a, b) => {
-                if (a.name === currentWalletName) return -1;
-                if (b.name === currentWalletName) return 1;
-                return a.name.localeCompare(b.name);
-              })
-              .map((wallet) => (
-              <div
-                key={wallet.name}
-                className={`wallet-list-item ${wallet.name === currentWalletName ? 'active' : ''}`}
-              >
-                <div className="wallet-list-meta">
-                  <div className="wallet-list-title">{wallet.name}</div>
-                  <div className="wallet-list-sub">{Object.keys(wallet.accounts).length} account(s)</div>
-                </div>
-                <div className="wallet-list-actions">
-                  {wallet.name === currentWalletName ? (
-                    <span className="wallet-pill">Active</span>
-                  ) : (
-                    <button
-                      className="btn btn-secondary btn-inline"
-                      onClick={() => handleSwitchWallet(wallet.name)}
-                      disabled={loading}
-                    >
-                      Switch
-                    </button>
-                  )}
-                  <button
-                    className="btn btn-secondary btn-inline"
-                    onClick={() => handleDeleteWallet(wallet.name)}
-                    disabled={loading || wallets.length === 1}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {wallets.length === 0 && (
-            <div className="loading">No wallets found</div>
-          )}
         </div>
-      )}
+      );
+    }
 
-      {activeTab === 'advanced' && (
-        <div>
-          <div className="form-group">
-            <label>Export Recovery Phrase</label>
-            <button className="btn btn-secondary">
-              View Recovery Phrase
-            </button>
-            <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>
-              Warning: Never share your recovery phrase with anyone.
-            </p>
-          </div>
-
-          <div className="form-group">
-            <label>Export Private Key</label>
-            <button className="btn btn-secondary">
-              View Private Key
-            </button>
-            <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '8px' }}>
-              Warning: Anyone with your private key can access your funds.
-            </p>
-          </div>
-
-          <div className="form-group">
-            <label>About</label>
-            <div style={{ fontSize: '13px', color: '#6b7280' }}>
-              <p>Simple Crypto Wallet v1.0.0</p>
-              <p>Chrome Extension</p>
-              <p style={{ marginTop: '8px' }}>
-                This is a demo wallet. For production use, consider hardware wallets.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default SettingsView;
+    export default SettingsView;
