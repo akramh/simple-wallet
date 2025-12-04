@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import type { EncryptionResult } from './types/index.js';
 
 // Constants - Industry standard encryption parameters
 const ALGORITHM = 'aes-256-gcm';
@@ -9,12 +10,21 @@ const SALT_LENGTH = 32; // 256 bits
 const PBKDF2_ITERATIONS = 100000; // Industry standard (100k iterations)
 const PBKDF2_DIGEST = 'sha256';
 
+interface LegacyEncryptionResult {
+  encrypted: string;
+  salt: string;
+}
+
+interface WalletData {
+  mnemonic?: string;
+  encryptedMnemonic?: string;
+  [key: string]: any;
+}
+
 /**
  * Validates password meets minimum requirements
- * @param {string} password - Password to validate
- * @returns {boolean} - True if valid
  */
-function validatePasswordLength(password) {
+export function validatePasswordLength(password: string): boolean {
   if (!password || typeof password !== 'string') {
     return false;
   }
@@ -23,19 +33,15 @@ function validatePasswordLength(password) {
 
 /**
  * Generates a random salt
- * @returns {string} - Hex-encoded salt
  */
-function generateSalt() {
+export function generateSalt(): string {
   return crypto.randomBytes(SALT_LENGTH).toString('hex');
 }
 
 /**
  * Derives encryption key from password and salt using PBKDF2
- * @param {string} password - User password
- * @param {string} saltHex - Salt in hex format
- * @returns {Buffer} - Derived key
  */
-function deriveKey(password, saltHex) {
+export function deriveKey(password: string, saltHex: string): Buffer {
   const salt = Buffer.from(saltHex, 'hex');
   return crypto.pbkdf2Sync(
     password,
@@ -48,11 +54,8 @@ function deriveKey(password, saltHex) {
 
 /**
  * Encrypts data using AES-256-GCM
- * @param {string} plaintext - Data to encrypt
- * @param {string} password - Encryption password
- * @returns {Object} - { encrypted: string, salt: string }
  */
-function encryptData(plaintext, password) {
+export function encryptData(plaintext: string, password: string): LegacyEncryptionResult {
   // Generate unique salt for this encryption
   const salt = generateSalt();
 
@@ -83,13 +86,9 @@ function encryptData(plaintext, password) {
 
 /**
  * Decrypts data using AES-256-GCM
- * @param {string} encryptedData - Data in format "iv:authTag:ciphertext"
- * @param {string} password - Decryption password
- * @param {string} saltHex - Salt used for encryption
- * @returns {string} - Decrypted plaintext
  * @throws {Error} - If decryption fails (wrong password or corrupted data)
  */
-function decryptData(encryptedData, password, saltHex) {
+export function decryptData(encryptedData: string, password: string, saltHex: string): string {
   // Parse encrypted data
   const parts = encryptedData.split(':');
   if (parts.length !== 3) {
@@ -116,31 +115,33 @@ function decryptData(encryptedData, password, saltHex) {
 
 /**
  * Encrypts mnemonic phrase
- * @param {string} mnemonic - Mnemonic phrase to encrypt
- * @param {string} password - Master password
- * @returns {Object} - { encrypted: string, salt: string }
  */
-function encryptMnemonic(mnemonic, password) {
-  return encryptData(mnemonic, password);
+export function encryptMnemonic(mnemonic: string, password: string): EncryptionResult {
+  const result = encryptData(mnemonic, password);
+  const parts = result.encrypted.split(':');
+  const [iv, authTag, encrypted] = parts;
+
+  return {
+    encrypted,
+    salt: result.salt,
+    iv,
+    authTag
+  };
 }
 
 /**
  * Decrypts mnemonic phrase
- * @param {string} encryptedMnemonic - Encrypted mnemonic
- * @param {string} password - Master password
- * @param {string} salt - Salt used for encryption
- * @returns {string} - Decrypted mnemonic
  * @throws {Error} - If password is incorrect
  */
-function decryptMnemonic(encryptedMnemonic, password, salt) {
-  return decryptData(encryptedMnemonic, password, salt);
+export function decryptMnemonic(encryptedMnemonic: string, password: string, salt: string, iv: string, authTag: string): string {
+  const encryptedData = `${iv}:${authTag}:${encryptedMnemonic}`;
+  return decryptData(encryptedData, password, salt);
 }
 
 /**
  * Checks if any wallets exist (determines if first-time setup needed)
- * @returns {boolean} - True if wallets exist
  */
-function hasExistingWallets() {
+export function hasExistingWallets(): boolean {
   try {
     const walletsPath = './wallets.json';
     if (!fs.existsSync(walletsPath)) {
@@ -156,16 +157,15 @@ function hasExistingWallets() {
 
 /**
  * Checks if wallets need migration from plaintext to encrypted format
- * @returns {boolean} - True if migration needed
  */
-function needsMigration() {
+export function needsMigration(): boolean {
   try {
     const walletsPath = './wallets.json';
     if (!fs.existsSync(walletsPath)) {
       return false;
     }
     const data = fs.readFileSync(walletsPath, 'utf8');
-    const wallets = JSON.parse(data);
+    const wallets: Record<string, WalletData> = JSON.parse(data);
 
     // Check if any wallet has plaintext mnemonic
     for (const walletData of Object.values(wallets)) {
@@ -181,10 +181,8 @@ function needsMigration() {
 
 /**
  * Validates mnemonic phrase format and checksum
- * @param {string} mnemonic - Mnemonic phrase to validate
- * @returns {boolean} - True if valid
  */
-function validateMnemonic(mnemonic) {
+export function validateMnemonic(mnemonic: string): boolean {
   if (!mnemonic || typeof mnemonic !== 'string') {
     return false;
   }
@@ -208,11 +206,9 @@ function validateMnemonic(mnemonic) {
 /**
  * Safely writes JSON to file with atomic operation
  * Creates backup before writing, writes to temp file first, then renames
- * @param {string} filePath - Path to file
- * @param {Object} data - Data to write
  * @throws {Error} - If write fails
  */
-function safeWriteJSON(filePath, data) {
+export function safeWriteJSON<T>(filePath: string, data: T): void {
   const tempPath = `${filePath}.tmp`;
   const backupPath = `${filePath}.backup`;
 
@@ -248,17 +244,16 @@ function safeWriteJSON(filePath, data) {
       fs.copyFileSync(backupPath, filePath);
     }
 
-    throw new Error(`Failed to write file: ${error.message}`);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to write file: ${errorMessage}`);
   }
 }
 
 /**
  * Safely reads and parses JSON file with recovery
- * @param {string} filePath - Path to file
- * @returns {Object} - Parsed JSON data
  * @throws {Error} - If file cannot be read or recovered
  */
-function safeReadJSON(filePath) {
+export function safeReadJSON<T = any>(filePath: string): T {
   const backupPath = `${filePath}.backup`;
 
   try {
@@ -266,22 +261,22 @@ function safeReadJSON(filePath) {
       // Try backup if main file doesn't exist
       if (fs.existsSync(backupPath)) {
         const data = fs.readFileSync(backupPath, 'utf8');
-        const parsed = JSON.parse(data);
+        const parsed = JSON.parse(data) as T;
         // Restore main file from backup
         fs.copyFileSync(backupPath, filePath);
         return parsed;
       }
-      return {};
+      return {} as T;
     }
 
     const data = fs.readFileSync(filePath, 'utf8');
-    return JSON.parse(data);
+    return JSON.parse(data) as T;
   } catch (error) {
     // Try to recover from backup
     if (fs.existsSync(backupPath)) {
       try {
         const backupData = fs.readFileSync(backupPath, 'utf8');
-        const parsed = JSON.parse(backupData);
+        const parsed = JSON.parse(backupData) as T;
         // Restore main file from backup
         fs.copyFileSync(backupPath, filePath);
         return parsed;
@@ -289,21 +284,7 @@ function safeReadJSON(filePath) {
         throw new Error('Both main file and backup are corrupted');
       }
     }
-    throw new Error(`Failed to read file: ${error.message}`);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to read file: ${errorMessage}`);
   }
 }
-
-export {
-  validatePasswordLength,
-  generateSalt,
-  deriveKey,
-  encryptData,
-  decryptData,
-  encryptMnemonic,
-  decryptMnemonic,
-  hasExistingWallets,
-  needsMigration,
-  validateMnemonic,
-  safeWriteJSON,
-  safeReadJSON
-};

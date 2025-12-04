@@ -4,7 +4,7 @@ import inquirer from 'inquirer';
 
 process.env.NODE_ENV = 'test';
 
-const app = await import('../index.js');
+const app = await import('../dist/index.js');
 
 function withPromptQueue(queue, fn) {
   const originalPrompt = inquirer.prompt;

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as ethers from 'ethers';
 
-import { Wallet } from '../wallet.js';
+import { Wallet } from '../dist/wallet.js';
 
 test('provider failover uses next RPC when first fails', async () => {
   const calls = [];
@@ -26,8 +26,7 @@ test('provider failover uses next RPC when first fails', async () => {
     networks: {
       mainnet: {
         chainId: 1,
-        rpcUrl: 'https://bad-rpc.example',
-        rpcUrls: ['https://good-rpc.example']
+        rpcUrl: ['https://bad-rpc.example', 'https://good-rpc.example']
       }
     }
   };

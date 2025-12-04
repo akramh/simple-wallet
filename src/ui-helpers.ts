@@ -2,15 +2,33 @@ import chalk from 'chalk';
 
 // UI Helper Functions for Consistent Formatting
 
+type BoxType = 'info' | 'success' | 'warning' | 'error';
+
+interface MenuSeparator {
+  type: 'separator';
+  line: string;
+}
+
+interface MenuChoice {
+  name: string;
+  value: string;
+}
+
+interface TransactionReceipt {
+  hash: string;
+  blockNumber: number;
+  gasUsed: bigint | string;
+}
+
 /**
  * Display a header with context information
  */
-export function showHeader(walletName = null, accountIndex = null, networkName = null, address = null) {
+export function showHeader(walletName: string | null = null, accountIndex: number | null = null, networkName: string | null = null, address: string | null = null): void {
   console.log('\n' + chalk.cyan('═'.repeat(60)));
   console.log(chalk.cyan.bold('  Simple Crypto Wallet'));
 
   if (walletName || accountIndex !== null || networkName) {
-    const parts = [];
+    const parts: string[] = [];
     if (walletName) parts.push(chalk.white(`Wallet: ${walletName}`));
     if (accountIndex !== null) parts.push(chalk.white(`Account #${accountIndex + 1}`));
     if (networkName) parts.push(chalk.white(networkName));
@@ -28,22 +46,22 @@ export function showHeader(walletName = null, accountIndex = null, networkName =
 /**
  * Display a section header
  */
-export function showSection(title) {
+export function showSection(title: string): void {
   console.log(chalk.bold.white(title.toUpperCase()));
 }
 
 /**
  * Display a separator
  */
-export function showSeparator() {
+export function showSeparator(): void {
   console.log(chalk.gray('─'.repeat(60)));
 }
 
 /**
  * Display a box around important information
  */
-export function showBox(title, content, type = 'info') {
-  const colors = {
+export function showBox(title: string, content: string, type: BoxType = 'info'): void {
+  const colors: Record<BoxType, typeof chalk.blue> = {
     info: chalk.blue,
     success: chalk.green,
     warning: chalk.yellow,
@@ -68,14 +86,14 @@ export function showBox(title, content, type = 'info') {
 /**
  * Success message
  */
-export function showSuccess(message) {
+export function showSuccess(message: string): void {
   console.log(chalk.green('✓') + ' ' + chalk.white(message));
 }
 
 /**
  * Error message with optional suggestions
  */
-export function showError(message, suggestions = []) {
+export function showError(message: string, suggestions: string[] = []): void {
   console.log('\n' + chalk.red.bold('✗ Error\n'));
   console.log(chalk.white(message) + '\n');
 
@@ -91,28 +109,28 @@ export function showError(message, suggestions = []) {
 /**
  * Warning message
  */
-export function showWarning(message) {
+export function showWarning(message: string): void {
   console.log(chalk.yellow('⚠') + ' ' + chalk.white(message));
 }
 
 /**
  * Info message
  */
-export function showInfo(message) {
+export function showInfo(message: string): void {
   console.log(chalk.blue('ℹ') + ' ' + chalk.white(message));
 }
 
 /**
  * Loading message
  */
-export function showLoading(message) {
+export function showLoading(message: string): void {
   console.log(chalk.cyan('⏳') + ' ' + chalk.white(message));
 }
 
 /**
  * Format an Ethereum address for display
  */
-export function formatAddress(address) {
+export function formatAddress(address: string): string {
   if (!address) return '';
   return chalk.cyan(address.toLowerCase());
 }
@@ -120,14 +138,14 @@ export function formatAddress(address) {
 /**
  * Format ETH amount for display
  */
-export function formatAmount(amount, currency = 'ETH') {
+export function formatAmount(amount: string, currency: string = 'ETH'): string {
   return chalk.green.bold(amount) + ' ' + chalk.gray(currency);
 }
 
 /**
  * Format a transaction hash
  */
-export function formatTxHash(hash) {
+export function formatTxHash(hash: string): string {
   if (!hash) return '';
   return chalk.magenta(hash);
 }
@@ -135,7 +153,7 @@ export function formatTxHash(hash) {
 /**
  * Display account information in a clean format
  */
-export function showAccountInfo(address, balance = null) {
+export function showAccountInfo(address: string, balance: string | null = null): void {
   console.log('\n' + chalk.gray('━'.repeat(60)));
   console.log(chalk.white.bold('Account Information'));
   console.log(chalk.gray('━'.repeat(60)));
@@ -149,7 +167,7 @@ export function showAccountInfo(address, balance = null) {
 /**
  * Create a menu separator for inquirer choices
  */
-export function menuSeparator(label = '') {
+export function menuSeparator(label: string = ''): MenuSeparator {
   return {
     type: 'separator',
     line: chalk.gray('─'.repeat(60))
@@ -159,7 +177,7 @@ export function menuSeparator(label = '') {
 /**
  * Format menu choice with description
  */
-export function menuChoice(name, description = '', value = null) {
+export function menuChoice(name: string, description: string = '', value: string | null = null): MenuChoice {
   const displayName = description
     ? `${chalk.white(name.padEnd(30))} ${chalk.gray(description)}`
     : chalk.white(name);
@@ -173,14 +191,14 @@ export function menuChoice(name, description = '', value = null) {
 /**
  * Clear screen helper
  */
-export function clearScreen() {
+export function clearScreen(): void {
   console.clear();
 }
 
 /**
  * Display mnemonic in a secure box
  */
-export function showMnemonic(mnemonic) {
+export function showMnemonic(mnemonic: string): void {
   const words = mnemonic.split(' ');
   const halfLength = Math.ceil(words.length / 2);
 
@@ -209,8 +227,8 @@ export function showMnemonic(mnemonic) {
 /**
  * Get block explorer URL for a transaction
  */
-export function getBlockExplorerUrl(txHash, networkKey) {
-  const explorers = {
+export function getBlockExplorerUrl(txHash: string, networkKey: string): string | null {
+  const explorers: Record<string, string> = {
     mainnet: `https://etherscan.io/tx/${txHash}`,
     sepolia: `https://sepolia.etherscan.io/tx/${txHash}`,
     goerli: `https://goerli.etherscan.io/tx/${txHash}`,
@@ -228,7 +246,7 @@ export function getBlockExplorerUrl(txHash, networkKey) {
 /**
  * Display transaction details with block explorer link
  */
-export function showTransactionDetails(receipt, networkKey) {
+export function showTransactionDetails(receipt: TransactionReceipt, networkKey: string): void {
   showSeparator();
   console.log(chalk.gray('Hash:      ') + formatTxHash(receipt.hash));
   console.log(chalk.gray('Block:     ') + chalk.white(receipt.blockNumber));

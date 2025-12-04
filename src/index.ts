@@ -6,35 +6,38 @@ import { ethers } from 'ethers';
 import chalk from 'chalk';
 import { validatePasswordLength, hasExistingWallets, needsMigration, encryptMnemonic, validateMnemonic } from './crypto-utils.js';
 import * as ui from './ui-helpers.js';
+import type { Config, Token, TokenRegistry, TokenMetadata } from './types/index.js';
 
-const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
+// Load and type config
+const configData = JSON.parse(fs.readFileSync('config.json', 'utf8')) as Config & { network: string };
+const config: Config & { network: string } = configData;
 const wallet = new Wallet(config);
 
 // Token registry (built-in + user-added)
 const TOKEN_LIST_PATH = 'tokens.json';
 const CUSTOM_TOKENS_PATH = 'tokens-user.json';
 
-const builtInTokens = safeReadJSON(TOKEN_LIST_PATH, {});
-let customTokens = safeReadJSON(CUSTOM_TOKENS_PATH, {});
+const builtInTokens: TokenRegistry = safeReadJSON(TOKEN_LIST_PATH, {});
+let customTokens: TokenRegistry = safeReadJSON(CUSTOM_TOKENS_PATH, {});
 
 // Global password cache (in-memory only)
-let masterPassword = null;
-let currentWalletName = null;
+let masterPassword: string | null = null;
+let currentWalletName: string | null = null;
 
-function safeReadJSON(path, fallback = {}) {
+function safeReadJSON<T>(path: string, fallback: T): T {
   try {
     if (!fs.existsSync(path)) return fallback;
-    return JSON.parse(fs.readFileSync(path, 'utf8'));
+    return JSON.parse(fs.readFileSync(path, 'utf8')) as T;
   } catch (error) {
     return fallback;
   }
 }
 
-function saveCustomTokens() {
+function saveCustomTokens(): void {
   fs.writeFileSync(CUSTOM_TOKENS_PATH, JSON.stringify(customTokens, null, 2));
 }
 
-function getNativeToken(networkKey) {
+function getNativeToken(networkKey: string): Token {
   const networkConfig = config.networks[networkKey] || {};
   const symbol = networkConfig.nativeSymbol || 'ETH';
   const name = networkConfig.nativeName || networkConfig.name || 'Ether';
@@ -42,19 +45,20 @@ function getNativeToken(networkKey) {
     symbol,
     type: 'native',
     decimals: 18,
-    name
+    name,
+    address: ''
   };
 }
 
-function getTokensForNetwork(networkKey) {
-  const tokens = [];
+function getTokensForNetwork(networkKey: string): Token[] {
+  const tokens: Token[] = [];
   const nativeToken = getNativeToken(networkKey);
 
   // Always include native token first
   tokens.push(nativeToken);
 
-  const seenAddresses = new Set();
-  const appendToken = (token) => {
+  const seenAddresses = new Set<string>();
+  const appendToken = (token: Token): void => {
     if (token.type === 'native') {
       return;
     }
@@ -78,7 +82,7 @@ function getTokensForNetwork(networkKey) {
   return tokens;
 }
 
-function upsertCustomToken(networkKey, token) {
+function upsertCustomToken(networkKey: string, token: Token): void {
   if (!customTokens[networkKey]) {
     customTokens[networkKey] = [];
   }
@@ -93,18 +97,18 @@ function upsertCustomToken(networkKey, token) {
   saveCustomTokens();
 }
 
-function deleteCustomToken(networkKey, address) {
+function deleteCustomToken(networkKey: string, address: string): void {
   if (!customTokens[networkKey]) return;
   customTokens[networkKey] = customTokens[networkKey].filter(t => t.address.toLowerCase() !== address.toLowerCase());
   saveCustomTokens();
 }
 
-function findTokenBySymbol(networkKey, symbol) {
+function findTokenBySymbol(networkKey: string, symbol: string): Token | undefined {
   const tokens = getTokensForNetwork(networkKey);
   return tokens.find(t => t.symbol.toLowerCase() === symbol.toLowerCase());
 }
 
-async function main() {
+async function main(): Promise<void> {
   ui.clearScreen();
   ui.showHeader(null, null, config.networks[config.network].name);
 
@@ -126,7 +130,7 @@ async function main() {
 }
 
 // Password management functions
-async function promptMasterPasswordSetup() {
+async function promptMasterPasswordSetup(): Promise<string> {
   console.log('\n═══════════════════════════════════════');
   console.log('    🔐 Master Password Setup');
   console.log('═══════════════════════════════════════');
@@ -135,7 +139,7 @@ async function promptMasterPasswordSetup() {
   console.log('Minimum 8 characters required.\n');
 
   while (true) {
-    const { password } = await inquirer.prompt([
+    const { password } = await inquirer.prompt<{ password: string }>([
       {
         type: 'password',
         name: 'password',
@@ -149,7 +153,7 @@ async function promptMasterPasswordSetup() {
       continue;
     }
 
-    const { confirm } = await inquirer.prompt([
+    const { confirm } = await inquirer.prompt<{ confirm: string }>([
       {
         type: 'password',
         name: 'confirm',
@@ -169,8 +173,8 @@ async function promptMasterPasswordSetup() {
   }
 }
 
-async function promptMasterPassword() {
-  const { password } = await inquirer.prompt([
+async function promptMasterPassword(): Promise<string> {
+  const { password } = await inquirer.prompt<{ password: string }>([
     {
       type: 'password',
       name: 'password',
@@ -182,19 +186,19 @@ async function promptMasterPassword() {
   return password;
 }
 
-async function ensureMasterPassword() {
+async function ensureMasterPassword(): Promise<string> {
   if (!masterPassword) {
     masterPassword = await promptMasterPassword();
   }
   return masterPassword;
 }
 
-async function migrateExistingWallets() {
+async function migrateExistingWallets(): Promise<void> {
   console.log('\n⚠️  MIGRATION REQUIRED\n');
   console.log('Your wallets are stored in plaintext format.');
   console.log('For security, they need to be encrypted with a password.\n');
 
-  const { proceed } = await inquirer.prompt([
+  const { proceed } = await inquirer.prompt<{ proceed: boolean }>([
     {
       type: 'confirm',
       name: 'proceed',
@@ -214,7 +218,7 @@ async function migrateExistingWallets() {
 
     // Read existing wallets
     const data = fs.readFileSync('./wallets.json', 'utf8');
-    const wallets = JSON.parse(data);
+    const wallets: Record<string, any> = JSON.parse(data);
 
     // Backup original file
     fs.writeFileSync('./wallets.json.backup', data);
@@ -243,12 +247,13 @@ async function migrateExistingWallets() {
     console.log('Original backup: wallets.json.backup\n');
 
   } catch (error) {
-    console.log(`\n❌ Migration error: ${error.message}\n`);
+    const err = error as Error;
+    console.log(`\n❌ Migration error: ${err.message}\n`);
     process.exit(1);
   }
 }
 
-async function selectWalletMenu(existingWallets) {
+async function selectWalletMenu(existingWallets: Record<string, any>): Promise<void> {
   ui.clearScreen();
   ui.showHeader();
 
@@ -273,11 +278,11 @@ async function selectWalletMenu(existingWallets) {
     );
   });
 
-  walletChoices.push(new inquirer.Separator());
+  walletChoices.push(new inquirer.Separator() as any);
   walletChoices.push(ui.menuChoice('Add New Wallet', '', 'add_new'));
   walletChoices.push(ui.menuChoice('Exit', '', 'exit'));
 
-  const { selectedWallet } = await inquirer.prompt([
+  const { selectedWallet } = await inquirer.prompt<{ selectedWallet: string }>([
     {
       type: 'list',
       name: 'selectedWallet',
@@ -322,11 +327,11 @@ async function selectWalletMenu(existingWallets) {
   }
 }
 
-async function initialMenu() {
+async function initialMenu(): Promise<void> {
   ui.showInfo('No wallet loaded. Create a new wallet or import an existing one.');
   console.log('');
 
-  const { action } = await inquirer.prompt([
+  const { action } = await inquirer.prompt<{ action: string }>([
     {
       type: 'list',
       name: 'action',
@@ -371,7 +376,7 @@ async function initialMenu() {
   }
 }
 
-async function createWallet() {
+async function createWallet(): Promise<void> {
   ui.clearScreen();
   ui.showHeader();
   ui.showLoading('Creating new wallet...');
@@ -380,7 +385,7 @@ async function createWallet() {
   const isFirstWallet = !hasExistingWallets();
 
   // Get password (setup or use cached)
-  let password;
+  let password: string;
   if (isFirstWallet) {
     password = await promptMasterPasswordSetup();
   } else {
@@ -397,7 +402,7 @@ async function createWallet() {
   ui.showAccountInfo(walletData.address);
   ui.showMnemonic(walletData.mnemonic);
 
-  const answers = await inquirer.prompt([
+  const answers = await inquirer.prompt<{ save: boolean; walletName?: string }>([
     {
       type: 'confirm',
       name: 'save',
@@ -423,29 +428,29 @@ async function createWallet() {
     }
   ]);
 
-  let savedWalletName = null;
-  if (answers.save) {
+  let savedWalletName: string | null = null;
+  if (answers.save && answers.walletName) {
     savedWalletName = wallet.saveWallet(answers.walletName.trim());
   }
 
   await mainMenu(savedWalletName);
 }
 
-async function importWallet() {
+async function importWallet(): Promise<void> {
   console.log('\n📥 Import Wallet\n');
 
   // Check if first-time setup
   const isFirstWallet = !hasExistingWallets();
 
   // Get password (setup or use cached)
-  let password;
+  let password: string;
   if (isFirstWallet) {
     password = await promptMasterPasswordSetup();
   } else {
     password = await ensureMasterPassword();
   }
 
-  const { mnemonic } = await inquirer.prompt([
+  const { mnemonic } = await inquirer.prompt<{ mnemonic: string }>([
     {
       type: 'input',
       name: 'mnemonic',
@@ -465,7 +470,7 @@ async function importWallet() {
     console.log('\n✅ Wallet imported successfully!');
     console.log('📍 Address:', walletData.address, '\n');
 
-    const answers = await inquirer.prompt([
+    const answers = await inquirer.prompt<{ save: boolean; walletName?: string }>([
       {
         type: 'confirm',
         name: 'save',
@@ -491,19 +496,20 @@ async function importWallet() {
       }
     ]);
 
-    let savedWalletName = null;
-    if (answers.save) {
+    let savedWalletName: string | null = null;
+    if (answers.save && answers.walletName) {
       savedWalletName = wallet.saveWallet(answers.walletName.trim());
     }
 
     await mainMenu(savedWalletName);
   } catch (error) {
-    console.log('\n❌ Error:', error.message, '\n');
+    const err = error as Error;
+    console.log('\n❌ Error:', err.message, '\n');
     await initialMenu();
   }
 }
 
-async function importWalletFromBackup() {
+async function importWalletFromBackup(): Promise<void> {
   ui.clearScreen();
   ui.showHeader();
 
@@ -511,7 +517,7 @@ async function importWalletFromBackup() {
   ui.showInfo('Restore a wallet from an encrypted backup file');
   console.log('');
 
-  const { backupPath } = await inquirer.prompt([
+  const { backupPath } = await inquirer.prompt<{ backupPath: string }>([
     {
       type: 'input',
       name: 'backupPath',
@@ -529,7 +535,7 @@ async function importWalletFromBackup() {
   ]);
 
   // Get password for the backup
-  const { backupPassword } = await inquirer.prompt([
+  const { backupPassword } = await inquirer.prompt<{ backupPassword: string }>([
     {
       type: 'password',
       name: 'backupPassword',
@@ -557,7 +563,7 @@ async function importWalletFromBackup() {
 
     ui.showSuccess(`Wallet imported successfully as: ${importedWalletName}`);
 
-    await inquirer.prompt([{
+    await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
@@ -571,13 +577,14 @@ async function importWalletFromBackup() {
       await initialMenu();
     }
   } catch (error) {
-    ui.showError(`Import failed: ${error.message}`, [
+    const err = error as Error;
+    ui.showError(`Import failed: ${err.message}`, [
       'Verify the backup file is valid',
       'Check that the password is correct',
       'Ensure the file has not been corrupted'
     ]);
 
-    await inquirer.prompt([{
+    await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
@@ -587,7 +594,7 @@ async function importWalletFromBackup() {
   }
 }
 
-async function mainMenu(walletName) {
+async function mainMenu(walletName: string | null): Promise<void> {
   currentWalletName = walletName;
   const currentAddress = wallet.getAddress();
   const accountIndex = wallet.currentAccountIndex;
@@ -595,7 +602,7 @@ async function mainMenu(walletName) {
   ui.clearScreen();
   ui.showHeader(walletName, accountIndex, config.networks[config.network].name, currentAddress);
 
-  const { action } = await inquirer.prompt([
+  const { action } = await inquirer.prompt<{ action: string }>([
     {
       type: 'list',
       name: 'action',
@@ -671,7 +678,7 @@ async function mainMenu(walletName) {
   }
 }
 
-async function checkBalance(currentWalletName) {
+async function checkBalance(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
@@ -698,8 +705,9 @@ async function checkBalance(currentWalletName) {
     ui.showSeparator();
 
   } catch (error) {
+    const err = error as Error;
     ui.showError(
-      error.message,
+      err.message,
       [
         'Check your internet connection',
         'Verify the network RPC endpoint in config.json',
@@ -708,7 +716,7 @@ async function checkBalance(currentWalletName) {
     );
   }
 
-  await inquirer.prompt([{
+  await inquirer.prompt<{ continue: string }>([{
     type: 'input',
     name: 'continue',
     message: 'Press Enter to continue...'
@@ -717,14 +725,19 @@ async function checkBalance(currentWalletName) {
   await mainMenu(currentWalletName);
 }
 
-async function checkPortfolioAllNetworks(currentWalletName) {
+async function checkPortfolioAllNetworks(currentWalletName: string | null): Promise<void> {
   const originalNetwork = config.network;
   const address = wallet.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, 'All Networks', address);
 
   const networks = Object.keys(config.networks);
-  const results = [];
+  const results: Array<{
+    network: string;
+    success: boolean;
+    portfolio?: Array<{ token: Token; balance: string; error?: string }>;
+    error?: string;
+  }> = [];
 
   for (const net of networks) {
     try {
@@ -734,7 +747,8 @@ async function checkPortfolioAllNetworks(currentWalletName) {
       const portfolio = await wallet.getPortfolio(tokens);
       results.push({ network: net, success: true, portfolio });
     } catch (error) {
-      results.push({ network: net, success: false, error: error.message });
+      const err = error as Error;
+      results.push({ network: net, success: false, error: err.message });
     }
   }
 
@@ -742,14 +756,14 @@ async function checkPortfolioAllNetworks(currentWalletName) {
   await wallet.setNetwork(originalNetwork);
 
   results.forEach(({ network, success, portfolio, error }) => {
-    ui.showSection(config.networks[network].name);
+    ui.showSection(config.networks[network]?.name || network);
     if (!success) {
       ui.showWarning(`Failed: ${error}`);
       console.log('');
       return;
     }
     ui.showSeparator();
-    portfolio.forEach(({ token, balance, error: tokenError }) => {
+    portfolio?.forEach(({ token, balance, error: tokenError }) => {
       const label = `${token.symbol}${token.type === 'native' ? ' (native)' : ''}`.padEnd(18);
       if (tokenError) {
         console.log(`${label} ${chalk.red('Error')} ${chalk.gray(`(${tokenError})`)}`);
@@ -761,7 +775,7 @@ async function checkPortfolioAllNetworks(currentWalletName) {
     console.log('');
   });
 
-  await inquirer.prompt([{
+  await inquirer.prompt<{ continue: string }>([{
     type: 'input',
     name: 'continue',
     message: 'Press Enter to continue...'
@@ -770,7 +784,7 @@ async function checkPortfolioAllNetworks(currentWalletName) {
   await mainMenu(currentWalletName);
 }
 
-async function sendCrypto(currentWalletName) {
+async function sendCrypto(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
@@ -780,7 +794,7 @@ async function sendCrypto(currentWalletName) {
   console.log('');
 
   const tokens = getTokensForNetwork(config.network);
-  const { tokenSymbol } = await inquirer.prompt([
+  const { tokenSymbol } = await inquirer.prompt<{ tokenSymbol: string }>([
     {
       type: 'list',
       name: 'tokenSymbol',
@@ -801,7 +815,11 @@ async function sendCrypto(currentWalletName) {
   }
   const tokenLabel = `${selectedToken.symbol}${selectedToken.type === 'native' ? ' (native)' : ''}`;
 
-  const answers = await inquirer.prompt([
+  const answers = await inquirer.prompt<{
+    toAddress?: string;
+    amount?: string;
+    confirm?: boolean;
+  }>([
     {
       type: 'input',
       name: 'toAddress',
@@ -859,19 +877,20 @@ async function sendCrypto(currentWalletName) {
     ui.showTransactionDetails(receipt, config.network);
     console.log('');
 
-    await inquirer.prompt([{
+    await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
     }]);
   } catch (error) {
-    ui.showError(`Transaction failed: ${error.message}`, [
+    const err = error as Error;
+    ui.showError(`Transaction failed: ${err.message}`, [
       'Verify you have sufficient balance for the transaction and gas fees',
       'Check that the recipient address is valid',
       'Ensure your network connection is stable'
     ]);
 
-    await inquirer.prompt([{
+    await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
@@ -881,7 +900,7 @@ async function sendCrypto(currentWalletName) {
   await mainMenu(currentWalletName);
 }
 
-async function showReceiveAddress(currentWalletName) {
+async function showReceiveAddress(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
@@ -901,7 +920,7 @@ async function showReceiveAddress(currentWalletName) {
   qrcode.generate(address, { small: true });
   console.log('');
 
-  await inquirer.prompt([{
+  await inquirer.prompt<{ continue: string }>([{
     type: 'input',
     name: 'continue',
     message: 'Press Enter to continue...'
@@ -910,7 +929,7 @@ async function showReceiveAddress(currentWalletName) {
   await mainMenu(currentWalletName);
 }
 
-async function showWalletSecrets(currentWalletName) {
+async function showWalletSecrets(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
@@ -945,7 +964,7 @@ async function showWalletSecrets(currentWalletName) {
     console.log(chalk.white('  • Store them securely offline'));
     console.log(chalk.white('  • Clear your terminal history if needed\n'));
 
-    const { whatNext } = await inquirer.prompt([
+    const { whatNext } = await inquirer.prompt<{ whatNext: string }>([
       {
         type: 'list',
         name: 'whatNext',
@@ -966,11 +985,12 @@ async function showWalletSecrets(currentWalletName) {
       await mainMenu(currentWalletName);
     }
   } catch (error) {
-    ui.showError(`Error retrieving wallet secrets: ${error.message}`, [
+    const err = error as Error;
+    ui.showError(`Error retrieving wallet secrets: ${err.message}`, [
       'Verify your password is correct',
       'Ensure the wallet is properly loaded'
     ]);
-    await inquirer.prompt([{
+    await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
@@ -979,7 +999,7 @@ async function showWalletSecrets(currentWalletName) {
   }
 }
 
-async function exportWallet(currentWalletName) {
+async function exportWallet(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
@@ -988,7 +1008,7 @@ async function exportWallet(currentWalletName) {
   ui.showInfo('Create an encrypted backup of your wallet');
   console.log('');
 
-  const { exportPath } = await inquirer.prompt([
+  const { exportPath } = await inquirer.prompt<{ exportPath: string }>([
     {
       type: 'input',
       name: 'exportPath',
@@ -1007,18 +1027,22 @@ async function exportWallet(currentWalletName) {
   ]);
 
   try {
+    if (!currentWalletName) {
+      throw new Error('No wallet name specified');
+    }
     wallet.exportWallet(currentWalletName, exportPath);
     ui.showSuccess(`Wallet exported successfully to: ${exportPath}`);
     ui.showWarning('Keep this backup file secure!');
     ui.showInfo('This file contains your encrypted wallet and can be imported later');
   } catch (error) {
-    ui.showError(`Export failed: ${error.message}`, [
+    const err = error as Error;
+    ui.showError(`Export failed: ${err.message}`, [
       'Check that you have write permissions for the destination',
       'Ensure the wallet is properly loaded'
     ]);
   }
 
-  await inquirer.prompt([{
+  await inquirer.prompt<{ continue: string }>([{
     type: 'input',
     name: 'continue',
     message: 'Press Enter to continue...'
@@ -1027,7 +1051,7 @@ async function exportWallet(currentWalletName) {
   await mainMenu(currentWalletName);
 }
 
-async function manageTokens(currentWalletName) {
+async function manageTokens(currentWalletName: string | null): Promise<void> {
   const networkKey = config.network;
   const tokens = getTokensForNetwork(networkKey);
 
@@ -1053,7 +1077,7 @@ async function manageTokens(currentWalletName) {
 
   choices.push(ui.menuChoice('Back to Main Menu', '', 'back'));
 
-  const { action } = await inquirer.prompt([
+  const { action } = await inquirer.prompt<{ action: string }>([
     {
       type: 'list',
       name: 'action',
@@ -1077,8 +1101,8 @@ async function manageTokens(currentWalletName) {
   await mainMenu(currentWalletName);
 }
 
-async function addCustomToken(networkKey) {
-  const { address } = await inquirer.prompt([
+async function addCustomToken(networkKey: string): Promise<void> {
+  const { address } = await inquirer.prompt<{ address: string }>([
     {
       type: 'input',
       name: 'address',
@@ -1092,7 +1116,7 @@ async function addCustomToken(networkKey) {
     }
   ]);
 
-  let checksummed;
+  let checksummed: string;
   try {
     checksummed = ethers.getAddress(address);
   } catch (e) {
@@ -1100,17 +1124,22 @@ async function addCustomToken(networkKey) {
     return;
   }
 
-  let metadata;
+  let metadata: TokenMetadata | null = null;
   try {
     ui.showLoading('Fetching token metadata from chain...');
     metadata = await wallet.getTokenMetadata(checksummed);
     ui.showSuccess(`Detected token ${metadata.symbol} (${metadata.decimals} decimals)`);
   } catch (error) {
-    ui.showWarning(`Auto-detect failed: ${error.message}`);
+    const err = error as Error;
+    ui.showWarning(`Auto-detect failed: ${err.message}`);
   }
 
   if (!metadata) {
-    metadata = await inquirer.prompt([
+    const manualMetadata = await inquirer.prompt<{
+      symbol: string;
+      decimals: string;
+      name: string;
+    }>([
       {
         type: 'input',
         name: 'symbol',
@@ -1136,22 +1165,33 @@ async function addCustomToken(networkKey) {
         default: ''
       }
     ]);
-    metadata.address = checksummed;
-    metadata.decimals = Number(metadata.decimals);
+    metadata = {
+      symbol: manualMetadata.symbol,
+      decimals: Number(manualMetadata.decimals),
+      name: manualMetadata.name
+    };
   }
 
-  upsertCustomToken(networkKey, metadata);
+  const tokenToAdd: Token = {
+    address: checksummed,
+    symbol: metadata.symbol,
+    decimals: metadata.decimals,
+    name: metadata.name,
+    type: 'erc20'
+  };
+
+  upsertCustomToken(networkKey, tokenToAdd);
   ui.showSuccess(`Added ${metadata.symbol} to ${config.networks[networkKey].name}`);
 }
 
-async function removeCustomToken(networkKey) {
+async function removeCustomToken(networkKey: string): Promise<void> {
   const custom = customTokens[networkKey] || [];
   if (custom.length === 0) {
     ui.showWarning('No custom tokens to remove for this network.');
     return;
   }
 
-  const { address } = await inquirer.prompt([
+  const { address } = await inquirer.prompt<{ address: string }>([
     {
       type: 'list',
       name: 'address',
@@ -1164,11 +1204,17 @@ async function removeCustomToken(networkKey) {
   ui.showSuccess('Token removed.');
 }
 
-async function manageAccounts(currentWalletName) {
+async function manageAccounts(currentWalletName: string | null): Promise<void> {
   console.log('\n👤 Manage Accounts\n');
 
+  if (!currentWalletName) {
+    console.log('\n⚠️  No wallet name specified\n');
+    await mainMenu(currentWalletName);
+    return;
+  }
+
   const savedAccounts = wallet.getWalletAccounts(currentWalletName);
-  const accountChoices = [];
+  const accountChoices: Array<{ name: string; value: { action: string; index?: number } }> = [];
 
   // Get all account indices and sort them
   const accountIndices = Object.keys(savedAccounts).map(idx => parseInt(idx)).sort((a, b) => a - b);
@@ -1180,7 +1226,7 @@ async function manageAccounts(currentWalletName) {
 
   // Show all accounts in sequence
   accountIndices.forEach(index => {
-    let address;
+    let address: string;
     if (savedAccounts[index]) {
       address = savedAccounts[index].address;
     } else {
@@ -1198,7 +1244,9 @@ async function manageAccounts(currentWalletName) {
   accountChoices.push({ name: '➕ Create New Account', value: { action: 'create' } });
   accountChoices.push({ name: '🔙 Back to Main Menu', value: { action: 'back' } });
 
-  const { selected } = await inquirer.prompt([
+  const { selected } = await inquirer.prompt<{
+    selected: { action: string; index?: number }
+  }>([
     {
       type: 'list',
       name: 'selected',
@@ -1222,10 +1270,11 @@ async function manageAccounts(currentWalletName) {
       wallet.saveWallet(currentWalletName);
       await mainMenu(currentWalletName);
     } catch (error) {
-      console.log(`\n❌ Error creating account: ${error.message}\n`);
+      const err = error as Error;
+      console.log(`\n❌ Error creating account: ${err.message}\n`);
       await manageAccounts(currentWalletName);
     }
-  } else if (selected.action === 'switch') {
+  } else if (selected.action === 'switch' && selected.index !== undefined) {
     if (selected.index !== wallet.currentAccountIndex) {
       const switchedAccount = wallet.switchAccount(selected.index);
       console.log(`\n✅ Switched to Account ${selected.index + 1}`);
@@ -1237,10 +1286,10 @@ async function manageAccounts(currentWalletName) {
   }
 }
 
-async function changeNetwork() {
+async function changeNetwork(): Promise<void> {
   console.log('\n⚙️  Change Network\n');
 
-  const { network } = await inquirer.prompt([
+  const { network } = await inquirer.prompt<{ network: string }>([
     {
       type: 'list',
       name: 'network',
@@ -1261,10 +1310,11 @@ async function changeNetwork() {
     await wallet.setNetwork(network);
     console.log(`\n✅ Network changed to ${config.networks[network].name}`);
   } catch (error) {
-    ui.showError(`Failed to switch network: ${error.message}`);
+    const err = error as Error;
+    ui.showError(`Failed to switch network: ${err.message}`);
   }
 
-  await inquirer.prompt([{
+  await inquirer.prompt<{ continue: string }>([{
     type: 'input',
     name: 'continue',
     message: 'Press Enter to continue...'
@@ -1285,7 +1335,7 @@ async function changeNetwork() {
   }
 }
 
-async function switchWallet() {
+async function switchWallet(): Promise<void> {
   const existingWallets = wallet.getAllWallets();
 
   if (Object.keys(existingWallets).length > 0) {
@@ -1296,14 +1346,14 @@ async function switchWallet() {
   }
 }
 
-async function deleteCurrentWallet(currentWalletName) {
+async function deleteCurrentWallet(currentWalletName: string | null): Promise<void> {
   if (!currentWalletName) {
     console.log('\n⚠️  No wallet name specified\n');
     await mainMenu(currentWalletName);
     return;
   }
 
-  const { confirm } = await inquirer.prompt([
+  const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
     {
       type: 'confirm',
       name: 'confirm',

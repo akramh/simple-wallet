@@ -8,3 +8,7 @@ backup-*.json
 *.log
 .env
 .claude/
+
+# TypeScript build output
+dist/
+*.tsbuildinfo
