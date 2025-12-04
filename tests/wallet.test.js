@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as ethers from 'ethers';
 
 import { Wallet } from '../dist/wallet.js';
+import { MemoryStorage } from '../dist/storage.js';
 
 test('provider failover uses next RPC when first fails', async () => {
   const calls = [];
@@ -31,8 +32,10 @@ test('provider failover uses next RPC when first fails', async () => {
     }
   };
 
-  const wallet = new Wallet(config);
-  wallet.ProviderClass = MockProvider;
+  const wallet = new Wallet(config, new MemoryStorage());
+  wallet.providerFactory = {
+    createProvider: (url, chainId) => new MockProvider(url, chainId)
+  };
   await wallet.initialize();
 
   assert.equal(wallet.provider.url, 'https://good-rpc.example');
@@ -71,8 +74,10 @@ test('token metadata caches after first fetch', async () => {
     networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
   };
 
-  const wallet = new Wallet(config);
-  wallet.ProviderClass = MockProvider;
+  const wallet = new Wallet(config, new MemoryStorage());
+  wallet.providerFactory = {
+    createProvider: () => new MockProvider()
+  };
   wallet.ContractClass = MockContract;
   await wallet.initialize();
   const meta1 = await wallet.getTokenMetadata('0x0000000000000000000000000000000000000001');
@@ -105,8 +110,10 @@ test('getTokenBalance surfaces BAD_DATA with descriptive error', async () => {
     networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
   };
 
-  const wallet = new Wallet(config);
-  wallet.ProviderClass = MockProvider;
+  const wallet = new Wallet(config, new MemoryStorage());
+  wallet.providerFactory = {
+    createProvider: () => new MockProvider()
+  };
   wallet.ContractClass = MockContract;
   await wallet.initialize();
   wallet.mnemonic = 'test test test test test test test test test test test junk';
@@ -142,8 +149,10 @@ test('setNetwork reconnects wallet to new provider', async () => {
     }
   };
 
-  const wallet = new Wallet(config);
-  wallet.ProviderClass = MockProvider;
+  const wallet = new Wallet(config, new MemoryStorage());
+  wallet.providerFactory = {
+    createProvider: (url, chainId) => new MockProvider(url, chainId)
+  };
   await wallet.initialize();
   // Load a dummy wallet with a mocked account derivation to avoid real key work.
   wallet.mnemonic = 'test test test test test test test test test test test junk';

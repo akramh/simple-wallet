@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "description": "A simple Ethereum wallet with testnet/mainnet support",
   "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./sdk": "./dist/sdk.js",
+    "./sdk-browser": "./dist/sdk-browser.js"
+  },
   "type": "module",
   "scripts": {
     "build": "tsc",

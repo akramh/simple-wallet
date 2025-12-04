@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import type { EncryptionResult } from './types/index.js';
+import type { CryptoAdapter } from './crypto-adapter.js';
+import { createNodeCryptoAdapter } from './crypto-adapter.js';
 
 // Constants - Industry standard encryption parameters
 const ALGORITHM = 'aes-256-gcm';
@@ -9,6 +11,16 @@ const IV_LENGTH = 16; // 128 bits
 const SALT_LENGTH = 32; // 256 bits
 const PBKDF2_ITERATIONS = 100000; // Industry standard (100k iterations)
 const PBKDF2_DIGEST = 'sha256';
+
+let adapter: CryptoAdapter = createNodeCryptoAdapter();
+
+export function setCryptoAdapter(custom: CryptoAdapter): void {
+  adapter = custom;
+}
+
+function getCrypto(): CryptoAdapter {
+  return adapter;
+}
 
 interface LegacyEncryptionResult {
   encrypted: string;
@@ -35,7 +47,7 @@ export function validatePasswordLength(password: string): boolean {
  * Generates a random salt
  */
 export function generateSalt(): string {
-  return crypto.randomBytes(SALT_LENGTH).toString('hex');
+  return Buffer.from(getCrypto().randomBytes(SALT_LENGTH)).toString('hex');
 }
 
 /**
@@ -43,13 +55,13 @@ export function generateSalt(): string {
  */
 export function deriveKey(password: string, saltHex: string): Buffer {
   const salt = Buffer.from(saltHex, 'hex');
-  return crypto.pbkdf2Sync(
+  return Buffer.from(getCrypto().pbkdf2Sync(
     password,
     salt,
     PBKDF2_ITERATIONS,
     KEY_LENGTH,
     PBKDF2_DIGEST
-  );
+  ) as any);
 }
 
 /**
@@ -63,17 +75,17 @@ export function encryptData(plaintext: string, password: string): LegacyEncrypti
   const key = deriveKey(password, salt);
 
   // Generate random IV
-  const iv = crypto.randomBytes(IV_LENGTH);
+  const iv = Buffer.from(getCrypto().randomBytes(IV_LENGTH));
 
   // Create cipher
-  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+  const cipher = getCrypto().createCipheriv(ALGORITHM, key, iv);
 
   // Encrypt
   let encrypted = cipher.update(plaintext, 'utf8', 'hex');
   encrypted += cipher.final('hex');
 
   // Get authentication tag
-  const authTag = cipher.getAuthTag().toString('hex');
+  const authTag = Buffer.from(cipher.getAuthTag()).toString('hex');
 
   // Format: iv:authTag:ciphertext
   const encryptedData = `${iv.toString('hex')}:${authTag}:${encrypted}`;
@@ -103,7 +115,7 @@ export function decryptData(encryptedData: string, password: string, saltHex: st
   const key = deriveKey(password, saltHex);
 
   // Create decipher
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+  const decipher = getCrypto().createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(authTag);
 
   // Decrypt
