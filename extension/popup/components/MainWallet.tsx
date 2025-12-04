@@ -190,19 +190,25 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         currentAccountIndex={currentAccountIndex}
         onNetworkChange={handleNetworkChange}
         onAccountMenuClick={() => setShowAccountMenu(true)}
+        onOpenSettings={() => setView('settings')}
         onLock={handleLock}
       />
 
       {showAccountMenu && (
         <AccountMenu
           currentAddress={address}
+          currentWalletName={currentWalletName}
           onClose={() => setShowAccountMenu(false)}
           onAccountSwitch={() => {
             loadData();
             notifyStateChange();
             setShowAccountMenu(false);
           }}
-          onOpenSettings={() => setView('settings')}
+          onWalletSwitch={() => {
+            loadData();
+            notifyStateChange();
+            setShowAccountMenu(false);
+          }}
           onStateChange={notifyStateChange}
         />
       )}

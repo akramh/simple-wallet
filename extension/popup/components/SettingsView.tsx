@@ -27,6 +27,14 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [createError, setCreateError] = useState('');
+  const [createSuccess, setCreateSuccess] = useState('');
+  const [importError, setImportError] = useState('');
+  const [importSuccess, setImportSuccess] = useState('');
+  const [createMnemonic, setCreateMnemonic] = useState('');
+  const [showMnemonic, setShowMnemonic] = useState(false);
+  const [copyNotice, setCopyNotice] = useState('');
+  const copyTimer = React.useRef<NodeJS.Timeout | null>(null);
   const [createWalletName, setCreateWalletName] = useState('wallet-' + Math.floor(Math.random() * 1000));
   const [importWalletName, setImportWalletName] = useState('wallet-' + Math.floor(Math.random() * 1000));
   const [importMnemonic, setImportMnemonic] = useState('');
@@ -34,6 +42,12 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
   useEffect(() => {
     loadAccounts();
     loadWallets();
+
+    return () => {
+      if (copyTimer.current) {
+        clearTimeout(copyTimer.current);
+      }
+    };
   }, []);
 
   const loadAccounts = async () => {
@@ -187,28 +201,34 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
 
   const handleCreateWallet = async () => {
     if (!createWalletName.trim()) {
-      setError('Please enter a wallet name');
+      setCreateError('Please enter a wallet name');
       return;
     }
 
     setLoading(true);
-    setError('');
-    setSuccess('');
+    setCreateError('');
+    setCreateSuccess('');
+    setCreateMnemonic('');
+    setShowMnemonic(false);
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'CREATE_WALLET',
         payload: { name: createWalletName.trim() }
       });
       if (response.error) {
-        setError(response.error);
+        setCreateError(response.error);
       } else {
-        setSuccess(`Created wallet "${createWalletName}". Save this phrase: ${response.mnemonic}`);
+        setCreateSuccess(`Wallet "${createWalletName}" created.`);
+        setCreateMnemonic(response.mnemonic || '');
+        setShowMnemonic(false);
+        setCreateWalletName('wallet-' + Math.floor(Math.random() * 1000));
         await loadWallets();
+        await loadAccounts();
         onWalletSwitch();
         onStateChange?.();
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to create wallet');
+      setCreateError(err.message || 'Failed to create wallet');
     } finally {
       setLoading(false);
     }
@@ -216,21 +236,22 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
 
   const handleImportWallet = async () => {
     if (!importWalletName.trim()) {
-      setError('Please enter a wallet name');
+      setImportError('Please enter a wallet name');
       return;
     }
     if (!importMnemonic.trim()) {
-      setError('Please enter the recovery phrase');
+      setImportError('Please enter the recovery phrase');
       return;
     }
     const words = importMnemonic.trim().split(/\\s+/);
     if (words.length < 12) {
-      setError('Recovery phrase looks too short');
+      setImportError('Recovery phrase looks too short');
       return;
     }
 
     setLoading(true);
-    setError('');
+    setImportError('');
+    setImportSuccess('');
     setSuccess('');
 
     try {
@@ -240,16 +261,18 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
       });
 
       if (response.error) {
-        setError(response.error);
+        setImportError(response.error);
       } else {
-        setSuccess(`Imported wallet "${importWalletName}"`);
+        setImportSuccess(`Wallet "${importWalletName}" imported.`);
         setImportMnemonic('');
+        setImportWalletName('wallet-' + Math.floor(Math.random() * 1000));
         await loadWallets();
+        await loadAccounts();
         onWalletSwitch();
         onStateChange?.();
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to import wallet');
+      setImportError(err.message || 'Failed to import wallet');
     } finally {
       setLoading(false);
     }
@@ -257,10 +280,10 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <h3 style={{ margin: 0 }}>Settings</h3>
+      <div className="settings-header">
+        <div className="settings-title">Settings</div>
         {onClose && (
-          <button className="btn btn-secondary" onClick={onClose}>
+          <button className="btn btn-secondary btn-inline settings-back-btn" onClick={onClose}>
             ← Back to wallet
           </button>
         )}
@@ -345,65 +368,134 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
       )}
 
       {activeTab === 'wallets' && (
-        <div>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: '240px', background: '#f3f4f6', padding: 12, borderRadius: 12 }}>
-              <h4 style={{ marginTop: 0 }}>Create wallet</h4>
-              <p style={{ fontSize: 12, color: '#6b7280' }}>Uses your master password automatically.</p>
-              <input
-                type="text"
-                placeholder="Wallet name"
-                value={createWalletName}
-                onChange={e => setCreateWalletName(e.target.value)}
-                style={{ width: '100%', marginBottom: 8 }}
-              />
-              <button className="btn btn-primary" onClick={handleCreateWallet} disabled={loading} style={{ width: '100%' }}>
-                {loading ? 'Working...' : 'Create'}
-              </button>
+        <div className="wallets-pane">
+          {(createError || createSuccess) && (
+            <div className={`alert ${createError ? 'alert-error' : 'alert-success'}`}>
+              {createError || createSuccess}
             </div>
-            <div style={{ flex: 1, minWidth: '240px', background: '#f3f4f6', padding: 12, borderRadius: 12 }}>
-              <h4 style={{ marginTop: 0 }}>Import wallet</h4>
-              <p style={{ fontSize: 12, color: '#6b7280' }}>Paste a recovery phrase. Master password is reused.</p>
-              <input
-                type="text"
-                placeholder="Wallet name"
-                value={importWalletName}
-                onChange={e => setImportWalletName(e.target.value)}
-                style={{ width: '100%', marginBottom: 8 }}
-              />
-              <textarea
-                placeholder="Recovery phrase"
-                value={importMnemonic}
-                onChange={e => setImportMnemonic(e.target.value)}
-                rows={3}
-                style={{ width: '100%', marginBottom: 8 }}
-              />
-              <button className="btn btn-secondary" onClick={handleImportWallet} disabled={loading} style={{ width: '100%' }}>
-                {loading ? 'Working...' : 'Import'}
-              </button>
+          )}
+
+          {createMnemonic && (
+            <div className="alert alert-success mnemonic-alert">
+              <div className="mnemonic-row">
+                <span>Recovery phrase ready.</span>
+                <div className="mnemonic-actions">
+                  <button
+                    className="btn btn-secondary btn-inline"
+                    onClick={() => {
+                      navigator.clipboard.writeText(createMnemonic);
+                      setCopyNotice('Copied recovery phrase');
+                      if (copyTimer.current) {
+                        clearTimeout(copyTimer.current);
+                      }
+                      copyTimer.current = setTimeout(() => setCopyNotice(''), 1600);
+                    }}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-inline"
+                    onClick={() => setShowMnemonic(prev => !prev)}
+                  >
+                    {showMnemonic ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </div>
+              {showMnemonic && (
+                <div className="mnemonic-box inline">
+                  {createMnemonic}
+                </div>
+              )}
+            </div>
+          )}
+
+          {(importError || importSuccess) && (
+            <div className={`alert ${importError ? 'alert-error' : 'alert-success'}`}>
+              {importError || importSuccess}
+            </div>
+          )}
+
+          {copyNotice && (
+            <div className="alert alert-success" style={{ marginTop: -4 }}>
+              {copyNotice}
+            </div>
+          )}
+
+          <div className="wallets-actions">
+            <div className="wallet-action-card">
+              <div className="wallet-action-header">
+                <h4>Create wallet</h4>
+                <p>Uses your master password automatically.</p>
+              </div>
+              <div className="wallet-action-body">
+                <input
+                  type="text"
+                  placeholder="Wallet name"
+                  value={createWalletName}
+                  onChange={e => setCreateWalletName(e.target.value)}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={handleCreateWallet}
+                  disabled={loading || !createWalletName.trim()}
+                >
+                  {loading ? 'Working...' : 'Create'}
+                </button>
+              </div>
+            </div>
+
+            <div className="wallet-action-card">
+              <div className="wallet-action-header">
+                <h4>Import wallet</h4>
+                <p>Paste a recovery phrase. Master password is reused.</p>
+              </div>
+              <div className="wallet-action-body">
+                <input
+                  type="text"
+                  placeholder="Wallet name"
+                  value={importWalletName}
+                  onChange={e => setImportWalletName(e.target.value)}
+                />
+                <textarea
+                  placeholder="Recovery phrase"
+                  value={importMnemonic}
+                  onChange={e => setImportMnemonic(e.target.value)}
+                  rows={3}
+                />
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleImportWallet}
+                  disabled={loading || importMnemonic.trim().split(/\s+/).length < 12 || !importWalletName.trim()}
+                >
+                  {loading ? 'Working...' : 'Import'}
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="token-list">
-            {wallets.map((wallet) => (
-              <div key={wallet.name} className="token-item">
-                <div className="token-info">
-                  <div className="token-icon">
-                    W
-                  </div>
-                  <div className="token-details">
-                    <h3>{wallet.name}</h3>
-                    <p>{Object.keys(wallet.accounts).length} account(s)</p>
-                    {wallet.name === currentWalletName && (
-                      <p style={{ fontSize: '12px', color: '#6366f1', margin: 0 }}>ACTIVE</p>
-                    )}
-                  </div>
+          <div className="wallet-list">
+            {wallets
+              .slice()
+              .sort((a, b) => {
+                if (a.name === currentWalletName) return -1;
+                if (b.name === currentWalletName) return 1;
+                return a.name.localeCompare(b.name);
+              })
+              .map((wallet) => (
+              <div
+                key={wallet.name}
+                className={`wallet-list-item ${wallet.name === currentWalletName ? 'active' : ''}`}
+              >
+                <div className="wallet-list-meta">
+                  <div className="wallet-list-title">{wallet.name}</div>
+                  <div className="wallet-list-sub">{Object.keys(wallet.accounts).length} account(s)</div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {wallet.name !== currentWalletName && (
+                <div className="wallet-list-actions">
+                  {wallet.name === currentWalletName ? (
+                    <span className="wallet-pill">Active</span>
+                  ) : (
                     <button
-                      className="btn btn-secondary"
-                      style={{ width: 'auto', padding: '6px 12px', fontSize: '12px' }}
+                      className="btn btn-secondary btn-inline"
                       onClick={() => handleSwitchWallet(wallet.name)}
                       disabled={loading}
                     >
@@ -411,8 +503,7 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
                     </button>
                   )}
                   <button
-                    className="btn btn-secondary"
-                    style={{ width: 'auto', padding: '6px 12px', fontSize: '12px' }}
+                    className="btn btn-secondary btn-inline"
                     onClick={() => handleDeleteWallet(wallet.name)}
                     disabled={loading || wallets.length === 1}
                   >

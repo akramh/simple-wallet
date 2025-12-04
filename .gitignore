@@ -13,3 +13,4 @@ backup-*.json
 dist/
 dist-extension/
 *.tsbuildinfo
+.github/

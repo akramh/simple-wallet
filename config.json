@@ -3,7 +3,12 @@
   "networks": {
     "sepolia": {
       "name": "Sepolia Testnet",
-      "rpcUrl": "https://ethereum-sepolia-rpc.publicnode.com",
+      "rpcUrl": [
+        "https://ethereum-sepolia-rpc.publicnode.com",
+        "https://sepolia.gateway.tenderly.co",
+        "https://endpoints.omniatech.io/v1/eth/sepolia/public",
+        "https://rpc.sepolia.org"
+      ],
       "chainId": 11155111,
       "nativeSymbol": "ETH",
       "nativeName": "Sepolia Ether"

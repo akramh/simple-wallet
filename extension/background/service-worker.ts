@@ -26,7 +26,13 @@ const defaultConfig: Config & { network: string } = {
   networks: {
     sepolia: {
       name: 'Sepolia Testnet',
-      rpcUrl: 'https://rpc.sepolia.org',
+      // Rotate through multiple public RPCs to avoid single-endpoint timeouts in the popup
+      rpcUrl: [
+        'https://ethereum-sepolia-rpc.publicnode.com',
+        'https://sepolia.gateway.tenderly.co',
+        'https://endpoints.omniatech.io/v1/eth/sepolia/public',
+        'https://rpc.sepolia.org'
+      ],
       chainId: 11155111,
       nativeSymbol: 'ETH',
       nativeName: 'Sepolia Ether'

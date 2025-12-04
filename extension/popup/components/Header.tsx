@@ -8,6 +8,7 @@ interface Props {
   currentAccountIndex: number;
   onNetworkChange: (network: string) => void;
   onAccountMenuClick: () => void;
+  onOpenSettings?: () => void;
   onLock: () => void;
 }
 
@@ -19,6 +20,7 @@ function Header({
   currentAccountIndex,
   onNetworkChange,
   onAccountMenuClick,
+  onOpenSettings,
   onLock
 }: Props) {
   const [showNetworkMenu, setShowNetworkMenu] = useState(false);
@@ -39,9 +41,16 @@ function Header({
           <span className="logo-icon">🔐</span>
           <span className="logo-text">Simple Wallet</span>
         </div>
-        <button className="lock-btn" onClick={onLock} title="Lock Wallet">
-          🔒
-        </button>
+        <div className="header-actions">
+          {onOpenSettings && (
+            <button className="icon-btn" onClick={onOpenSettings} title="Settings">
+              ⚙️
+            </button>
+          )}
+          <button className="lock-btn" onClick={onLock} title="Lock Wallet">
+            🔒
+          </button>
+        </div>
       </div>
 
       <div className="header-controls">
@@ -79,7 +88,7 @@ function Header({
             {currentAddress.substring(2, 4).toUpperCase()}
           </div>
           <div className="account-info">
-            <div className="account-name">Account {currentAccountIndex + 1}</div>
+            <div className="account-name">{currentWalletName || `Account ${currentAccountIndex + 1}`}</div>
             <div className="account-address">{formatAddress(currentAddress)}</div>
           </div>
           <span className="dropdown-arrow">▼</span>
