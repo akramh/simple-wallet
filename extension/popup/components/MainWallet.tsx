@@ -9,6 +9,7 @@ interface Props {
   address: string;
   network: string;
   onLock: () => void;
+  onStateChange?: () => void;
 }
 
 interface Token {
@@ -27,7 +28,13 @@ interface TokenBalance {
 
 type View = 'assets' | 'activity' | 'receive' | 'send' | 'settings';
 
-function MainWallet({ address, network, onLock }: Props) {
+function MainWallet({ address, network, onLock, onStateChange }: Props) {
+  const notifyStateChange = () => {
+    if (onStateChange) {
+      onStateChange();
+    }
+  };
+
   const [view, setView] = useState<View>('assets');
   const [portfolio, setPortfolio] = useState<TokenBalance[]>([]);
   const [networks, setNetworks] = useState<Record<string, any>>({});
@@ -94,6 +101,7 @@ function MainWallet({ address, network, onLock }: Props) {
         type: 'SWITCH_NETWORK',
         payload: { network: newNetwork }
       });
+      notifyStateChange();
       setTimeout(() => {
         loadData();
       }, 300);
@@ -133,6 +141,7 @@ function MainWallet({ address, network, onLock }: Props) {
         setSendSuccess(`Transaction sent! Hash: ${response.result.hash.substring(0, 10)}...`);
         setRecipient('');
         setAmount('');
+        notifyStateChange();
         setTimeout(() => {
           setView('portfolio');
           handleRefresh();
@@ -190,9 +199,11 @@ function MainWallet({ address, network, onLock }: Props) {
           onClose={() => setShowAccountMenu(false)}
           onAccountSwitch={() => {
             loadData();
+            notifyStateChange();
             setShowAccountMenu(false);
           }}
           onOpenSettings={() => setView('settings')}
+          onStateChange={notifyStateChange}
         />
       )}
 
@@ -235,6 +246,8 @@ function MainWallet({ address, network, onLock }: Props) {
             currentAddress={address}
             onAccountSwitch={() => loadData()}
             onWalletSwitch={() => loadData()}
+            onStateChange={notifyStateChange}
+            onClose={() => setView('assets')}
           />
         ) : view === 'assets' ? (
           <>

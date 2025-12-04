@@ -11,9 +11,10 @@ interface Props {
   onClose: () => void;
   onAccountSwitch: () => void;
   onOpenSettings: () => void;
+  onStateChange?: () => void;
 }
 
-function AccountMenu({ currentAddress, onClose, onAccountSwitch, onOpenSettings }: Props) {
+function AccountMenu({ currentAddress, onClose, onAccountSwitch, onOpenSettings, onStateChange }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -50,6 +51,7 @@ function AccountMenu({ currentAddress, onClose, onAccountSwitch, onOpenSettings 
         payload: { index }
       });
       onAccountSwitch();
+      onStateChange?.();
       onClose();
     } catch (err) {
       console.error('Failed to switch account:', err);
@@ -65,6 +67,7 @@ function AccountMenu({ currentAddress, onClose, onAccountSwitch, onOpenSettings 
       await loadAccounts();
       setTimeout(() => {
         onAccountSwitch();
+        onStateChange?.();
         onClose();
       }, 300);
     } catch (err) {

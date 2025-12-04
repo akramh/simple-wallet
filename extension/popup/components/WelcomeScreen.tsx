@@ -1,10 +1,16 @@
 import React, { useState } from 'react';
+import { ethers } from 'ethers';
 
 interface Props {
   onWalletCreated: () => void;
 }
 
-type Screen = 'choice' | 'create-password' | 'import-password' | 'import-mnemonic' | 'show-mnemonic';
+type Screen =
+  | 'choice'
+  | 'create-mnemonic'
+  | 'create-password'
+  | 'import-mnemonic'
+  | 'import-password';
 
 function WelcomeScreen({ onWalletCreated }: Props) {
   const [screen, setScreen] = useState<Screen>('choice');
@@ -28,23 +34,43 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     return true;
   };
 
-  const handleCreate = async () => {
-    setError('');
+  const validateMnemonicInput = (phrase: string) => {
+    const words = phrase.trim().split(/\s+/);
+    if (![12, 15, 18, 21, 24].includes(words.length)) {
+      setError('Recovery phrase must be 12, 15, 18, 21, or 24 words');
+      return false;
+    }
+    return true;
+  };
 
+  const goToCreateFlow = () => {
+    const random = ethers.Wallet.createRandom();
+    setGeneratedMnemonic(random.mnemonic.phrase);
+    setPassword('');
+    setConfirmPassword('');
+    setWalletName('default');
+    setScreen('create-mnemonic');
+  };
+
+  const handleCreateAfterPassword = async () => {
+    setError('');
     if (!validatePassword()) return;
+    if (!generatedMnemonic) {
+      setError('Missing generated recovery phrase. Please try again.');
+      return;
+    }
 
     setLoading(true);
     try {
       const response = await chrome.runtime.sendMessage({
-        type: 'CREATE_WALLET',
-        payload: { password, name: walletName }
+        type: 'IMPORT_WALLET',
+        payload: { mnemonic: generatedMnemonic, password, name: walletName }
       });
 
       if (response.error) {
         setError(response.error);
       } else {
-        setGeneratedMnemonic(response.mnemonic);
-        setScreen('show-mnemonic');
+        onWalletCreated();
       }
     } catch (err: any) {
       setError(err.message || 'Failed to create wallet');
@@ -55,12 +81,8 @@ function WelcomeScreen({ onWalletCreated }: Props) {
 
   const handleImport = async () => {
     setError('');
-
     if (!validatePassword()) return;
-    if (!mnemonic.trim()) {
-      setError('Please enter your recovery phrase');
-      return;
-    }
+    if (!mnemonic.trim() || !validateMnemonicInput(mnemonic)) return;
 
     setLoading(true);
     try {
@@ -85,10 +107,6 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     navigator.clipboard.writeText(generatedMnemonic);
   };
 
-  const handleContinue = () => {
-    onWalletCreated();
-  };
-
   // Choice Screen - Initial selection
   if (screen === 'choice') {
     return (
@@ -107,7 +125,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
           <div className="choice-buttons">
             <button
               className="btn btn-primary btn-large"
-              onClick={() => setScreen('create-password')}
+              onClick={goToCreateFlow}
             >
               Create a Wallet
             </button>
@@ -123,8 +141,8 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     );
   }
 
-  // Create Wallet - Password Screen
-  if (screen === 'create-password') {
+  // Create Wallet - Show Mnemonic
+  if (screen === 'create-mnemonic') {
     return (
       <div className="container">
         <div className="header">
@@ -132,6 +150,38 @@ function WelcomeScreen({ onWalletCreated }: Props) {
             ← Back
           </button>
           <h1>Create Wallet</h1>
+        </div>
+        <div className="content">
+          <div className="mnemonic-warning">
+            <strong>Save this recovery phrase.</strong> Anyone with this phrase can access your wallet.
+          </div>
+
+          <div className="mnemonic-box">
+            {generatedMnemonic}
+          </div>
+
+          <div className="action-buttons">
+            <button className="btn btn-secondary" onClick={handleCopyMnemonic}>
+              Copy
+            </button>
+            <button className="btn btn-primary" onClick={() => setScreen('create-password')}>
+              Continue
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Create Wallet - Password Screen
+  if (screen === 'create-password') {
+    return (
+      <div className="container">
+        <div className="header">
+          <button className="btn-back" onClick={() => setScreen('create-mnemonic')}>
+            ← Back
+          </button>
+          <h1>Secure Wallet</h1>
         </div>
         <div className="content">
           <div className="form-group">
@@ -168,41 +218,11 @@ function WelcomeScreen({ onWalletCreated }: Props) {
 
           <button
             className="btn btn-primary"
-            onClick={handleCreate}
+            onClick={handleCreateAfterPassword}
             disabled={loading}
           >
             {loading ? 'Creating...' : 'Create Wallet'}
           </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Show Mnemonic Screen
-  if (screen === 'show-mnemonic') {
-    return (
-      <div className="container">
-        <div className="header">
-          <h1>Backup Recovery Phrase</h1>
-        </div>
-        <div className="content">
-          <div className="mnemonic-warning">
-            <strong>Warning:</strong> Write down this recovery phrase and keep it safe.
-            Anyone with this phrase can access your wallet.
-          </div>
-
-          <div className="mnemonic-box">
-            {generatedMnemonic}
-          </div>
-
-          <div className="action-buttons">
-            <button className="btn btn-secondary" onClick={handleCopyMnemonic}>
-              Copy
-            </button>
-            <button className="btn btn-primary" onClick={handleContinue}>
-              I've Saved It
-            </button>
-          </div>
         </div>
       </div>
     );
@@ -220,7 +240,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
         </div>
         <div className="content">
           <p style={{ marginBottom: '20px', color: '#666' }}>
-            First, create a password to secure your wallet
+            Enter the recovery phrase for the wallet you want to import.
           </p>
 
           <div className="form-group">
@@ -232,6 +252,50 @@ function WelcomeScreen({ onWalletCreated }: Props) {
               placeholder="default"
             />
           </div>
+
+          <div className="form-group">
+            <label>Recovery Phrase</label>
+            <textarea
+              value={mnemonic}
+              onChange={(e) => setMnemonic(e.target.value)}
+              placeholder="Enter your recovery phrase"
+              rows={4}
+            />
+          </div>
+
+          {error && <div className="error">{error}</div>}
+
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              setError('');
+              if (!mnemonic.trim() || !validateMnemonicInput(mnemonic)) return;
+              setScreen('import-password');
+            }}
+          >
+            Next: Set Password
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Import Wallet - Password Screen (Step 2)
+  if (screen === 'import-password') {
+    return (
+      <div className="container">
+        <div className="header">
+          <button className="btn-back" onClick={() => setScreen('import-mnemonic')}>
+            ← Back
+          </button>
+          <h1>Secure Imported Wallet</h1>
+        </div>
+        <div className="content">
+          <p style={{ marginBottom: '20px', color: '#666' }}>
+            Set a master password to encrypt this wallet. Use the same password across wallets.
+          </p>
+
+          {error && <div className="error">{error}</div>}
 
           <div className="form-group">
             <label>Password</label>
@@ -252,50 +316,6 @@ function WelcomeScreen({ onWalletCreated }: Props) {
               placeholder="Confirm password"
             />
           </div>
-
-          {error && <div className="error">{error}</div>}
-
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setError('');
-              if (!validatePassword()) return;
-              setScreen('import-mnemonic');
-            }}
-          >
-            Next
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Import Wallet - Mnemonic Screen (Step 2)
-  if (screen === 'import-mnemonic') {
-    return (
-      <div className="container">
-        <div className="header">
-          <button className="btn-back" onClick={() => setScreen('import-password')}>
-            ← Back
-          </button>
-          <h1>Import Wallet</h1>
-        </div>
-        <div className="content">
-          <p style={{ marginBottom: '20px', color: '#666' }}>
-            Enter your 12-word recovery phrase
-          </p>
-
-          <div className="form-group">
-            <label>Recovery Phrase</label>
-            <textarea
-              value={mnemonic}
-              onChange={(e) => setMnemonic(e.target.value)}
-              placeholder="Enter your 12-word recovery phrase separated by spaces"
-              rows={4}
-            />
-          </div>
-
-          {error && <div className="error">{error}</div>}
 
           <button
             className="btn btn-primary"

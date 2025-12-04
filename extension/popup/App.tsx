@@ -71,7 +71,14 @@ function App() {
   }
 
   // Show main wallet interface
-  return <MainWallet address={state.address!} network={state.network} onLock={loadState} />;
+  return (
+    <MainWallet
+      address={state.address!}
+      network={state.network}
+      onLock={loadState}
+      onStateChange={loadState}
+    />
+  );
 }
 
 export default App;

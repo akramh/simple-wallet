@@ -18,6 +18,7 @@ let currentWalletName = 'default'; // Track currently loaded wallet
 let autoLockTimer: NodeJS.Timeout | null = null;
 const AUTO_LOCK_TIMEOUT = 15 * 60 * 1000; // 15 minutes
 let transactionHistory: TransactionHistoryManager | null = null;
+let sessionPassword: string | null = null;
 
 // Default configuration
 const defaultConfig: Config & { network: string } = {
@@ -86,6 +87,7 @@ function resetAutoLockTimer(): void {
 
 function lockWallet(): void {
   isUnlocked = false;
+  sessionPassword = null;
   if (autoLockTimer) {
     clearTimeout(autoLockTimer);
     autoLockTimer = null;
@@ -125,7 +127,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'CREATE_WALLET':
       const walletName = payload.name || 'default';
-      const newWallet = walletService!.createWallet(payload.password);
+      const createPassword = payload.password ?? sessionPassword;
+      if (!createPassword) {
+        throw new Error('Master password required');
+      }
+      sessionPassword = createPassword;
+      const newWallet = walletService!.createWallet(createPassword);
       walletService!.saveWallet(walletName);
       currentWalletName = walletName;
       isUnlocked = true;
@@ -143,9 +150,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'IMPORT_WALLET':
       const importWalletName = payload.name || 'default';
+      const importPassword = payload.password ?? sessionPassword;
+      if (!importPassword) {
+        throw new Error('Master password required');
+      }
+      sessionPassword = importPassword;
       const importedWallet = walletService!.importWallet(
         payload.mnemonic,
-        payload.password,
+        importPassword,
         payload.accountIndex || 0
       );
       walletService!.saveWallet(importWalletName);
@@ -164,10 +176,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'UNLOCK_WALLET':
       const unlockWalletName = payload.name || 'default';
-      const loaded = walletService!.loadWallet(unlockWalletName, payload.password);
+      const unlockPassword = payload.password ?? sessionPassword;
+      const loaded = walletService!.loadWallet(unlockWalletName, unlockPassword);
       if (!loaded) {
         throw new Error('Invalid password or wallet not found');
       }
+      sessionPassword = unlockPassword || null;
       currentWalletName = unlockWalletName;
       isUnlocked = true;
 

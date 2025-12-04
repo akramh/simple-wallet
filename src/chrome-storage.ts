@@ -7,6 +7,15 @@ import type { StorageAdapter } from './storage.js';
 export class ChromeStorageAdapter implements StorageAdapter {
   private cache = new Map<string, any>();
 
+  /**
+   * Convenience helper to create and initialize the adapter in one call.
+   */
+  static async create(): Promise<ChromeStorageAdapter> {
+    const storage = new ChromeStorageAdapter();
+    await storage.initialize();
+    return storage;
+  }
+
   readJSON<T>(path: string, fallback: T): T {
     try {
       // Return cached value if available
