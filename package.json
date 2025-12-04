@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "npm run build && node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "node --test",
+    "test": "npm run build && node --test",
     "type-check": "tsc --noEmit"
   },
   "keywords": [
