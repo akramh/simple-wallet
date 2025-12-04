@@ -1,7 +1,8 @@
 import { ethers } from 'ethers';
-import fs from 'fs';
-import { encryptMnemonic, decryptMnemonic, validateMnemonic, safeWriteJSON, safeReadJSON } from './crypto-utils.js';
+import { encryptMnemonic, decryptMnemonic, validateMnemonic } from './crypto-utils.js';
 import type { Config, TokenMetadata, Token, PortfolioToken } from './types/index.js';
+import type { StorageAdapter } from './storage.js';
+import type { ProviderFactory } from './providers.js';
 
 const ERC20_ABI = [
   'function name() view returns (string)',
@@ -73,9 +74,12 @@ export class Wallet {
   tokenMetadataCache: Record<string, TokenMetadata>;
   ProviderClass: typeof ethers.JsonRpcProvider;
   ContractClass: typeof ethers.Contract;
+  providerFactory: ProviderFactory;
+  storage: StorageAdapter;
 
-  constructor(config: Config) {
+  constructor(config: Config, storage: StorageAdapter, providerFactory?: ProviderFactory) {
     this.config = config;
+    this.storage = storage;
     this.wallet = null;
     this.provider = null;
     this.providers = {};
@@ -89,6 +93,9 @@ export class Wallet {
     this.tokenMetadataCache = {};
     this.ProviderClass = ethers.JsonRpcProvider;
     this.ContractClass = ethers.Contract;
+    this.providerFactory = providerFactory || {
+      createProvider: (rpcUrl: string, chainId: number) => new ethers.JsonRpcProvider(rpcUrl, chainId)
+    };
   }
 
   /**
@@ -151,7 +158,7 @@ export class Wallet {
     let lastError: Error | undefined;
     for (let i = 0; i < rpcList.length; i++) {
       const rpcUrl = rpcList[i];
-      const candidate = new this.ProviderClass(
+      const candidate = this.providerFactory.createProvider(
         rpcUrl,
         this.config.networks[networkKey].chainId
       );
@@ -339,9 +346,6 @@ export class Wallet {
         gasLimit: gasLimit
       });
 
-      console.log(`\nTransaction sent! Hash: ${tx.hash}`);
-      console.log('Waiting for confirmation...');
-
       const receipt = await this._retryRpcRequest<ethers.TransactionReceipt | null>(
         () => tx.wait(),
         5,
@@ -499,8 +503,6 @@ export class Wallet {
       }
 
       const tx = await this._retryRpcRequest(() => contract.transfer(toAddress, value, { gasLimit }));
-      console.log(`\nToken transaction sent! Hash: ${tx.hash}`);
-      console.log('Waiting for confirmation...');
 
       const receipt = await this._retryRpcRequest<ethers.TransactionReceipt | null>(() => tx.wait(), 5, 2000);
 
@@ -534,7 +536,7 @@ export class Wallet {
       throw new Error('Wallet not properly encrypted');
     }
 
-    const wallets = safeReadJSON<WalletsFile>('wallets.json');
+    const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
 
     if (!walletName) {
       walletName = this.wallet.address.substring(0, 10);
@@ -559,17 +561,14 @@ export class Wallet {
 
     wallets[walletName].currentAccountIndex = this.currentAccountIndex;
 
-    safeWriteJSON('wallets.json', wallets);
-
-    console.log(`\nWallet saved as "${walletName}"`);
-    console.log('WARNING: Keep this file secure and back up your mnemonic phrase!');
+    this.storage.writeJSON('wallets.json', wallets);
 
     return walletName;
   }
 
   loadWallet(walletName: string, password: string, accountIndex: number | null = null): WalletInfo | null {
     try {
-      const wallets = safeReadJSON<WalletsFile>('wallets.json');
+      const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
 
       if (walletName && wallets[walletName]) {
         const walletData = wallets[walletName];
@@ -610,7 +609,7 @@ export class Wallet {
 
   getWalletAccounts(walletName: string): Record<number, { address: string; createdAt: string }> {
     try {
-      const wallets = safeReadJSON<WalletsFile>('wallets.json');
+      const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
       if (wallets[walletName] && wallets[walletName].accounts) {
         return wallets[walletName].accounts;
       }
@@ -622,7 +621,7 @@ export class Wallet {
 
   getAllWallets(): WalletsFile {
     try {
-      const wallets = safeReadJSON<WalletsFile>('wallets.json');
+      const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
       return wallets;
     } catch (error) {
       return {};
@@ -631,9 +630,9 @@ export class Wallet {
 
   deleteWallet(walletName: string): boolean {
     try {
-      const wallets = safeReadJSON<WalletsFile>('wallets.json');
+      const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
       delete wallets[walletName];
-      safeWriteJSON('wallets.json', wallets);
+      this.storage.writeJSON('wallets.json', wallets);
       return true;
     } catch (error) {
       return false;
@@ -642,7 +641,7 @@ export class Wallet {
 
   exportWallet(walletName: string, exportPath: string): boolean {
     try {
-      const wallets = safeReadJSON<WalletsFile>('wallets.json');
+      const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
 
       if (!wallets[walletName]) {
         throw new Error('Wallet not found');
@@ -657,7 +656,7 @@ export class Wallet {
         }
       };
 
-      fs.writeFileSync(exportPath, JSON.stringify(exportData, null, 2));
+      this.storage.writeFile(exportPath, JSON.stringify(exportData, null, 2));
       return true;
     } catch (error) {
       throw new Error(`Export failed: ${(error as Error).message}`);
@@ -666,7 +665,11 @@ export class Wallet {
 
   importFromBackup(importPath: string, password: string): string {
     try {
-      const backupData: ExportData = JSON.parse(fs.readFileSync(importPath, 'utf8'));
+      const fileContents = this.storage.readFile(importPath);
+      if (!fileContents) {
+        throw new Error('Backup file not found or unreadable');
+      }
+      const backupData: ExportData = JSON.parse(fileContents);
 
       if (!backupData.wallet || !backupData.wallet.encryptedMnemonic) {
         throw new Error('Invalid backup file format');
@@ -684,7 +687,7 @@ export class Wallet {
         throw new Error('Incorrect password for backup file');
       }
 
-      const wallets = safeReadJSON<WalletsFile>('wallets.json');
+      const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
       let walletName = backupData.wallet.name;
 
       let counter = 1;
@@ -704,7 +707,7 @@ export class Wallet {
         currentAccountIndex: backupData.wallet.currentAccountIndex || 0
       };
 
-      safeWriteJSON('wallets.json', wallets);
+      this.storage.writeJSON('wallets.json', wallets);
 
       return walletName;
     } catch (error) {
