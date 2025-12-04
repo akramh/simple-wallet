@@ -1,3 +1,4 @@
+import '../../src/buffer-polyfill.js'; // Install Buffer polyfill
 import { Wallet } from '../../src/wallet.js';
 import { WalletAppService } from '../../src/app-service.js';
 import { ChromeStorageAdapter } from '../../src/chrome-storage.js';

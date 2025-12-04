@@ -1,4 +1,5 @@
 // Browser/extension-friendly SDK entry that installs the WebCrypto adapter when available.
+import './buffer-polyfill.js'; // Install Buffer polyfill for browser
 import { Wallet } from './wallet.js';
 import { WalletAppService } from './app-service.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
