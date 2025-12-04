@@ -6,8 +6,8 @@ A command-line Ethereum wallet supporting testnet and mainnet operations.
 
 - 🆕 Create new wallet with 12-word mnemonic phrase
 - 📥 Import existing wallet from mnemonic
-- 💰 Check wallet balance
-- 📤 Send ETH transactions
+- 💰 Check wallet balance (ETH + ERC-20 tokens)
+- 📤 Send ETH or ERC-20 token transactions
 - 📥 Display receive address
 - ⚙️ Switch between Sepolia testnet and Ethereum mainnet
 
@@ -24,6 +24,16 @@ Start the wallet:
 ```bash
 npm start
 ```
+
+## Testing
+
+Run the automated tests (unit + headless menu smoke tests):
+
+```bash
+npm test
+```
+
+These tests run offline with mocked providers/contracts and stubbed prompts (no real RPC calls). The CLI is suppressed when `NODE_ENV=test`.
 
 ## Configuration
 

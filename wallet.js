@@ -2,15 +2,31 @@ import { ethers } from 'ethers';
 import fs from 'fs';
 import { encryptMnemonic, decryptMnemonic, validateMnemonic, safeWriteJSON, safeReadJSON } from './crypto-utils.js';
 
+const ERC20_ABI = [
+  'function name() view returns (string)',
+  'function symbol() view returns (string)',
+  'function decimals() view returns (uint8)',
+  'function balanceOf(address owner) view returns (uint256)',
+  'function transfer(address to, uint256 value) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 value) returns (bool)'
+];
+
 export class Wallet {
   constructor(config) {
     this.config = config;
     this.wallet = null;
     this.provider = null;
+    this.providers = {};
+    this.rpcIndex = {}; // track which RPC is active per network
     this.mnemonic = null;
     this.encryptedMnemonic = null;
     this.salt = null;
     this.currentAccountIndex = 0;
+    this.tokenMetadataCache = {};
+    // Allow tests to inject mock provider/contract classes without touching the ethers module
+    this.ProviderClass = ethers.JsonRpcProvider;
+    this.ContractClass = ethers.Contract;
   }
 
   /**
@@ -46,23 +62,71 @@ export class Wallet {
   }
 
   async initialize() {
-    const networkConfig = this.config.networks[this.config.network];
-    this.provider = new ethers.JsonRpcProvider(
-      networkConfig.rpcUrl,
-      networkConfig.chainId
-    );
+    // Bootstrap provider for the configured network. Network can be changed later via setNetwork.
+    await this._ensureProvider(this.config.network);
+  }
 
-    // Test connection with retry
-    try {
-      await this._retryRpcRequest(
-        () => this.provider.getBlockNumber(),
-        2,
-        2000
-      );
-    } catch (error) {
-      console.log('\n⚠️  Warning: RPC connection slow or unavailable');
-      console.log('Network operations may take longer than usual\n');
+  _getRpcList(networkKey) {
+    const networkConfig = this.config.networks[networkKey];
+    if (!networkConfig) return [];
+    const urls = [];
+    if (networkConfig.rpcUrl) urls.push(networkConfig.rpcUrl);
+    if (Array.isArray(networkConfig.rpcUrls)) {
+      urls.push(...networkConfig.rpcUrls);
     }
+    // Deduplicate
+    return [...new Set(urls)];
+  }
+
+  async _ensureProvider(networkKey) {
+    // Build/return a provider for the given network with simple failover across configured RPC URLs.
+    const rpcList = this._getRpcList(networkKey);
+    if (!rpcList.length) {
+      throw new Error('No RPC URLs configured for network');
+    }
+
+    // Use cached provider if exists
+    if (this.providers[networkKey]) {
+      this.provider = this.providers[networkKey];
+      return this.provider;
+    }
+
+    let lastError;
+    for (let i = 0; i < rpcList.length; i++) {
+      const rpcUrl = rpcList[i];
+      const candidate = new this.ProviderClass(
+        rpcUrl,
+        this.config.networks[networkKey].chainId
+      );
+      try {
+        await this._retryRpcRequest(() => candidate.getBlockNumber(), 2, 2000);
+        this.providers[networkKey] = candidate;
+        this.rpcIndex[networkKey] = i;
+        this.provider = candidate;
+        return candidate;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw new Error(`All RPC endpoints failed for ${networkKey}: ${lastError?.message || 'unknown error'}`);
+  }
+
+  async setNetwork(networkKey) {
+    const networkConfig = this.config.networks[networkKey];
+    if (!networkConfig) {
+      throw new Error('Network not found in configuration');
+    }
+
+    this.config.network = networkKey;
+    await this._ensureProvider(networkKey);
+
+    // Reconnect current account to the new provider if wallet is loaded
+    if (this.wallet && this.mnemonic) {
+      this.wallet = this._deriveAccount(this.currentAccountIndex).connect(this.provider);
+    }
+
+    // Light connectivity check already done in _ensureProvider
   }
 
   createNewWallet(password) {
@@ -204,7 +268,7 @@ export class Wallet {
         const feeData = await this._retryRpcRequest(() =>
           this.provider.getFeeData()
         );
-        gasPrice = feeData.gasPrice;
+        gasPrice = feeData.gasPrice || feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei');
       } catch (gasError) {
         // Fallback gas limit if estimation fails
         gasLimit = 21000n;
@@ -262,6 +326,153 @@ export class Wallet {
         throw new Error('Transaction would fail. Check recipient address and amount.');
       }
 
+      throw error;
+    }
+  }
+
+  _getTokenContract(address, withSigner = true) {
+    const target = withSigner ? this.wallet : this.provider;
+    return new this.ContractClass(address, ERC20_ABI, target);
+  }
+
+  async getTokenMetadata(address) {
+    if (!address) {
+      throw new Error('Token address is required');
+    }
+
+    const key = address.toLowerCase();
+    if (this.tokenMetadataCache[key]) {
+      return this.tokenMetadataCache[key];
+    }
+
+    const contract = this._getTokenContract(address, false);
+
+    try {
+      const [symbol, name, decimals] = await Promise.all([
+        this._retryRpcRequest(() => contract.symbol()),
+        this._retryRpcRequest(() => contract.name()),
+        this._retryRpcRequest(() => contract.decimals())
+      ]);
+
+      const meta = {
+        address: address.toLowerCase(),
+        symbol,
+        name,
+        decimals: Number(decimals)
+      };
+
+      this.tokenMetadataCache[key] = meta;
+      return meta;
+    } catch (error) {
+      throw new Error(`Unable to fetch token metadata: ${error.message}`);
+    }
+  }
+
+  async _resolveTokenDecimals(token) {
+    if (typeof token.decimals === 'number') {
+      return token.decimals;
+    }
+
+    const metadata = await this.getTokenMetadata(token.address);
+    return metadata.decimals;
+  }
+
+  async getTokenBalance(token) {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+
+    if (token.type === 'native') {
+      return this.getBalance();
+    }
+
+    const decimals = await this._resolveTokenDecimals(token);
+    const contract = this._getTokenContract(token.address, false);
+
+    try {
+      const balance = await this._retryRpcRequest(() => contract.balanceOf(this.wallet.address));
+      return ethers.formatUnits(balance, decimals);
+    } catch (error) {
+      if (error.code === 'BAD_DATA') {
+        throw new Error('Token read failed: RPC returned empty/invalid data (check token address, network, or try another RPC)');
+      }
+      if (error.message.includes('timeout')) {
+        throw new Error('Token balance request timed out. Try again or switch RPC.');
+      }
+      throw error;
+    }
+  }
+
+  async getPortfolio(tokens = []) {
+    // Fetch balances in parallel per token to keep the UI responsive.
+    const promises = tokens.map(async (token) => {
+      try {
+        const balance = await this.getTokenBalance(token);
+        return { token, balance };
+      } catch (error) {
+        return { token, balance: 'Error', error: error.message };
+      }
+    });
+
+    return Promise.all(promises);
+  }
+
+  async sendToken(token, toAddress, amount) {
+    if (!this.wallet) {
+      throw new Error('No wallet loaded');
+    }
+
+    if (token.type === 'native') {
+      return this.sendTransaction(toAddress, amount);
+    }
+
+    try {
+      const decimals = await this._resolveTokenDecimals(token);
+      const value = ethers.parseUnits(amount, decimals);
+      const contract = this._getTokenContract(token.address, true);
+
+      // Ensure we have enough ETH for gas
+      const nativeBalance = await this._retryRpcRequest(() => this.provider.getBalance(this.wallet.address));
+
+      // Estimate gas for transfer
+      let gasLimit;
+      let gasPrice;
+      try {
+        gasLimit = await this._retryRpcRequest(() => contract.transfer.estimateGas(toAddress, value));
+        gasLimit = (gasLimit * 120n) / 100n;
+
+        const feeData = await this._retryRpcRequest(() => this.provider.getFeeData());
+        gasPrice = feeData.gasPrice || feeData.maxFeePerGas || ethers.parseUnits('20', 'gwei');
+      } catch (gasError) {
+        gasLimit = 120000n; // conservative fallback for ERC-20 transfer
+        gasPrice = ethers.parseUnits('20', 'gwei');
+      }
+
+      const estimatedGasCost = gasPrice ? gasLimit * gasPrice : 0n;
+      if (nativeBalance < estimatedGasCost) {
+        const neededEth = ethers.formatEther(estimatedGasCost);
+        const balanceEth = ethers.formatEther(nativeBalance);
+        throw new Error(`Insufficient ETH for gas. Need ~${neededEth} ETH, have ${balanceEth} ETH.`);
+      }
+
+      const tx = await this._retryRpcRequest(() => contract.transfer(toAddress, value, { gasLimit }));
+      console.log(`\nToken transaction sent! Hash: ${tx.hash}`);
+      console.log('Waiting for confirmation...');
+
+      const receipt = await this._retryRpcRequest(() => tx.wait(), 5, 2000);
+
+      return {
+        hash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        gasUsed: receipt.gasUsed.toString()
+      };
+    } catch (error) {
+      if (error.message.includes('insufficient funds')) {
+        throw new Error('Insufficient balance for token transfer');
+      }
+      if (error.code === 'CALL_EXCEPTION') {
+        throw new Error('Token transfer would fail. Check recipient and amount.');
+      }
       throw error;
     }
   }

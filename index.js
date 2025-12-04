@@ -10,9 +10,99 @@ import * as ui from './ui-helpers.js';
 const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
 const wallet = new Wallet(config);
 
+// Token registry (built-in + user-added)
+const TOKEN_LIST_PATH = 'tokens.json';
+const CUSTOM_TOKENS_PATH = 'tokens-user.json';
+
+const builtInTokens = safeReadJSON(TOKEN_LIST_PATH, {});
+let customTokens = safeReadJSON(CUSTOM_TOKENS_PATH, {});
+
 // Global password cache (in-memory only)
 let masterPassword = null;
 let currentWalletName = null;
+
+function safeReadJSON(path, fallback = {}) {
+  try {
+    if (!fs.existsSync(path)) return fallback;
+    return JSON.parse(fs.readFileSync(path, 'utf8'));
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function saveCustomTokens() {
+  fs.writeFileSync(CUSTOM_TOKENS_PATH, JSON.stringify(customTokens, null, 2));
+}
+
+function getNativeToken(networkKey) {
+  const networkConfig = config.networks[networkKey] || {};
+  const symbol = networkConfig.nativeSymbol || 'ETH';
+  const name = networkConfig.nativeName || networkConfig.name || 'Ether';
+  return {
+    symbol,
+    type: 'native',
+    decimals: 18,
+    name
+  };
+}
+
+function getTokensForNetwork(networkKey) {
+  const tokens = [];
+  const nativeToken = getNativeToken(networkKey);
+
+  // Always include native token first
+  tokens.push(nativeToken);
+
+  const seenAddresses = new Set();
+  const appendToken = (token) => {
+    if (token.type === 'native') {
+      return;
+    }
+    if (!token.address) {
+      return;
+    }
+    const key = token.address.toLowerCase();
+    if (seenAddresses.has(key)) {
+      return;
+    }
+    seenAddresses.add(key);
+    tokens.push({
+      ...token,
+      address: token.address.toLowerCase()
+    });
+  };
+
+  (builtInTokens[networkKey] || []).forEach(appendToken);
+  (customTokens[networkKey] || []).forEach(appendToken);
+
+  return tokens;
+}
+
+function upsertCustomToken(networkKey, token) {
+  if (!customTokens[networkKey]) {
+    customTokens[networkKey] = [];
+  }
+
+  const existingIndex = customTokens[networkKey].findIndex(t => t.address?.toLowerCase() === token.address.toLowerCase());
+  if (existingIndex >= 0) {
+    customTokens[networkKey][existingIndex] = { ...customTokens[networkKey][existingIndex], ...token };
+  } else {
+    customTokens[networkKey].push({ ...token, address: token.address.toLowerCase() });
+  }
+
+  saveCustomTokens();
+}
+
+function deleteCustomToken(networkKey, address) {
+  if (!customTokens[networkKey]) return;
+  customTokens[networkKey] = customTokens[networkKey].filter(t => t.address.toLowerCase() !== address.toLowerCase());
+  saveCustomTokens();
+}
+
+function findTokenBySymbol(networkKey, symbol) {
+  const tokens = getTokensForNetwork(networkKey);
+  return tokens.find(t => t.symbol.toLowerCase() === symbol.toLowerCase());
+}
 
 async function main() {
   ui.clearScreen();
@@ -517,6 +607,7 @@ async function mainMenu(walletName) {
         new inquirer.Separator('  ACCOUNT ACTIONS'),
         new inquirer.Separator(ui.menuSeparator().line),
         ui.menuChoice('Check Balance', 'View your current balance', 'balance'),
+        ui.menuChoice('Portfolio (All Networks)', 'View balances across networks', 'portfolio_all'),
         ui.menuChoice('Send Transaction', 'Send ETH to another address', 'send'),
         ui.menuChoice('Receive', 'Show your address & QR code', 'receive'),
         new inquirer.Separator(''),
@@ -529,6 +620,7 @@ async function mainMenu(walletName) {
         new inquirer.Separator(ui.menuSeparator().line),
         new inquirer.Separator('  ADVANCED'),
         new inquirer.Separator(ui.menuSeparator().line),
+        ui.menuChoice('Manage Tokens', 'Add or remove ERC-20 tokens', 'tokens'),
         ui.menuChoice('Show Secrets', 'View private key & mnemonic', 'secrets'),
         ui.menuChoice('Export Wallet', 'Backup wallet to file', 'export'),
         ui.menuChoice('Change Network', 'Switch between networks', 'network'),
@@ -543,6 +635,9 @@ async function mainMenu(walletName) {
     case 'balance':
       await checkBalance(currentWalletName);
       break;
+    case 'portfolio_all':
+      await checkPortfolioAllNetworks(currentWalletName);
+      break;
     case 'send':
       await sendCrypto(currentWalletName);
       break;
@@ -554,6 +649,9 @@ async function mainMenu(walletName) {
       break;
     case 'secrets':
       await showWalletSecrets(currentWalletName);
+      break;
+    case 'tokens':
+      await manageTokens(currentWalletName);
       break;
     case 'export':
       await exportWallet(currentWalletName);
@@ -581,11 +679,23 @@ async function checkBalance(currentWalletName) {
   try {
     ui.showLoading('Fetching balance from blockchain...');
     console.log('');
+    const tokens = getTokensForNetwork(config.network);
+    const portfolio = await wallet.getPortfolio(tokens);
 
-    const balance = await wallet.getBalance();
+    ui.showSuccess('Balances retrieved successfully!');
+    ui.showSection('Portfolio');
+    ui.showSeparator();
 
-    ui.showSuccess('Balance retrieved successfully!');
-    ui.showAccountInfo(address, balance);
+    portfolio.forEach(({ token, balance, error }) => {
+      const label = `${token.symbol}${token.type === 'native' ? ' (native)' : ''}`.padEnd(18);
+      if (error) {
+        console.log(`${label} ${chalk.red('Error')} ${chalk.gray(`(${error})`)}`);
+      } else {
+        console.log(`${label} ${ui.formatAmount(balance, token.symbol)}`);
+      }
+    });
+
+    ui.showSeparator();
 
   } catch (error) {
     ui.showError(
@@ -607,6 +717,59 @@ async function checkBalance(currentWalletName) {
   await mainMenu(currentWalletName);
 }
 
+async function checkPortfolioAllNetworks(currentWalletName) {
+  const originalNetwork = config.network;
+  const address = wallet.getAddress();
+  ui.clearScreen();
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, 'All Networks', address);
+
+  const networks = Object.keys(config.networks);
+  const results = [];
+
+  for (const net of networks) {
+    try {
+      // Swap provider context per network to reuse the same wallet/account.
+      await wallet.setNetwork(net);
+      const tokens = getTokensForNetwork(net);
+      const portfolio = await wallet.getPortfolio(tokens);
+      results.push({ network: net, success: true, portfolio });
+    } catch (error) {
+      results.push({ network: net, success: false, error: error.message });
+    }
+  }
+
+  // restore original network context
+  await wallet.setNetwork(originalNetwork);
+
+  results.forEach(({ network, success, portfolio, error }) => {
+    ui.showSection(config.networks[network].name);
+    if (!success) {
+      ui.showWarning(`Failed: ${error}`);
+      console.log('');
+      return;
+    }
+    ui.showSeparator();
+    portfolio.forEach(({ token, balance, error: tokenError }) => {
+      const label = `${token.symbol}${token.type === 'native' ? ' (native)' : ''}`.padEnd(18);
+      if (tokenError) {
+        console.log(`${label} ${chalk.red('Error')} ${chalk.gray(`(${tokenError})`)}`);
+      } else {
+        console.log(`${label} ${ui.formatAmount(balance, token.symbol)}`);
+      }
+    });
+    ui.showSeparator();
+    console.log('');
+  });
+
+  await inquirer.prompt([{
+    type: 'input',
+    name: 'continue',
+    message: 'Press Enter to continue...'
+  }]);
+
+  await mainMenu(currentWalletName);
+}
+
 async function sendCrypto(currentWalletName) {
   const address = wallet.getAddress();
   ui.clearScreen();
@@ -615,6 +778,28 @@ async function sendCrypto(currentWalletName) {
   ui.showSection('Send Transaction');
   ui.showInfo('Press Ctrl+C to cancel at any time');
   console.log('');
+
+  const tokens = getTokensForNetwork(config.network);
+  const { tokenSymbol } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'tokenSymbol',
+      message: 'Select token to send:',
+      loop: false,
+      choices: tokens.map(t => ({
+        name: `${t.symbol}${t.type === 'native' ? ' (native)' : ''}`,
+        value: t.symbol
+      }))
+    }
+  ]);
+
+  const selectedToken = findTokenBySymbol(config.network, tokenSymbol);
+  if (!selectedToken) {
+    ui.showError('Token not found', []);
+    await mainMenu(currentWalletName);
+    return;
+  }
+  const tokenLabel = `${selectedToken.symbol}${selectedToken.type === 'native' ? ' (native)' : ''}`;
 
   const answers = await inquirer.prompt([
     {
@@ -634,7 +819,7 @@ async function sendCrypto(currentWalletName) {
     {
       type: 'input',
       name: 'amount',
-      message: 'Amount (in ETH):',
+      message: `Amount (in ${selectedToken.symbol}):`,
       when: (answers) => answers.toAddress && answers.toAddress.trim() !== '',
       validate: (input) => {
         if (!input || input.trim() === '') {
@@ -650,7 +835,7 @@ async function sendCrypto(currentWalletName) {
     {
       type: 'confirm',
       name: 'confirm',
-      message: (answers) => `Send ${answers.amount} ETH to ${answers.toAddress}?`,
+      message: (answers) => `Send ${answers.amount} ${selectedToken.symbol} to ${answers.toAddress}?`,
       when: (answers) => answers.toAddress && answers.toAddress.trim() !== '' && answers.amount && answers.amount.trim() !== '',
       default: false
     }
@@ -667,7 +852,7 @@ async function sendCrypto(currentWalletName) {
 
   try {
     ui.showLoading('Sending transaction to the network...');
-    const receipt = await wallet.sendTransaction(answers.toAddress, answers.amount);
+    const receipt = await wallet.sendToken(selectedToken, answers.toAddress, answers.amount);
 
     ui.showSuccess('Transaction confirmed!');
     console.log('');
@@ -702,7 +887,10 @@ async function showReceiveAddress(currentWalletName) {
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
   ui.showSection('Receive Crypto');
-  ui.showInfo('Share this address to receive ETH');
+  const tokens = getTokensForNetwork(config.network);
+  const tokenSymbols = tokens.map(t => t.symbol).join(', ');
+
+  ui.showInfo(`Share this address to receive: ${tokenSymbols}`);
   console.log('');
 
   ui.showSeparator();
@@ -839,6 +1027,143 @@ async function exportWallet(currentWalletName) {
   await mainMenu(currentWalletName);
 }
 
+async function manageTokens(currentWalletName) {
+  const networkKey = config.network;
+  const tokens = getTokensForNetwork(networkKey);
+
+  ui.clearScreen();
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[networkKey].name, wallet.getAddress());
+
+  ui.showSection('Manage Tokens');
+  ui.showInfo(`Network: ${config.networks[networkKey].name}`);
+  console.log('');
+
+  tokens.forEach(token => {
+    const source = (customTokens[networkKey] || []).some(t => t.address?.toLowerCase() === token.address?.toLowerCase()) ? 'custom' : 'built-in';
+    const label = token.type === 'native' ? 'native' : `${token.address}`;
+    console.log(`- ${token.symbol.padEnd(6)} ${chalk.gray(label)} ${chalk.gray(`(${source})`)}`);
+  });
+
+  console.log('');
+
+  const choices = [
+    ui.menuChoice('Add Custom Token', 'Provide ERC-20 address', 'add'),
+    ui.menuChoice('Remove Custom Token', 'Delete a token you added', 'remove',)
+  ];
+
+  choices.push(ui.menuChoice('Back to Main Menu', '', 'back'));
+
+  const { action } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'action',
+      message: 'Select an action:',
+      choices
+    }
+  ]);
+
+  if (action === 'add') {
+    await addCustomToken(networkKey);
+    await manageTokens(currentWalletName);
+    return;
+  }
+
+  if (action === 'remove') {
+    await removeCustomToken(networkKey);
+    await manageTokens(currentWalletName);
+    return;
+  }
+
+  await mainMenu(currentWalletName);
+}
+
+async function addCustomToken(networkKey) {
+  const { address } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'address',
+      message: 'Token contract address:',
+      validate: (input) => {
+        if (!input || !input.startsWith('0x') || input.length !== 42) {
+          return 'Enter a valid contract address (0x...)';
+        }
+        return true;
+      }
+    }
+  ]);
+
+  let checksummed;
+  try {
+    checksummed = ethers.getAddress(address);
+  } catch (e) {
+    ui.showError('Invalid address format', []);
+    return;
+  }
+
+  let metadata;
+  try {
+    ui.showLoading('Fetching token metadata from chain...');
+    metadata = await wallet.getTokenMetadata(checksummed);
+    ui.showSuccess(`Detected token ${metadata.symbol} (${metadata.decimals} decimals)`);
+  } catch (error) {
+    ui.showWarning(`Auto-detect failed: ${error.message}`);
+  }
+
+  if (!metadata) {
+    metadata = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'symbol',
+        message: 'Token symbol:',
+        validate: (input) => input && input.trim().length > 0 ? true : 'Symbol is required'
+      },
+      {
+        type: 'input',
+        name: 'decimals',
+        message: 'Token decimals:',
+        validate: (input) => {
+          const num = Number(input);
+          if (Number.isInteger(num) && num >= 0 && num <= 36) {
+            return true;
+          }
+          return 'Enter a whole number between 0 and 36';
+        }
+      },
+      {
+        type: 'input',
+        name: 'name',
+        message: 'Token name (optional):',
+        default: ''
+      }
+    ]);
+    metadata.address = checksummed;
+    metadata.decimals = Number(metadata.decimals);
+  }
+
+  upsertCustomToken(networkKey, metadata);
+  ui.showSuccess(`Added ${metadata.symbol} to ${config.networks[networkKey].name}`);
+}
+
+async function removeCustomToken(networkKey) {
+  const custom = customTokens[networkKey] || [];
+  if (custom.length === 0) {
+    ui.showWarning('No custom tokens to remove for this network.');
+    return;
+  }
+
+  const { address } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'address',
+      message: 'Select a token to remove:',
+      choices: custom.map(t => ({ name: `${t.symbol} - ${t.address}`, value: t.address }))
+    }
+  ]);
+
+  deleteCustomToken(networkKey, address);
+  ui.showSuccess('Token removed.');
+}
+
 async function manageAccounts(currentWalletName) {
   console.log('\n👤 Manage Accounts\n');
 
@@ -928,12 +1253,36 @@ async function changeNetwork() {
   ]);
 
   config.network = network;
-  fs.writeFileSync('config.json', JSON.stringify(config, null, 2));
+  if (process.env.NODE_ENV !== 'test') {
+    fs.writeFileSync('config.json', JSON.stringify(config, null, 2));
+  }
 
-  console.log(`\n✅ Network changed to ${config.networks[network].name}`);
-  console.log('⚠️  Please restart the application for changes to take effect.\n');
+  try {
+    await wallet.setNetwork(network);
+    console.log(`\n✅ Network changed to ${config.networks[network].name}`);
+  } catch (error) {
+    ui.showError(`Failed to switch network: ${error.message}`);
+  }
 
-  process.exit(0);
+  await inquirer.prompt([{
+    type: 'input',
+    name: 'continue',
+    message: 'Press Enter to continue...'
+  }]);
+
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
+  // Return to appropriate menu based on wallet load state
+  const loadedWallets = wallet.getAllWallets();
+  if (currentWalletName && loadedWallets[currentWalletName]) {
+    await mainMenu(currentWalletName);
+  } else if (Object.keys(loadedWallets).length > 0) {
+    await selectWalletMenu(loadedWallets);
+  } else {
+    await initialMenu();
+  }
 }
 
 async function switchWallet() {
@@ -985,4 +1334,20 @@ async function deleteCurrentWallet(currentWalletName) {
   }
 }
 
-main().catch(console.error);
+// Run CLI only when not under test
+if (process.env.NODE_ENV !== 'test') {
+  main().catch(console.error);
+}
+
+// Exports for tests
+export {
+  main,
+  wallet,
+  config,
+  checkBalance,
+  sendCrypto,
+  showReceiveAddress,
+  changeNetwork,
+  manageTokens,
+  checkPortfolioAllNetworks
+};

@@ -1,15 +1,68 @@
 {
-  "network": "sepolia",
+  "network": "polygon",
   "networks": {
     "sepolia": {
       "name": "Sepolia Testnet",
       "rpcUrl": "https://ethereum-sepolia-rpc.publicnode.com",
-      "chainId": 11155111
+      "chainId": 11155111,
+      "nativeSymbol": "ETH",
+      "nativeName": "Sepolia Ether"
     },
     "mainnet": {
       "name": "Ethereum Mainnet",
       "rpcUrl": "https://ethereum-rpc.publicnode.com",
-      "chainId": 1
+      "chainId": 1,
+      "nativeSymbol": "ETH",
+      "nativeName": "Ether"
+    },
+    "base": {
+      "name": "Base Mainnet",
+      "rpcUrl": "https://mainnet.base.org",
+      "chainId": 8453,
+      "nativeSymbol": "ETH",
+      "nativeName": "Base ETH"
+    },
+    "arbitrum": {
+      "name": "Arbitrum One",
+      "rpcUrl": "https://arb1.arbitrum.io/rpc",
+      "chainId": 42161,
+      "nativeSymbol": "ETH",
+      "nativeName": "Arbitrum ETH"
+    },
+    "optimism": {
+      "name": "Optimism",
+      "rpcUrl": "https://mainnet.optimism.io",
+      "chainId": 10,
+      "nativeSymbol": "ETH",
+      "nativeName": "Optimism ETH"
+    },
+    "polygon": {
+      "name": "Polygon PoS",
+      "rpcUrl": "https://polygon-rpc.com/",
+      "chainId": 137,
+      "nativeSymbol": "POL",
+      "nativeName": "Polygon (MATIC/POL)"
+    },
+    "avalanche": {
+      "name": "Avalanche C-Chain",
+      "rpcUrl": "https://api.avax.network/ext/bc/C/rpc",
+      "chainId": 43114,
+      "nativeSymbol": "AVAX",
+      "nativeName": "Avalanche"
+    },
+    "bsc": {
+      "name": "BNB Smart Chain",
+      "rpcUrl": "https://bsc-dataseed.binance.org",
+      "chainId": 56,
+      "nativeSymbol": "BNB",
+      "nativeName": "BNB"
+    },
+    "linea": {
+      "name": "Linea",
+      "rpcUrl": "https://rpc.linea.build",
+      "chainId": 59144,
+      "nativeSymbol": "ETH",
+      "nativeName": "Linea ETH"
     }
   }
 }
