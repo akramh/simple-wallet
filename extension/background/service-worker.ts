@@ -13,6 +13,7 @@ setCryptoAdapter(createWebCryptoAdapter());
 // Wallet state
 let walletService: WalletAppService | null = null;
 let isUnlocked = false;
+let currentWalletName = 'default'; // Track currently loaded wallet
 let autoLockTimer: NodeJS.Timeout | null = null;
 const AUTO_LOCK_TIMEOUT = 15 * 60 * 1000; // 15 minutes
 
@@ -116,12 +117,15 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         isUnlocked,
         hasWallet: walletService!.getAllWallets() && Object.keys(walletService!.getAllWallets()).length > 0,
         network: walletService!.config.network,
-        address: isUnlocked ? walletService!.getAddress() : null
+        address: isUnlocked ? walletService!.getAddress() : null,
+        currentWalletName: isUnlocked ? currentWalletName : null
       };
 
     case 'CREATE_WALLET':
+      const walletName = payload.name || 'default';
       const newWallet = walletService!.createWallet(payload.password);
-      walletService!.saveWallet(payload.name || 'default');
+      walletService!.saveWallet(walletName);
+      currentWalletName = walletName;
       isUnlocked = true;
       resetAutoLockTimer();
       return {
@@ -131,12 +135,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       };
 
     case 'IMPORT_WALLET':
+      const importWalletName = payload.name || 'default';
       const importedWallet = walletService!.importWallet(
         payload.mnemonic,
         payload.password,
         payload.accountIndex || 0
       );
-      walletService!.saveWallet(payload.name || 'default');
+      walletService!.saveWallet(importWalletName);
+      currentWalletName = importWalletName;
       isUnlocked = true;
       resetAutoLockTimer();
       return {
@@ -145,15 +151,18 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       };
 
     case 'UNLOCK_WALLET':
-      const loaded = walletService!.loadWallet(payload.name || 'default', payload.password);
+      const unlockWalletName = payload.name || 'default';
+      const loaded = walletService!.loadWallet(unlockWalletName, payload.password);
       if (!loaded) {
         throw new Error('Invalid password or wallet not found');
       }
+      currentWalletName = unlockWalletName;
       isUnlocked = true;
       resetAutoLockTimer();
       return {
         success: true,
-        address: loaded.address
+        address: loaded.address,
+        walletName: currentWalletName
       };
 
     case 'LOCK_WALLET':
@@ -203,16 +212,16 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'GET_ACCOUNTS':
       if (!isUnlocked) throw new Error('Wallet is locked');
-      const accounts = walletService!.getWalletAccounts('default');
-      return { accounts };
+      const accounts = walletService!.getWalletAccounts(currentWalletName);
+      return { accounts, currentWalletName };
 
     case 'CREATE_ACCOUNT':
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      const currentAccounts = walletService!.getWalletAccounts('default');
+      const currentAccounts = walletService!.getWalletAccounts(currentWalletName);
       const nextIndex = Object.keys(currentAccounts).length;
       const newAccount = walletService!.switchAccount(nextIndex);
-      walletService!.saveWallet('default');
+      walletService!.saveWallet(currentWalletName);
       return { success: true, address: newAccount.address, index: newAccount.accountIndex };
 
     case 'SWITCH_ACCOUNT':

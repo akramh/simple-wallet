@@ -21,6 +21,7 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch }: Props
   const [activeTab, setActiveTab] = useState<'accounts' | 'wallets' | 'advanced'>('accounts');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [wallets, setWallets] = useState<Wallet[]>([]);
+  const [currentWalletName, setCurrentWalletName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -40,6 +41,9 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch }: Props
           createdAt: data.createdAt
         }));
         setAccounts(accountList);
+        if (response.currentWalletName) {
+          setCurrentWalletName(response.currentWalletName);
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load accounts');
@@ -71,11 +75,13 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch }: Props
       if (response.error) {
         setError(response.error);
       } else {
-        setSuccess(`Created account: ${response.address.substring(0, 10)}...`);
+        setSuccess(`✓ Created and switched to Account ${response.index + 1}`);
+        // Reload accounts list to show the new account
         await loadAccounts();
+        // Notify parent to update UI (account switched automatically in backend)
         setTimeout(() => {
           onAccountSwitch();
-        }, 1000);
+        }, 800);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to create account');
@@ -85,8 +91,13 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch }: Props
   };
 
   const handleSwitchAccount = async (index: number) => {
+    if (accounts.find(a => a.index === index)?.address === currentAddress) {
+      return; // Already on this account
+    }
+
     setLoading(true);
     setError('');
+    setSuccess('');
 
     try {
       const response = await chrome.runtime.sendMessage({
@@ -97,7 +108,10 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch }: Props
       if (response.error) {
         setError(response.error);
       } else {
-        onAccountSwitch();
+        setSuccess(`✓ Switched to Account ${index + 1}`);
+        setTimeout(() => {
+          onAccountSwitch();
+        }, 300);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to switch account');
@@ -165,6 +179,12 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch }: Props
 
       {activeTab === 'accounts' && (
         <div>
+          {currentWalletName && (
+            <div style={{ marginBottom: '12px', padding: '12px', background: '#f3f4f6', borderRadius: '8px', fontSize: '13px' }}>
+              <strong>Current Wallet:</strong> {currentWalletName}
+            </div>
+          )}
+
           <div style={{ marginBottom: '16px' }}>
             <button
               className="btn btn-primary"
