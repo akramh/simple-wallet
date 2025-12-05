@@ -11,4 +11,6 @@ backup-*.json
 
 # TypeScript build output
 dist/
+dist-extension/
 *.tsbuildinfo
+.github/

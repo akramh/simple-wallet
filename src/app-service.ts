@@ -90,6 +90,10 @@ export class WalletAppService {
     return this.wallet.switchAccount(index);
   }
 
+  getCurrentAccountIndex(): number {
+    return this.wallet.getCurrentAccountIndex();
+  }
+
   getAccountAddress(index: number): string {
     return this.wallet.getAccountAddress(index);
   }

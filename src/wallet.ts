@@ -267,6 +267,14 @@ export class Wallet {
     return account.address.toLowerCase();
   }
 
+  /**
+   * Return the currently selected account index.
+   * Useful for UI components that need to highlight the active account.
+   */
+  getCurrentAccountIndex(): number {
+    return this.currentAccountIndex;
+  }
+
   async getBalance(): Promise<string> {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
@@ -581,6 +589,11 @@ export class Wallet {
           walletData.authTag
         );
 
+        // Validate decrypted mnemonic so a wrong password surfaces a friendly error
+        if (!validateMnemonic(mnemonic)) {
+          throw new Error('Incorrect password');
+        }
+
         this.encryptedMnemonic = walletData.encryptedMnemonic;
         this.salt = walletData.salt;
         this.iv = walletData.iv;
@@ -601,6 +614,9 @@ export class Wallet {
       return null;
     } catch (error) {
       if ((error as Error).message?.includes('Unsupported state or unable to authenticate data')) {
+        throw new Error('Incorrect password');
+      }
+      if ((error as Error).message?.includes('invalid mnemonic')) {
         throw new Error('Incorrect password');
       }
       throw error;

@@ -168,3 +168,78 @@ test('setNetwork reconnects wallet to new provider', async () => {
   assert.equal(constructed.length, 2, 'constructed providers for both networks');
   assert.ok(wallet.wallet.provider, 'wallet reconnected');
 });
+
+test('loadWallet rejects wrong password and tampered mnemonic', async () => {
+  const storage = new MemoryStorage();
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+  class MockProvider { async getBlockNumber() { return 1; } }
+  const wallet = new Wallet(config, storage);
+  wallet.providerFactory = { createProvider: () => new MockProvider() };
+  await wallet.initialize();
+
+  wallet.createNewWallet('correct-password');
+  wallet.saveWallet('primary');
+
+  await assert.rejects(
+    async () => wallet.loadWallet('primary', 'wrong-password'),
+    /Incorrect password/
+  );
+
+  const saved = storage.readJSON('wallets.json', {});
+  saved.primary.encryptedMnemonic = saved.primary.encryptedMnemonic.replace(/./, 'x'); // corrupt
+  storage.writeJSON('wallets.json', saved);
+
+  await assert.rejects(
+    async () => wallet.loadWallet('primary', 'correct-password'),
+    /Incorrect password|invalid mnemonic/i
+  );
+});
+
+test('switchAccount derives deterministic addresses and persists index', async () => {
+  const storage = new MemoryStorage();
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+  class MockProvider { async getBlockNumber() { return 1; } }
+  const wallet = new Wallet(config, storage);
+  wallet.providerFactory = { createProvider: () => new MockProvider() };
+  await wallet.initialize();
+
+  const mnemonic = 'test test test test test test test test test test test junk';
+  wallet.importWallet(mnemonic, 'pw', 0);
+  wallet.saveWallet('acct');
+
+  const first = wallet.switchAccount(0);
+  const second = wallet.switchAccount(1);
+  assert.notEqual(first.address, second.address, 'account 0 and 1 should differ');
+
+  wallet.saveWallet('acct');
+  const reloaded = wallet.loadWallet('acct', 'pw');
+  assert.equal(wallet.getCurrentAccountIndex(), 1, 'current account index persisted');
+});
+
+test('multiple wallets coexist and can be listed', async () => {
+  const storage = new MemoryStorage();
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+  class MockProvider { async getBlockNumber() { return 1; } }
+  const wallet = new Wallet(config, storage);
+  wallet.providerFactory = { createProvider: () => new MockProvider() };
+  await wallet.initialize();
+
+  wallet.createNewWallet('pw1');
+  wallet.saveWallet('one');
+  wallet.createNewWallet('pw2');
+  wallet.saveWallet('two');
+
+  const all = wallet.getAllWallets();
+  assert.ok(all.one, 'wallet one present');
+  assert.ok(all.two, 'wallet two present');
+  assert.notEqual(all.one.encryptedMnemonic, all.two.encryptedMnemonic, 'wallets have unique data');
+});

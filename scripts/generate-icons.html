@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Icon Generator</title>
+</head>
+<body>
+  <h1>Extension Icon Generator</h1>
+  <p>Right-click each canvas and "Save image as..." to the extension/assets/icons/ directory</p>
+
+  <div>
+    <h3>icon16.png</h3>
+    <canvas id="icon16" width="16" height="16"></canvas>
+  </div>
+
+  <div>
+    <h3>icon32.png</h3>
+    <canvas id="icon32" width="32" height="32"></canvas>
+  </div>
+
+  <div>
+    <h3>icon48.png</h3>
+    <canvas id="icon48" width="48" height="48"></canvas>
+  </div>
+
+  <div>
+    <h3>icon128.png</h3>
+    <canvas id="icon128" width="128" height="128"></canvas>
+  </div>
+
+  <script>
+    function drawIcon(canvasId, size) {
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas.getContext('2d');
+
+      // Background gradient
+      const gradient = ctx.createLinearGradient(0, 0, size, size);
+      gradient.addColorStop(0, '#6366f1');
+      gradient.addColorStop(1, '#4f46e5');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, size, size);
+
+      // Draw wallet icon (simplified)
+      ctx.fillStyle = '#ffffff';
+      const padding = size * 0.2;
+      const walletWidth = size - (padding * 2);
+      const walletHeight = walletWidth * 0.6;
+      const walletX = padding;
+      const walletY = (size - walletHeight) / 2;
+
+      // Wallet body
+      ctx.fillRect(walletX, walletY, walletWidth, walletHeight);
+
+      // Card slot
+      ctx.fillStyle = '#6366f1';
+      const slotHeight = walletHeight * 0.15;
+      const slotY = walletY + (walletHeight * 0.3);
+      ctx.fillRect(walletX, slotY, walletWidth, slotHeight);
+    }
+
+    drawIcon('icon16', 16);
+    drawIcon('icon32', 32);
+    drawIcon('icon48', 48);
+    drawIcon('icon128', 128);
+  </script>
+</body>
+</html>
