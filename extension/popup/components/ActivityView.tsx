@@ -75,19 +75,6 @@ function ActivityView({ currentAddress, network }: Props) {
     }
   };
 
-  const getStatusStyles = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'bg-warning-light text-warning-dark border-warning';
-      case 'confirmed':
-        return 'bg-success-light text-success-dark border-success';
-      case 'failed':
-        return 'bg-danger-light text-danger-dark border-danger';
-      default:
-        return 'bg-surface-secondary text-text-secondary border-border';
-    }
-  };
-
   const getTransactionType = (tx: Transaction) => {
     if (tx.from.toLowerCase() === currentAddress.toLowerCase()) return 'Sent';
     if (tx.to.toLowerCase() === currentAddress.toLowerCase()) return 'Received';
@@ -106,19 +93,19 @@ function ActivityView({ currentAddress, network }: Props) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16">
-        <div className="text-text-secondary text-base">Loading transactions...</div>
+      <div className="loading">
+        Loading transactions...
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="activity-view">
       {/* Header */}
-      <div className="flex justify-between items-center px-5 py-4 border-b border-border">
-        <h2 className="text-lg font-bold text-text-primary">Transaction History</h2>
+      <div className="activity-header">
+        <h2>Transaction History</h2>
         <button
-          className="w-10 h-10 flex items-center justify-center rounded-wallet-sm text-xl hover:bg-surface-secondary transition-colors"
+          className="btn-refresh"
           onClick={loadTransactions}
           title="Refresh"
         >
@@ -127,7 +114,7 @@ function ActivityView({ currentAddress, network }: Props) {
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex gap-2 px-5 py-4 border-b border-border overflow-x-auto scrollbar-hide">
+      <div className="activity-filters">
         {(['all', 'pending', 'confirmed', 'failed'] as const).map((filterType) => {
           const count = filterType === 'all'
             ? transactions.length
@@ -135,11 +122,7 @@ function ActivityView({ currentAddress, network }: Props) {
           return (
             <button
               key={filterType}
-              className={`px-4 py-2 text-sm font-semibold rounded-full whitespace-nowrap transition-all ${
-                filter === filterType
-                  ? 'bg-primary text-white'
-                  : 'bg-surface-secondary text-text-secondary hover:bg-surface-tertiary'
-              }`}
+              className={`filter-btn ${filter === filterType ? 'active' : ''}`}
               onClick={() => setFilter(filterType)}
             >
               {filterType.charAt(0).toUpperCase() + filterType.slice(1)} ({count})
@@ -149,49 +132,46 @@ function ActivityView({ currentAddress, network }: Props) {
       </div>
 
       {/* Transaction List */}
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="transaction-list">
         {filteredTransactions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="text-5xl mb-4">📋</div>
-            <p className="text-base font-semibold text-text-primary mb-2">No transactions yet</p>
-            <span className="text-sm text-text-secondary">Your transaction history will appear here</span>
+          <div className="loading" style={{ flexDirection: 'column', textAlign: 'center' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>📋</div>
+            <p style={{ fontWeight: 600, marginBottom: '8px' }}>No transactions yet</p>
+            <span>Your transaction history will appear here</span>
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div>
             {filteredTransactions.map((tx) => (
-              <div
-                key={tx.hash}
-                className="flex items-start gap-4 p-4 bg-white border border-border rounded-wallet-sm hover:border-border-dark transition-colors"
-              >
+              <div key={tx.hash} className="transaction-item">
                 {/* Icon */}
-                <div className="w-11 h-11 rounded-full bg-surface-secondary flex items-center justify-center text-xl shrink-0">
-                  {tx.type === 'send' ? '📤' : '📥'}
+                <div className="tx-icon">
+                  <div className={`tx-type-badge ${tx.type}`}>
+                    {tx.type === 'send' ? '📤' : '📥'}
+                  </div>
                 </div>
 
                 {/* Details */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="font-semibold text-sm text-text-primary">
-                      {getTransactionType(tx)}
-                    </span>
-                    <span className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${getStatusStyles(tx.status)}`}>
+                <div className="tx-details">
+                  <div className="tx-main">
+                    <span className="tx-type">{getTransactionType(tx)}</span>
+                    <span className={`tx-status tx-status-${tx.status}`}>
                       {getStatusIcon(tx.status)} {tx.status}
                     </span>
                   </div>
 
-                  <div className="flex items-center justify-between text-sm text-text-secondary mb-2">
-                    <span className="font-mono">
+                  <div className="tx-meta">
+                    <span className="tx-address">
                       {tx.type === 'send' ? `To: ${formatAddress(tx.to)}` : `From: ${formatAddress(tx.from)}`}
                     </span>
-                    <span>{formatDate(tx.timestamp)}</span>
+                    <span className="tx-time">{formatDate(tx.timestamp)}</span>
                   </div>
 
-                  <div className="text-base font-semibold text-text-primary">
+                  <div className="tx-amount">
                     {tx.type === 'send' ? '-' : '+'}{tx.value} {tx.tokenSymbol || 'ETH'}
                   </div>
 
                   {tx.error && (
-                    <div className="mt-3 text-sm text-danger flex items-center gap-2">
+                    <div className="tx-error">
                       <span>⚠️</span> {tx.error}
                     </div>
                   )}
@@ -199,7 +179,7 @@ function ActivityView({ currentAddress, network }: Props) {
 
                 {/* Explorer Link */}
                 <button
-                  className="w-8 h-8 flex items-center justify-center rounded-wallet-sm text-lg hover:bg-surface-secondary transition-colors shrink-0"
+                  className="btn-refresh"
                   onClick={() => openInExplorer(tx.hash)}
                   title="View on Explorer"
                 >

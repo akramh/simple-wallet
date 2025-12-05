@@ -5,7 +5,6 @@
  * for all wallet and account management operations.
  */
 import React from 'react';
-import { Button } from './ui/Button';
 
 interface Props {
   onClose?: () => void;
@@ -13,41 +12,41 @@ interface Props {
 
 function SettingsView({ onClose }: Props) {
   return (
-    <div className="flex flex-col h-full">
+    <div className="container">
       {/* Header */}
-      <div className="flex justify-between items-center px-5 py-4 border-b border-border">
-        <h2 className="text-base font-bold text-text-primary">Settings</h2>
+      <div className="settings-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+        <h2 className="settings-title">Settings</h2>
         {onClose && (
-          <Button variant="secondary" size="sm" onClick={onClose}>
+          <button className="btn btn-secondary btn-inline settings-back-btn" onClick={onClose}>
             ← Back
-          </Button>
+          </button>
         )}
       </div>
 
       {/* Content */}
-      <div className="flex-1 px-6 py-8">
-        <div className="bg-surface-secondary border border-border rounded-wallet p-5 text-center">
-          <div className="text-4xl mb-4">⚙️</div>
-          <p className="text-sm text-text-secondary mb-3 leading-relaxed">
+      <div className="content">
+        <div className="wallet-card" style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '32px', marginBottom: '16px' }}>⚙️</div>
+          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '12px', lineHeight: 1.5 }}>
             Wallet and account management is available in the main menu.
           </p>
-          <p className="text-sm text-text-tertiary leading-relaxed">
+          <p style={{ fontSize: '14px', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
             Click the account selector (top-left) to manage wallets and accounts.
           </p>
         </div>
 
         {/* Future settings sections can be added here */}
-        <div className="mt-8 space-y-4">
-          <div className="text-sm font-bold text-text-secondary uppercase tracking-wide mb-3">
+        <div style={{ marginTop: '32px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
             Preferences
           </div>
           
-          <div className="flex items-center justify-between p-4 bg-white border border-border rounded-wallet-sm">
+          <div className="wallet-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <div className="text-sm font-medium text-text-primary mb-1">Version</div>
-              <div className="text-sm text-text-secondary">Simple Wallet Extension</div>
+              <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px' }}>Version</div>
+              <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>Simple Wallet Extension</div>
             </div>
-            <div className="text-sm text-text-tertiary">1.0.0</div>
+            <div style={{ fontSize: '14px', color: 'var(--text-tertiary)' }}>1.0.0</div>
           </div>
         </div>
       </div>

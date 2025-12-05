@@ -5,9 +5,6 @@
  * Features: view/switch wallets & accounts, create/import wallets
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Button } from './ui/Button';
-import { Input, TextArea } from './ui/Input';
-import { Modal } from './ui/Modal';
 
 interface Account {
   index: number;
@@ -254,47 +251,32 @@ function AccountMenu({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 animate-fade-in"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-wallet-lg w-full max-w-[520px] max-h-[90vh] flex flex-col shadow-modal animate-slide-up overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="account-menu-overlay" onClick={onClose}>
+      <div className="account-menu" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex justify-between items-center px-7 py-6 border-b border-border bg-gradient-to-b from-gray-50 to-white">
-          <div>
-            <div className="text-sm text-text-secondary uppercase tracking-wide mb-1.5">Current wallet</div>
-            <div className="text-xl font-bold text-text-primary">{currentWalletName || 'Wallet'}</div>
+        <div className="account-menu-header">
+          <div className="account-menu-title-group">
+            <div className="account-menu-label">Current wallet</div>
+            <div className="account-menu-title">{currentWalletName || 'Wallet'}</div>
           </div>
-          <button
-            className="w-10 h-10 flex items-center justify-center rounded-wallet-sm text-2xl text-text-secondary hover:bg-surface-secondary hover:text-text-primary transition-colors"
-            onClick={onClose}
-          >
-            ×
-          </button>
+          <button className="close-btn" onClick={onClose}>×</button>
         </div>
 
         {/* Status Alert */}
         {status.message && (
-          <div className={`mx-6 mt-5 p-4 rounded-wallet-sm text-sm border ${
-            status.type === 'error' 
-              ? 'bg-danger-light border-danger text-danger-dark' 
-              : 'bg-success-light border-success text-success-dark'
-          }`}>
+          <div className={`account-menu-alert alert ${status.type === 'error' ? 'alert-error' : 'alert-success'}`}>
             {status.message}
           </div>
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-7 space-y-7">
+        <div className="account-menu-section">
           {/* Section Header */}
-          <div className="flex justify-between items-center gap-4">
-            <div className="text-lg font-bold text-text-primary">Wallets</div>
-            <div className="flex gap-3">
+          <div className="section-header">
+            <div className="section-title">Wallets</div>
+            <div className="section-actions-inline">
               <button
-                className="px-5 py-3 text-sm font-semibold border border-border rounded-wallet-sm hover:bg-surface-secondary hover:border-primary transition-all"
+                className="section-cta"
                 onClick={async () => {
                   setPendingImportName(await getNextWalletName());
                   setShowImportModal(true);
@@ -303,7 +285,7 @@ function AccountMenu({
                 Import
               </button>
               <button
-                className="px-5 py-3 text-sm font-semibold bg-primary text-white rounded-wallet-sm hover:bg-primary-dark transition-all"
+                className="btn btn-primary btn-inline"
                 onClick={async () => {
                   setPendingCreateName(await getNextWalletName());
                   setShowCreateModal(true);
@@ -315,40 +297,36 @@ function AccountMenu({
           </div>
 
           {/* Wallet List */}
-          <div className="flex flex-col gap-6">
+          <div className="wallet-list">
             {getWalletsWithAccounts().map((wallet) => (
-              <div key={wallet.name}>
-                <div className="text-sm font-semibold text-text-secondary px-1 mb-3">
+              <div key={wallet.name} className="wallet-group">
+                <div className="wallet-group-header">
                   {wallet.name}
                 </div>
 
-                <div className="flex flex-col gap-3.5 max-h-[320px] overflow-y-auto scrollbar-thin pr-1">
+                <div className="account-list">
                   {wallet.accounts.map((account) => (
                     <div
                       key={`${wallet.name}-${account.index}`}
-                      className={`flex items-center gap-5 p-5 rounded-wallet cursor-pointer transition-all border-2
-                        ${account.address === currentAddress
-                          ? 'bg-gradient-to-r from-primary-50 to-primary-100 border-primary shadow-sm'
-                          : 'border-transparent hover:bg-surface-secondary hover:border-border-dark'
-                        }`}
+                      className={`account-item ${account.address === currentAddress ? 'active' : ''}`}
                       onClick={() => handleSwitchAccount(wallet.name, account.index, account.address)}
                     >
-                      <div className="w-11 h-11 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center text-sm font-bold shrink-0">
+                      <div className="account-avatar">
                         {account.address.substring(2, 4).toUpperCase()}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-base font-semibold text-text-primary">Account {account.index + 1}</div>
-                        <div className="text-sm font-mono text-text-secondary mt-1">{formatAddress(account.address)}</div>
+                      <div className="account-details">
+                        <div className="account-name">Account {account.index + 1}</div>
+                        <div className="account-address">{formatAddress(account.address)}</div>
                       </div>
                       {account.address === currentAddress && (
-                        <span className="text-primary font-bold text-xl">✓</span>
+                        <span className="active-badge">✓</span>
                       )}
                     </div>
                   ))}
 
                   {wallet.name === currentWalletName && (
                     <button
-                      className="w-full py-4 mt-2 text-primary text-sm font-semibold hover:bg-primary/5 rounded-wallet-sm transition-all disabled:opacity-50"
+                      className="add-account-btn"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleCreateAccount();
@@ -363,8 +341,9 @@ function AccountMenu({
             ))}
 
             {getWalletsWithAccounts().length === 0 && (
-              <div className="text-center py-12 text-text-secondary text-base">
-                No wallets yet. Create or import one to get started.
+              <div className="empty-state">
+                <p>No wallets yet</p>
+                <span>Create or import one to get started.</span>
               </div>
             )}
           </div>
@@ -372,131 +351,133 @@ function AccountMenu({
       </div>
 
       {/* Create Wallet Modal */}
-      <Modal
-        isOpen={showCreateModal}
-        onClose={() => {
-          if (createStep === 'success') {
-            if (!confirm("Make sure you've saved your recovery phrase!")) return;
-          }
-          setShowCreateModal(false);
-          setCreateStep('form');
-          setCreatedMnemonic('');
-        }}
-        title={createStep === 'success' ? `Wallet: ${createdWalletName}` : 'Create wallet'}
-        zIndex={60}
-      >
-        {status.message && createStep === 'form' && (
-          <div className={`mb-5 p-4 rounded-wallet-sm text-sm border ${
-            status.type === 'error' ? 'bg-danger-light border-danger text-danger-dark' : 'bg-success-light border-success text-success-dark'
-          }`}>
-            {status.message}
-          </div>
-        )}
-
-        {createStep === 'success' && createdMnemonic && (
-          <>
-            <div className="bg-warning-light border border-warning rounded-wallet-sm p-4 mb-5 text-warning-dark">
-              <strong className="block mb-1.5">⚠️ Save your recovery phrase!</strong>
-              <span className="text-sm">This is the only way to recover your wallet.</span>
+      {showCreateModal && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>{createStep === 'success' ? `Wallet: ${createdWalletName}` : 'Create wallet'}</h3>
+              <button className="close-btn" onClick={() => {
+                if (createStep === 'success') {
+                  if (!confirm("Make sure you've saved your recovery phrase!")) return;
+                }
+                setShowCreateModal(false);
+                setCreateStep('form');
+                setCreatedMnemonic('');
+              }}>×</button>
             </div>
 
-            <div className="border border-border rounded-wallet-sm p-4 bg-surface-secondary mb-5">
-              <div className="flex justify-between items-center mb-3">
-                <span className="text-sm text-text-secondary">Recovery phrase</span>
-                <div className="flex gap-2">
-                  <button
-                    className="px-3 py-1.5 text-sm font-semibold border border-border rounded-wallet-sm hover:bg-white transition-colors"
-                    onClick={() => {
-                      navigator.clipboard.writeText(createdMnemonic);
-                      showToast('Copied!');
-                    }}
-                  >
-                    📋 Copy
-                  </button>
-                  <button
-                    className="px-3 py-1.5 text-sm font-semibold border border-border rounded-wallet-sm hover:bg-white transition-colors"
-                    onClick={() => setShowCreatedMnemonic(v => !v)}
-                  >
-                    {showCreatedMnemonic ? '👁️ Hide' : '👁️ Reveal'}
-                  </button>
+            {status.message && createStep === 'form' && (
+              <div className={`alert ${status.type === 'error' ? 'alert-error' : 'alert-success'}`}>
+                {status.message}
+              </div>
+            )}
+
+            {createStep === 'success' && createdMnemonic && (
+              <>
+                <div className="mnemonic-warning">
+                  <strong>⚠️ Save your recovery phrase!</strong>
+                  <span>This is the only way to recover your wallet.</span>
                 </div>
-              </div>
-              <div className={`font-mono text-sm p-3 bg-white rounded-wallet-sm border border-border break-all leading-relaxed ${!showCreatedMnemonic ? 'blur-sm select-none' : ''}`}>
-                {showCreatedMnemonic ? createdMnemonic : '•••• •••• •••• •••• •••• •••• •••• •••• •••• •••• •••• ••••'}
-              </div>
-            </div>
-          </>
-        )}
 
-        {createStep === 'form' ? (
-          <Button fullWidth onClick={handleCreateWallet} loading={loading}>
-            Create wallet
-          </Button>
-        ) : (
-          <Button fullWidth onClick={handleCreateWalletDone} loading={loading}>
-            Done — Switch to wallet
-          </Button>
-        )}
-      </Modal>
+                <div className="mnemonic-panel">
+                  <div className="mnemonic-panel-header">
+                    <span>Recovery phrase</span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        className="section-cta"
+                        onClick={() => {
+                          navigator.clipboard.writeText(createdMnemonic);
+                          showToast('Copied!');
+                        }}
+                      >
+                        📋 Copy
+                      </button>
+                      <button
+                        className="section-cta"
+                        onClick={() => setShowCreatedMnemonic(v => !v)}
+                      >
+                        {showCreatedMnemonic ? '👁️ Hide' : '👁️ Reveal'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className={`mnemonic-box ${showCreatedMnemonic ? 'revealed' : 'masked'}`}>
+                    {showCreatedMnemonic ? createdMnemonic : '•••• •••• •••• •••• •••• •••• •••• •••• •••• •••• •••• ••••'}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {createStep === 'form' ? (
+              <button className="btn btn-primary" onClick={handleCreateWallet} disabled={loading}>
+                {loading ? 'Creating...' : 'Create wallet'}
+              </button>
+            ) : (
+              <button className="btn btn-primary" onClick={handleCreateWalletDone} disabled={loading}>
+                {loading ? 'Switching...' : 'Done — Switch to wallet'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Import Wallet Modal */}
-      <Modal
-        isOpen={showImportModal}
-        onClose={() => {
-          setShowImportModal(false);
-          setImportStep('form');
-          setImportMnemonic('');
-        }}
-        title="Import wallet"
-        zIndex={60}
-      >
-        {status.message && (
-          <div className={`mb-5 p-4 rounded-wallet-sm text-sm border ${
-            status.type === 'error' ? 'bg-danger-light border-danger text-danger-dark' : 'bg-success-light border-success text-success-dark'
-          }`}>
-            {status.message}
-          </div>
-        )}
-
-        {importStep === 'form' ? (
-          <>
-            <TextArea
-              label="Recovery Phrase"
-              rows={3}
-              placeholder="Enter your 12-24 word phrase"
-              value={importMnemonic}
-              onChange={(e) => setImportMnemonic(e.target.value)}
-              className="mb-5"
-            />
-            <Button
-              fullWidth
-              onClick={handleImportWallet}
-              loading={loading}
-              disabled={importMnemonic.trim().split(/\s+/).length < 12}
-            >
-              Import wallet
-            </Button>
-          </>
-        ) : (
-          <>
-            <div className="bg-success-light border border-success text-success-dark rounded-wallet-sm p-3 mb-4 text-sm">
-              Wallet "{importedWalletName}" imported successfully!
+      {showImportModal && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h3>Import wallet</h3>
+              <button className="close-btn" onClick={() => {
+                setShowImportModal(false);
+                setImportStep('form');
+                setImportMnemonic('');
+              }}>×</button>
             </div>
-            <Button fullWidth onClick={() => {
-              setShowImportModal(false);
-              setImportStep('form');
-            }}>
-              Go to wallet
-            </Button>
-          </>
-        )}
-      </Modal>
+
+            {status.message && (
+              <div className={`alert ${status.type === 'error' ? 'alert-error' : 'alert-success'}`}>
+                {status.message}
+              </div>
+            )}
+
+            {importStep === 'form' ? (
+              <>
+                <div className="form-group">
+                  <label>Recovery Phrase</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Enter your 12-24 word phrase"
+                    value={importMnemonic}
+                    onChange={(e) => setImportMnemonic(e.target.value)}
+                  />
+                </div>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleImportWallet}
+                  disabled={loading || importMnemonic.trim().split(/\s+/).length < 12}
+                >
+                  {loading ? 'Importing...' : 'Import wallet'}
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="alert alert-success">
+                  Wallet "{importedWalletName}" imported successfully!
+                </div>
+                <button className="btn btn-primary" onClick={() => {
+                  setShowImportModal(false);
+                  setImportStep('form');
+                }}>
+                  Go to wallet
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 bg-gray-900 text-white px-5 py-3 rounded-wallet font-medium text-sm shadow-modal z-[60] animate-slide-up">
-          {toast}
-        </div>
+        <div className="toast">{toast}</div>
       )}
     </div>
   );
