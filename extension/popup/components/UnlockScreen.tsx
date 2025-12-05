@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { Button } from './ui/Button';
+import { Input, Select } from './ui/Input';
 
 interface Props {
   onUnlocked: () => void;
@@ -20,7 +22,7 @@ function UnlockScreen({ onUnlocked }: Props) {
           const walletNames = Object.keys(response.wallets);
           setAvailableWallets(walletNames);
           if (walletNames.length > 0 && !walletNames.includes('default')) {
-            setWalletName(walletNames[0]); // Use first available wallet
+            setWalletName(walletNames[0]);
           }
         }
       } catch (err) {
@@ -59,48 +61,39 @@ function UnlockScreen({ onUnlocked }: Props) {
   };
 
   return (
-    <div className="container">
-      <div className="header">
-        <h1>Welcome Back</h1>
+    <div className="flex flex-col h-full bg-white">
+      <div className="px-5 py-5 bg-primary text-white">
+        <h1 className="text-xl font-semibold">Welcome Back</h1>
       </div>
-      <div className="content">
-        <form onSubmit={handleUnlock}>
+      <div className="flex-1 p-6 overflow-y-auto">
+        <div className="text-center mb-8">
+          <div className="text-6xl mb-4">🔐</div>
+          <p className="text-text-secondary text-base">Enter your password to unlock</p>
+        </div>
+
+        <form onSubmit={handleUnlock} className="space-y-5">
           {availableWallets.length > 1 && (
-            <div className="form-group">
-              <label>Wallet</label>
-              <select
-                value={walletName}
-                onChange={(e) => setWalletName(e.target.value)}
-              >
-                {availableWallets.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              label="Wallet"
+              value={walletName}
+              onChange={(e) => setWalletName(e.target.value)}
+              options={availableWallets.map(name => ({ value: name, label: name }))}
+            />
           )}
 
-          <div className="form-group">
-            <label>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter your password"
-              autoFocus
-            />
-          </div>
+          <Input
+            label="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter your password"
+            error={error}
+            autoFocus
+          />
 
-          {error && <div className="error">{error}</div>}
-
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={loading}
-          >
+          <Button type="submit" fullWidth loading={loading} className="mt-4">
             {loading ? 'Unlocking...' : 'Unlock'}
-          </button>
+          </Button>
         </form>
       </div>
     </div>

@@ -6,11 +6,11 @@
  * - Send/receive functionality
  * - Activity/transaction history
  * - Multi-view navigation (assets, send, receive, activity, settings)
- * 
- * Manages wallet state and communicates with the background service worker
- * for all blockchain operations.
  */
 import React, { useState, useEffect } from 'react';
+import { Button } from './ui/Button';
+import { Input, Select } from './ui/Input';
+import { Card } from './ui/Card';
 import SettingsView from './SettingsView';
 import Header from './Header';
 import AccountMenu from './AccountMenu';
@@ -41,7 +41,6 @@ interface TokenBalance {
 type View = 'assets' | 'activity' | 'receive' | 'send' | 'settings';
 
 function MainWallet({ address, network, onLock, onStateChange }: Props) {
-  // Notify parent component of state changes
   const notifyStateChange = () => {
     if (onStateChange) {
       onStateChange();
@@ -69,9 +68,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     loadData();
   }, [network]);
 
-  /**
-   * Load portfolio, networks, and account info from the background service
-   */
   const loadData = async () => {
     setLoading(true);
     try {
@@ -126,10 +122,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     }
   };
 
-  const handleCopyAddress = () => {
-    navigator.clipboard.writeText(address);
-  };
-
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     setSendError('');
@@ -170,26 +162,11 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     }
   };
 
-  const formatAddress = (addr: string) => {
-    return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
-  };
-
   const formatBalance = (balance: string | number) => {
     const num = typeof balance === 'string' ? parseFloat(balance) : balance;
-
     if (num === 0) return '0';
-
-    // For very small amounts (less than 0.0001), show up to 8 decimals
-    if (num < 0.0001) {
-      return num.toFixed(8).replace(/\.?0+$/, '');
-    }
-
-    // For small amounts (less than 1), show up to 6 decimals
-    if (num < 1) {
-      return num.toFixed(6).replace(/\.?0+$/, '');
-    }
-
-    // For larger amounts, show up to 4 decimals
+    if (num < 0.0001) return num.toFixed(8).replace(/\.?0+$/, '');
+    if (num < 1) return num.toFixed(6).replace(/\.?0+$/, '');
     return num.toFixed(4).replace(/\.?0+$/, '');
   };
 
@@ -197,7 +174,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const nativeBalance = nativeToken ? parseFloat(nativeToken.balance) : 0;
 
   return (
-    <div className="container">
+    <div className="flex flex-col h-full bg-white">
       <Header
         network={network}
         networks={networks}
@@ -218,51 +195,37 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
           onAccountSwitch={() => {
             loadData();
             notifyStateChange();
-            // Don't close menu when switching/creating accounts - let user see the change
           }}
           onWalletSwitch={() => {
             loadData();
             notifyStateChange();
-            setShowAccountMenu(false); // Close menu after wallet switch
+            setShowAccountMenu(false);
           }}
           onStateChange={notifyStateChange}
         />
       )}
 
+      {/* Navigation Tabs */}
       {view !== 'settings' && (
-        <div className="top-nav">
-          <button
-            className={`nav-item ${view === 'assets' ? 'active' : ''}`}
-            onClick={() => setView('assets')}
-          >
-            <span className="nav-icon">💰</span>
-            <span>Assets</span>
-          </button>
-          <button
-            className={`nav-item ${view === 'receive' ? 'active' : ''}`}
-            onClick={() => setView('receive')}
-          >
-            <span className="nav-icon">📥</span>
-            <span>Receive</span>
-          </button>
-          <button
-            className={`nav-item ${view === 'send' ? 'active' : ''}`}
-            onClick={() => setView('send')}
-          >
-            <span className="nav-icon">📤</span>
-            <span>Send</span>
-          </button>
-          <button
-            className={`nav-item ${view === 'activity' ? 'active' : ''}`}
-            onClick={() => setView('activity')}
-          >
-            <span className="nav-icon">📊</span>
-            <span>Activity</span>
-          </button>
+        <div className="flex bg-white border-b border-border px-3 py-2 gap-2">
+          {['assets', 'receive', 'send', 'activity'].map((tab) => (
+            <button
+              key={tab}
+              className={`flex-1 py-3 px-3 rounded-wallet-sm text-sm font-semibold transition-all capitalize
+                ${view === tab 
+                  ? 'bg-primary text-white' 
+                  : 'text-text-secondary hover:bg-surface-secondary hover:text-text-primary'
+                }`}
+              onClick={() => setView(tab as View)}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
       )}
 
-      <div className="content">
+      {/* Content Area */}
+      <div className="flex-1 p-5 overflow-y-auto">
         {view === 'settings' ? (
           <SettingsView
             currentAddress={address}
@@ -273,41 +236,46 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
           />
         ) : view === 'assets' ? (
           <>
-            {/* Main Balance */}
-            <div className="wallet-card">
-              <div className="balance-label">Total Balance</div>
-              <div className="balance">
-                <span className="balance-amount">{formatBalance(nativeBalance)}</span>
-                <span className="balance-symbol">{nativeToken?.token.symbol || 'ETH'}</span>
+            {/* Main Balance Card */}
+            <Card className="mb-5 p-5">
+              <div className="text-sm uppercase tracking-wide text-text-secondary mb-3">Total Balance</div>
+              <div className="flex items-baseline gap-2 mb-4">
+                <span className="text-3xl font-bold text-text-primary">{formatBalance(nativeBalance)}</span>
+                <span className="text-lg font-semibold text-text-secondary">{nativeToken?.token.symbol || 'ETH'}</span>
               </div>
-              <button
-                className="btn btn-secondary"
+              <Button 
+                variant="secondary" 
+                size="sm"
                 onClick={handleRefresh}
                 disabled={refreshing}
-                style={{ marginTop: '12px' }}
               >
                 {refreshing ? 'Refreshing...' : 'Refresh'}
-              </button>
-            </div>
+              </Button>
+            </Card>
 
             {/* Token List */}
             {loading ? (
-              <div className="loading">Loading tokens...</div>
+              <div className="flex items-center justify-center py-16 text-text-secondary text-base">
+                Loading tokens...
+              </div>
             ) : (
-              <div className="token-list">
+              <div className="flex flex-col gap-4">
                 {portfolio.map((item, index) => (
-                  <div key={index} className="token-item">
-                    <div className="token-info">
-                      <div className="token-icon">
+                  <div 
+                    key={index} 
+                    className="flex items-center justify-between p-4 bg-surface-secondary rounded-wallet"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center font-semibold text-base">
                         {item.token.symbol.substring(0, 1)}
                       </div>
-                      <div className="token-details">
-                        <h3>{item.token.symbol}</h3>
-                        <p>{item.token.name}</p>
+                      <div>
+                        <h3 className="text-base font-semibold text-text-primary leading-snug">{item.token.symbol}</h3>
+                        <p className="text-sm text-text-secondary mt-1 leading-snug">{item.token.name}</p>
                       </div>
                     </div>
-                    <div className="token-balance">
-                      <div className="token-amount">
+                    <div className="text-right">
+                      <div className="text-lg font-semibold text-text-primary">
                         {item.error ? 'Error' : formatBalance(item.balance)}
                       </div>
                     </div>
@@ -317,67 +285,53 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
             )}
           </>
         ) : view === 'activity' ? (
-          <ActivityView
-            currentAddress={address}
-            network={network}
-          />
+          <ActivityView currentAddress={address} network={network} />
         ) : view === 'receive' ? (
-          <ReceiveView
-            address={address}
-            network={network}
-            networks={networks}
-          />
+          <ReceiveView address={address} network={network} networks={networks} />
         ) : view === 'send' ? (
-          /* Send Form */
-          <form onSubmit={handleSend}>
-            <div className="form-group">
-              <label>Token</label>
-              <select
-                value={selectedToken?.symbol || ''}
-                onChange={(e) => {
-                  const token = portfolio.find(p => p.token.symbol === e.target.value);
-                  setSelectedToken(token?.token || null);
-                }}
-              >
-                <option value="">Select a token</option>
-                {portfolio.map((item, index) => (
-                  <option key={index} value={item.token.symbol}>
-                    {item.token.symbol} ({formatBalance(item.balance)})
-                  </option>
-                ))}
-              </select>
-            </div>
+          <form onSubmit={handleSend} className="space-y-5">
+            <Select
+              label="Token"
+              value={selectedToken?.symbol || ''}
+              onChange={(e) => {
+                const token = portfolio.find(p => p.token.symbol === e.target.value);
+                setSelectedToken(token?.token || null);
+              }}
+              options={[
+                { value: '', label: 'Select a token' },
+                ...portfolio.map((item) => ({
+                  value: item.token.symbol,
+                  label: `${item.token.symbol} (${formatBalance(item.balance)})`
+                }))
+              ]}
+            />
 
-            <div className="form-group">
-              <label>Recipient Address</label>
-              <input
-                type="text"
-                value={recipient}
-                onChange={(e) => setRecipient(e.target.value)}
-                placeholder="0x..."
-              />
-            </div>
+            <Input
+              label="Recipient Address"
+              type="text"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="0x..."
+            />
 
-            <div className="form-group">
-              <label>Amount</label>
-              <input
-                type="text"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="0.0"
-              />
-            </div>
+            <Input
+              label="Amount"
+              type="text"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.0"
+            />
 
-            {sendError && <div className="error">{sendError}</div>}
-            {sendSuccess && <div className="success">{sendSuccess}</div>}
+            {sendError && (
+              <p className="text-sm text-danger p-3 bg-danger-light rounded-wallet-sm">{sendError}</p>
+            )}
+            {sendSuccess && (
+              <p className="text-sm text-success p-3 bg-success-light rounded-wallet-sm">{sendSuccess}</p>
+            )}
 
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={sendLoading}
-            >
+            <Button type="submit" fullWidth loading={sendLoading}>
               {sendLoading ? 'Sending...' : 'Send'}
-            </button>
+            </Button>
           </form>
         ) : null}
       </div>
