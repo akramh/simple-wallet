@@ -9,6 +9,7 @@ import * as ui from './ui-helpers.js';
 import { WalletAppService } from './app-service.js';
 import { FileStorage } from './storage.js';
 import { createProviderFactory } from './providers.js';
+import { ExplorerAPI } from './explorer-api.js';
 import type { Config, Token, TokenMetadata } from './types/index.js';
 
 // Load and type config
@@ -27,6 +28,10 @@ const walletService = new WalletAppService(wallet, config, {
   configPath: 'config.json',
   storage
 });
+
+// Initialize explorer API for transaction history
+const explorerAPI = new ExplorerAPI();
+explorerAPI.registerNetworks(config.networks);
 
 // Global password cache (in-memory only)
 let masterPassword: string | null = null;
@@ -543,6 +548,7 @@ async function mainMenu(walletName: string | null): Promise<void> {
         new inquirer.Separator(ui.menuSeparator().line),
         ui.menuChoice('Check Balance', 'View your current balance', 'balance'),
         ui.menuChoice('Portfolio (All Networks)', 'View balances across networks', 'portfolio_all'),
+        ui.menuChoice('Transaction History', 'View recent transactions', 'history'),
         ui.menuChoice('Send Transaction', 'Send ETH to another address', 'send'),
         ui.menuChoice('Receive', 'Show your address & QR code', 'receive'),
         new inquirer.Separator(''),
@@ -572,6 +578,9 @@ async function mainMenu(walletName: string | null): Promise<void> {
       break;
     case 'portfolio_all':
       await checkPortfolioAllNetworks(currentWalletName);
+      break;
+    case 'history':
+      await viewTransactionHistory(currentWalletName);
       break;
     case 'send':
       await sendCrypto(currentWalletName);
@@ -702,6 +711,95 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
     ui.showSeparator();
     console.log('');
   });
+
+  await inquirer.prompt<{ continue: string }>([{
+    type: 'input',
+    name: 'continue',
+    message: 'Press Enter to continue...'
+  }]);
+
+  await mainMenu(currentWalletName);
+}
+
+async function viewTransactionHistory(currentWalletName: string | null): Promise<void> {
+  const address = wallet.getAddress();
+  ui.clearScreen();
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
+
+  ui.showSection('Transaction History');
+
+  if (!explorerAPI.isSupported(config.network)) {
+    ui.showWarning(`Explorer API not configured for ${config.networks[config.network].name}`);
+    console.log(chalk.gray('Add explorerApiUrl and explorerApiKey to config.json to enable transaction history.'));
+    console.log('');
+    
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+    
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  ui.showLoading('Fetching transactions from block explorer...');
+
+  try {
+    const transactions = await explorerAPI.getAllTransactions(address, config.network, 1, 15);
+    console.log('');
+
+    if (transactions.length === 0) {
+      ui.showInfo('No transactions found for this address.');
+    } else {
+      ui.showSuccess(`Found ${transactions.length} recent transactions`);
+      console.log('');
+      ui.showSeparator();
+
+      for (const tx of transactions) {
+        const isSent = tx.from.toLowerCase() === address.toLowerCase();
+        const direction = isSent ? chalk.red('↑ SENT') : chalk.green('↓ RECEIVED');
+        const otherAddress = isSent ? tx.to : tx.from;
+        const shortAddr = otherAddress ? `${otherAddress.slice(0, 8)}...${otherAddress.slice(-6)}` : 'Contract Creation';
+        
+        // Format value
+        let valueStr: string;
+        if (tx.tokenSymbol) {
+          const decimals = tx.tokenDecimals || 18;
+          const value = parseFloat(tx.value) / Math.pow(10, decimals);
+          valueStr = `${value.toFixed(4)} ${tx.tokenSymbol}`;
+        } else {
+          const ethValue = parseFloat(tx.value) / 1e18;
+          valueStr = `${ethValue.toFixed(6)} ETH`;
+        }
+
+        // Format date (timestamp is already in ms)
+        const date = new Date(tx.timestamp);
+        const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        // Status indicator
+        const statusIcon = tx.status === 'confirmed' ? '✓' : tx.status === 'failed' ? '✗' : '○';
+        const statusColor = tx.status === 'confirmed' ? chalk.green : tx.status === 'failed' ? chalk.red : chalk.yellow;
+
+        console.log(`${statusColor(statusIcon)} ${direction}  ${chalk.white(valueStr.padEnd(20))} ${chalk.gray(dateStr)}`);
+        console.log(`  ${chalk.gray(isSent ? 'To:' : 'From:')} ${chalk.cyan(shortAddr)}`);
+        console.log(`  ${chalk.gray('Hash:')} ${chalk.gray(tx.hash.slice(0, 18))}...`);
+        console.log('');
+      }
+
+      ui.showSeparator();
+      
+      // Show block explorer link
+      const explorerUrl = config.networks[config.network].blockExplorer;
+      if (explorerUrl) {
+        console.log(chalk.gray(`View all: ${explorerUrl}/address/${address}`));
+        console.log('');
+      }
+    }
+  } catch (error) {
+    const err = error as Error;
+    ui.showError('Failed to fetch transactions', [err.message]);
+  }
 
   await inquirer.prompt<{ continue: string }>([{
     type: 'input',

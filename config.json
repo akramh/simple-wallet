@@ -1,5 +1,5 @@
 {
-  "network": "sepolia",
+  "network": "mainnet",
   "networks": {
     "sepolia": {
       "name": "Sepolia Testnet",

@@ -37,6 +37,7 @@ export interface NormalizedTransaction {
   network: string;
   tokenSymbol?: string;
   tokenAddress?: string;
+  tokenDecimals?: number;
 }
 
 interface NetworkExplorerConfig {
@@ -367,7 +368,8 @@ export class ExplorerAPI {
         type: isSend ? 'send' : 'receive',
         network,
         tokenSymbol: tx.tokenSymbol,
-        tokenAddress: tx.contractAddress
+        tokenAddress: tx.contractAddress,
+        tokenDecimals: tx.tokenDecimal ? parseInt(tx.tokenDecimal) : undefined
       };
     });
   }
