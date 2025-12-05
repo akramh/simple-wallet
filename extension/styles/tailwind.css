@@ -21,20 +21,28 @@
   /* Semantic colors */
   --color-success: #10b981;
   --color-success-light: #d1fae5;
+  --color-success-softer: #bbf7d0;
+  --color-success-softbg: #ecfdf3;
   --color-success-dark: #065f46;
   
   --color-danger: #ef4444;
   --color-danger-light: #fee2e2;
+  --color-danger-softer: #fecdd3;
+  --color-danger-softbg: #fef2f2;
   --color-danger-dark: #991b1b;
   
   --color-warning: #f59e0b;
   --color-warning-light: #fef3c7;
+  --color-warning-mid: #fbbf24;
   --color-warning-dark: #92400e;
+  --color-warning-faint: #fafafa;
   
   /* Surface/background colors */
   --color-surface-primary: #ffffff;
   --color-surface-secondary: #f9fafb;
   --color-surface-tertiary: #f3f4f6;
+  --color-surface-muted: #f5f5f5;
+  --color-surface-inverse: #111827;
   
   /* Border colors */
   --color-border: #e5e7eb;
@@ -45,6 +53,13 @@
   --color-text-primary: #111827;
   --color-text-secondary: #6b7280;
   --color-text-tertiary: #9ca3af;
+  --color-text-on-inverse: #ffffff;
+
+  /* Accent gradients */
+  --color-gradient-accent-from: #667eea;
+  --color-gradient-accent-to: #764ba2;
+  --color-gradient-soft-from: #fafafa;
+  --color-gradient-soft-to: #ffffff;
   
   /* Border radius */
   --radius-wallet: 12px;
@@ -108,10 +123,10 @@
     display: none;
   }
 
-  /* Thin scrollbar - dark theme */
+  /* Thin scrollbar */
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: #4c3575 transparent;
+    scrollbar-color: var(--color-border-dark) transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
     width: 6px;
@@ -120,10 +135,10 @@
     background: transparent;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: #4c3575;
+    background-color: var(--color-border-dark);
     border-radius: 3px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background-color: #8b5cf6;
+    background-color: var(--color-primary);
   }
 }

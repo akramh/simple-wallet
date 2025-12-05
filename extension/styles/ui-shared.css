@@ -1,0 +1,51 @@
+/**
+ * Shared UI styles for popup and sidepanel.
+ * Tokens are defined in tailwind.css (@theme) and aliased here for any legacy CSS.
+ */
+:root {
+  /* Aliases to shared theme tokens */
+  --primary: var(--color-primary);
+  --primary-dark: var(--color-primary-dark);
+  --primary-light: var(--color-primary-light);
+  --primary-50: var(--color-primary-50);
+  --primary-100: var(--color-primary-100);
+  --primary-700: var(--color-primary-700);
+
+  --danger: var(--color-danger);
+  --danger-light: var(--color-danger-light);
+  --danger-softer: var(--color-danger-softer);
+  --danger-softbg: var(--color-danger-softbg);
+  --danger-dark: var(--color-danger-dark);
+
+  --success: var(--color-success);
+  --success-light: var(--color-success-light);
+  --success-softer: var(--color-success-softer);
+  --success-softbg: var(--color-success-softbg);
+  --success-dark: var(--color-success-dark);
+
+  --warning: var(--color-warning);
+  --warning-light: var(--color-warning-light);
+  --warning-mid: var(--color-warning-mid);
+  --warning-dark: var(--color-warning-dark);
+  --warning-faint: var(--color-warning-faint);
+
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-tertiary: var(--color-text-tertiary);
+  --text-on-inverse: var(--color-text-on-inverse);
+
+  --bg-primary: var(--color-surface-primary);
+  --bg-secondary: var(--color-surface-secondary);
+  --bg-tertiary: var(--color-surface-tertiary);
+  --bg-muted: var(--color-surface-muted);
+  --bg-inverse: var(--color-surface-inverse);
+
+  --border: var(--color-border);
+  --border-light: var(--color-border-light);
+  --border-dark: var(--color-border-dark);
+
+  --gradient-accent-from: var(--color-gradient-accent-from);
+  --gradient-accent-to: var(--color-gradient-accent-to);
+  --gradient-soft-from: var(--color-gradient-soft-from);
+  --gradient-soft-to: var(--color-gradient-soft-to);
+}

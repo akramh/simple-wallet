@@ -1,15 +1,10 @@
-:root {
-  --panel-max-width: 520px;
-  --panel-padding: 12px;
-}
-
 body {
-  background: #f5f5f5;
+  background: var(--bg-muted);
 }
 
 #root {
-  max-width: var(--panel-max-width);
-  padding: var(--panel-padding);
+  max-width: 520px;
+  padding: 12px;
   margin: 0 auto;
 }
 
