@@ -1,3 +1,15 @@
+/**
+ * MainWallet Component
+ * 
+ * The primary wallet interface displaying:
+ * - Portfolio/asset balances
+ * - Send/receive functionality
+ * - Activity/transaction history
+ * - Multi-view navigation (assets, send, receive, activity, settings)
+ * 
+ * Manages wallet state and communicates with the background service worker
+ * for all blockchain operations.
+ */
 import React, { useState, useEffect } from 'react';
 import SettingsView from './SettingsView';
 import Header from './Header';
@@ -29,6 +41,7 @@ interface TokenBalance {
 type View = 'assets' | 'activity' | 'receive' | 'send' | 'settings';
 
 function MainWallet({ address, network, onLock, onStateChange }: Props) {
+  // Notify parent component of state changes
   const notifyStateChange = () => {
     if (onStateChange) {
       onStateChange();
@@ -56,6 +69,9 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     loadData();
   }, [network]);
 
+  /**
+   * Load portfolio, networks, and account info from the background service
+   */
   const loadData = async () => {
     setLoading(true);
     try {
@@ -143,7 +159,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         setAmount('');
         notifyStateChange();
         setTimeout(() => {
-          setView('portfolio');
+          setView('assets');
           handleRefresh();
         }, 2000);
       }
@@ -202,12 +218,12 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
           onAccountSwitch={() => {
             loadData();
             notifyStateChange();
-            setShowAccountMenu(false);
+            // Don't close menu when switching/creating accounts - let user see the change
           }}
           onWalletSwitch={() => {
             loadData();
             notifyStateChange();
-            setShowAccountMenu(false);
+            setShowAccountMenu(false); // Close menu after wallet switch
           }}
           onStateChange={notifyStateChange}
         />

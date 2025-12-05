@@ -1,3 +1,12 @@
+/**
+ * SettingsView Component
+ * 
+ * Simplified settings page that directs users to the AccountMenu
+ * for all wallet and account management operations.
+ * 
+ * Note: Account management has been moved to the main AccountMenu dropdown
+ * to provide a unified interface for wallet/account operations.
+ */
 import React, { useState, useEffect } from 'react';
 
 interface Account {
@@ -20,8 +29,6 @@ interface Props {
 }
 
 function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onStateChange, onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<'accounts'>('accounts');
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [currentWalletName, setCurrentWalletName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -40,7 +47,6 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
   const [importMnemonic, setImportMnemonic] = useState('');
 
   useEffect(() => {
-    loadAccounts();
     loadWallets();
 
     return () => {
@@ -49,25 +55,6 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
       }
     };
   }, []);
-
-  const loadAccounts = async () => {
-    try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNTS' });
-      if (response.accounts) {
-        const accountList = Object.entries(response.accounts).map(([index, data]: [string, any]) => ({
-          index: parseInt(index),
-          address: data.address,
-          createdAt: data.createdAt
-        }));
-        setAccounts(accountList);
-        if (response.currentWalletName) {
-          setCurrentWalletName(response.currentWalletName);
-        }
-      }
-    } catch (err: any) {
-      setError(err.message || 'Failed to load accounts');
-    }
-  };
 
   const loadWallets = async () => {
     try {
@@ -95,8 +82,6 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
         setError(response.error);
       } else {
         setSuccess(`✓ Created and switched to Account ${response.index + 1}`);
-        // Reload accounts list to show the new account
-        await loadAccounts();
         // Notify parent to update UI (account switched automatically in backend)
         setTimeout(() => {
           onAccountSwitch();
@@ -168,10 +153,6 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
     }
   };
 
-  const formatAddress = (addr: string) => {
-    return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
-  };
-
   const handleSwitchWallet = async (walletName: string) => {
     setLoading(true);
     setError('');
@@ -188,7 +169,6 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
       } else {
         setSuccess(`Switched to wallet "${walletName}"`);
         await loadWallets();
-        await loadAccounts();
         onWalletSwitch();
         onStateChange?.();
       }
@@ -223,7 +203,6 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
         setShowMnemonic(false);
         setCreateWalletName('wallet-' + Math.floor(Math.random() * 1000));
         await loadWallets();
-        await loadAccounts();
         onWalletSwitch();
         onStateChange?.();
       }
@@ -267,7 +246,6 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
         setImportMnemonic('');
         setImportWalletName('wallet-' + Math.floor(Math.random() * 1000));
         await loadWallets();
-        await loadAccounts();
         onWalletSwitch();
         onStateChange?.();
       }
@@ -288,69 +266,17 @@ function SettingsView({ currentAddress, onAccountSwitch, onWalletSwitch, onState
           </button>
         )}
       </div>
-      <div className="tabs">
-        <button className="tab active">Accounts</button>
-      </div>
 
       {error && <div className="error">{error}</div>}
       {success && <div className="success">{success}</div>}
 
-      {activeTab === 'accounts' && (
-        <div>
-          {currentWalletName && (
-            <div style={{ marginBottom: '12px', padding: '12px', background: '#f3f4f6', borderRadius: '8px', fontSize: '13px' }}>
-              <strong>Current Wallet:</strong> {currentWalletName}
-            </div>
-          )}
-
-          <div style={{ marginBottom: '16px' }}>
-            <button
-              className="btn btn-primary"
-              onClick={handleCreateAccount}
-              disabled={loading}
-            >
-              {loading ? 'Creating...' : 'Create New Account'}
-            </button>
-          </div>
-
-          <div className="token-list">
-            {accounts.map((account) => (
-              <div
-                key={account.index}
-                className="token-item"
-                style={{
-                  cursor: 'pointer',
-                  background: account.address === currentAddress ? '#e0e7ff' : undefined
-                }}
-                onClick={() => handleSwitchAccount(account.index)}
-              >
-                <div className="token-info">
-                  <div className="token-icon">
-                    {account.index + 1}
-                  </div>
-                  <div className="token-details">
-                    <h3>Account {account.index + 1}</h3>
-                    <p style={{ fontFamily: 'monospace', fontSize: '11px' }}>
-                      {formatAddress(account.address)}
-                    </p>
-                  </div>
-                </div>
-                {account.address === currentAddress && (
-                  <div style={{ color: '#6366f1', fontWeight: 600, fontSize: '12px' }}>
-                    ACTIVE
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {accounts.length === 0 && (
-            <div className="loading">No accounts found</div>
-          )}
-        </div>
-      )}
-        </div>
-      );
+      <div style={{ padding: '16px' }}>
+        <p style={{ fontSize: '14px', color: '#6b7280' }}>
+          Wallet and account management is available in the main menu (top-left dropdown).
+        </p>
+      </div>
+    </div>
+  );
     }
 
     export default SettingsView;

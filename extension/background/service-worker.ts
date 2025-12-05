@@ -244,6 +244,33 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       lockWallet();
       return { success: true };
 
+    case 'SWITCH_WALLET':
+      const switchWalletName = payload.name;
+      if (!switchWalletName) {
+        throw new Error('Wallet name is required');
+      }
+      const switchPassword = sessionPassword;
+      if (!switchPassword) {
+        throw new Error('Session password not available. Please unlock wallet first.');
+      }
+      const switchedWallet = walletService!.loadWallet(switchWalletName, switchPassword);
+      if (!switchedWallet) {
+        throw new Error('Failed to load wallet or invalid password');
+      }
+      currentWalletName = switchWalletName;
+      isUnlocked = true;
+      
+      // Initialize transaction history for the switched wallet
+      const switchStorage = await ChromeStorageAdapter.create();
+      transactionHistory = new TransactionHistoryManager(switchStorage, currentWalletName);
+      
+      resetAutoLockTimer();
+      return {
+        success: true,
+        address: switchedWallet.address,
+        walletName: currentWalletName
+      };
+
     case 'GET_BALANCE':
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();

@@ -1,3 +1,12 @@
+/**
+ * Header Component
+ * 
+ * Displays the main navigation header with:
+ * - App logo and branding
+ * - Network selector dropdown
+ * - Account/wallet selector button (shows wallet:account format)
+ * - Settings and lock buttons
+ */
 import React, { useState, useEffect } from 'react';
 
 interface Props {
@@ -88,7 +97,7 @@ function Header({
             {currentAddress.substring(2, 4).toUpperCase()}
           </div>
           <div className="account-info">
-            <div className="account-name">{currentWalletName || `Account ${currentAccountIndex + 1}`}</div>
+            <div className="account-name">{currentWalletName} : Account {currentAccountIndex + 1}</div>
             <div className="account-address">{formatAddress(currentAddress)}</div>
           </div>
           <span className="dropdown-arrow">▼</span>

@@ -5,9 +5,7 @@ interface Props {
   onWalletCreated: () => void;
 }
 
-type Screen = 'choice' | 'create-mnemonic' | 'import-mnemonic';
-
-const DEFAULT_EXTENSION_PASSWORD = 'session-extension-password';
+type Screen = 'choice' | 'set-password' | 'create-mnemonic' | 'import-mnemonic';
 
 function WelcomeScreen({ onWalletCreated }: Props) {
   const [screen, setScreen] = useState<Screen>('choice');
@@ -17,6 +15,9 @@ function WelcomeScreen({ onWalletCreated }: Props) {
   const [error, setError] = useState('');
   const [generatedMnemonic, setGeneratedMnemonic] = useState('');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [flowType, setFlowType] = useState<'create' | 'import'>('create');
 
   const validateMnemonicInput = (phrase: string) => {
     const words = phrase.trim().split(/\s+/);
@@ -47,12 +48,47 @@ function WelcomeScreen({ onWalletCreated }: Props) {
   };
 
   const goToCreateFlow = async () => {
-    const random = ethers.Wallet.createRandom();
-    setGeneratedMnemonic(random.mnemonic.phrase);
-    setCopyState('idle');
     const nextName = await getNextWalletName();
     setWalletName(nextName);
-    setScreen('create-mnemonic');
+    setFlowType('create');
+    setScreen('set-password');
+  };
+
+  const goToImportFlow = async () => {
+    const nextName = await getNextWalletName();
+    setWalletName(nextName);
+    setFlowType('import');
+    setScreen('set-password');
+  };
+
+  const handlePasswordSet = async () => {
+    setError('');
+    
+    if (!password) {
+      setError('Please enter a password');
+      return;
+    }
+    
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters');
+      return;
+    }
+    
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    if (flowType === 'create') {
+      // Generate mnemonic and go to create-mnemonic screen
+      const random = ethers.Wallet.createRandom();
+      setGeneratedMnemonic(random.mnemonic.phrase);
+      setCopyState('idle');
+      setScreen('create-mnemonic');
+    } else {
+      // Go to import-mnemonic screen
+      setScreen('import-mnemonic');
+    }
   };
 
   const handleCreateFinalize = async () => {
@@ -62,11 +98,16 @@ function WelcomeScreen({ onWalletCreated }: Props) {
       return;
     }
 
+    if (!password) {
+      setError('Password is required');
+      return;
+    }
+
     setLoading(true);
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'IMPORT_WALLET',
-        payload: { mnemonic: generatedMnemonic, password: DEFAULT_EXTENSION_PASSWORD, name: walletName }
+        payload: { mnemonic: generatedMnemonic, password: password, name: walletName }
       });
 
       if (response.error) {
@@ -85,11 +126,16 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     setError('');
     if (!mnemonic.trim() || !validateMnemonicInput(mnemonic)) return;
 
+    if (!password) {
+      setError('Password is required');
+      return;
+    }
+
     setLoading(true);
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'IMPORT_WALLET',
-        payload: { mnemonic: mnemonic.trim(), password: DEFAULT_EXTENSION_PASSWORD, name: walletName }
+        payload: { mnemonic: mnemonic.trim(), password: password, name: walletName }
       });
 
       if (response.error) {
@@ -110,6 +156,77 @@ function WelcomeScreen({ onWalletCreated }: Props) {
       .then(() => setCopyState('copied'))
       .catch(() => setCopyState('error'));
   };
+
+  // Password Setup Screen
+  if (screen === 'set-password') {
+    return (
+      <div className="container">
+        <div className="header">
+          <h1>🔒 Set Your Password</h1>
+        </div>
+        <div className="content">
+          <div className="info-box" style={{
+            background: '#eff6ff',
+            border: '1px solid #93c5fd',
+            borderRadius: '8px',
+            padding: '12px',
+            marginBottom: '20px'
+          }}>
+            <p style={{ margin: '0', fontSize: '13px', color: '#1e40af' }}>
+              This password encrypts your wallet on this device. You'll need it to unlock your wallet.
+            </p>
+          </div>
+
+          <form onSubmit={(e) => { e.preventDefault(); handlePasswordSet(); }}>
+            <div className="form-group">
+              <label>Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password (min 8 characters)"
+                autoFocus
+              />
+            </div>
+
+            <div className="form-group">
+              <label>Confirm Password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter password"
+              />
+            </div>
+
+            {error && <div className="error">{error}</div>}
+
+            <div className="action-buttons">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setScreen('choice');
+                  setPassword('');
+                  setConfirmPassword('');
+                  setError('');
+                }}
+              >
+                Back
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={!password || !confirmPassword}
+              >
+                Continue
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   // Choice Screen - Initial selection
   if (screen === 'choice') {
@@ -135,11 +252,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
             </button>
             <button
               className="btn btn-secondary btn-large"
-              onClick={async () => {
-                const nextName = await getNextWalletName();
-                setWalletName(nextName);
-                setScreen('import-mnemonic');
-              }}
+              onClick={() => goToImportFlow()}
             >
               Import your own
             </button>
