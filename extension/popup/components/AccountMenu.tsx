@@ -1,21 +1,10 @@
 /**
  * AccountMenu Component
  * 
- * A comprehensive modal for managing wallets and accounts in the Chrome extension.
- * Displays a hierarchical view of all wallets with their associated accounts.
- * 
- * Features:
- * - View all wallets grouped with their accounts
- * - Switch between accounts (automatically switches wallet if needed)
- * - Create new accounts within the active wallet
- * - Create new wallets (with mnemonic display)
- * - Import existing wallets via mnemonic phrase
- * - Search/filter wallets and accounts
- * - Visual indicators for active account
- * 
- * Hierarchy: Wallet → Accounts (multiple accounts per wallet)
+ * A comprehensive modal for managing wallets and accounts.
+ * Features: view/switch wallets & accounts, create/import wallets
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface Account {
   index: number;
@@ -32,9 +21,9 @@ interface Props {
   currentAddress: string;
   currentWalletName?: string;
   onClose: () => void;
-  onAccountSwitch: () => void; // Called when account is switched/created (doesn't close menu)
-  onWalletSwitch?: () => void; // Called when wallet is switched/created (closes menu)
-  onStateChange?: () => void; // Generic state change notification
+  onAccountSwitch: () => void;
+  onWalletSwitch?: () => void;
+  onStateChange?: () => void;
 }
 
 function AccountMenu({
@@ -48,9 +37,7 @@ function AccountMenu({
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [wallets, setWallets] = useState<WalletMeta[]>([]);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<{ type: 'error' | 'success' | '';
-    message: string; }>({ type: '', message: '' });
-  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState<{ type: 'error' | 'success' | ''; message: string }>({ type: '', message: '' });
   const [importMnemonic, setImportMnemonic] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -61,25 +48,19 @@ function AccountMenu({
   const [createdWalletName, setCreatedWalletName] = useState('');
   const [importedWalletName, setImportedWalletName] = useState('');
   const [toast, setToast] = useState('');
-  const [pendingCreateName, setPendingCreateName] = useState<string>('wallet1');
-  const [pendingImportName, setPendingImportName] = useState<string>('wallet1');
-  const toastTimer = React.useRef<NodeJS.Timeout | null>(null);
+  const [pendingCreateName, setPendingCreateName] = useState('wallet1');
+  const [pendingImportName, setPendingImportName] = useState('wallet1');
+  const toastTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // Load accounts and wallets on mount
   useEffect(() => {
     loadAccounts();
     loadWallets();
     return () => {
       setStatus({ type: '', message: '' });
-      if (toastTimer.current) {
-        clearTimeout(toastTimer.current);
-      }
+      if (toastTimer.current) clearTimeout(toastTimer.current);
     };
   }, []);
 
-  /**
-   * Load all accounts for the current wallet from the background service
-   */
   const loadAccounts = async () => {
     try {
       const response = await chrome.runtime.sendMessage({ type: 'GET_ACCOUNTS' });
@@ -96,9 +77,6 @@ function AccountMenu({
     }
   };
 
-  /**
-   * Load all wallets (with their accounts) from the background service
-   */
   const loadWallets = async () => {
     try {
       const response = await chrome.runtime.sendMessage({ type: 'GET_ALL_WALLETS' });
@@ -114,63 +92,38 @@ function AccountMenu({
     }
   };
 
-  /**
-   * Generate the next available wallet name (wallet1, wallet2, etc.)
-   */
   const getNextWalletName = async (): Promise<string> => {
-    const base = 'wallet';
     try {
       const response = await chrome.runtime.sendMessage({ type: 'GET_ALL_WALLETS' });
       const names = response?.wallets ? Object.keys(response.wallets) : [];
       let max = 0;
       names.forEach((name: string) => {
         const match = name.match(/^wallet(\d+)$/);
-        if (match) {
-          max = Math.max(max, parseInt(match[1], 10));
-        }
+        if (match) max = Math.max(max, parseInt(match[1], 10));
       });
-      return `${base}${max + 1 || 1}`;
-    } catch (err) {
-      console.warn('Failed to compute next wallet name, defaulting to wallet1', err);
-      return `${base}1`;
+      return `wallet${max + 1 || 1}`;
+    } catch {
+      return 'wallet1';
     }
   };
 
-  /**
-   * Switch to a specific account, automatically switching wallet if needed
-   * This handles cross-wallet account switching transparently
-   * 
-   * @param walletName - The wallet containing the target account
-   * @param accountIndex - The account index within the wallet
-   * @param accountAddress - The address to switch to
-   */
+  const showToast = (message: string) => {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(''), 2000);
+  };
+
   const handleSwitchAccount = async (walletName: string, accountIndex: number, accountAddress: string) => {
-    if (accountAddress === currentAddress) {
-      return; // Already active
-    }
+    if (accountAddress === currentAddress) return;
 
     setLoading(true);
     setStatus({ type: '', message: '' });
     try {
-      // If account belongs to a different wallet, switch wallet first
       if (walletName !== currentWalletName) {
-        await chrome.runtime.sendMessage({
-          type: 'SWITCH_WALLET',
-          payload: { name: walletName }
-        });
-        // After switching wallet, the account should be active if it's the default
-        // But we still need to explicitly switch to the desired account
+        await chrome.runtime.sendMessage({ type: 'SWITCH_WALLET', payload: { name: walletName } });
       }
-      
-      // Now switch to the specific account
-      await chrome.runtime.sendMessage({
-        type: 'SWITCH_ACCOUNT',
-        payload: { index: accountIndex }
-      });
-      
-      setToast(`Switched to ${walletName} - Account ${accountIndex + 1}`);
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-      toastTimer.current = setTimeout(() => setToast(''), 2000);
+      await chrome.runtime.sendMessage({ type: 'SWITCH_ACCOUNT', payload: { index: accountIndex } });
+      showToast(`Switched to ${walletName} - Account ${accountIndex + 1}`);
       await loadAccounts();
       await loadWallets();
       onAccountSwitch();
@@ -178,81 +131,31 @@ function AccountMenu({
       onStateChange?.();
       setTimeout(() => onClose(), 300);
     } catch (err) {
-      console.error('Failed to switch account:', err);
       setStatus({ type: 'error', message: 'Failed to switch account' });
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Create a new account in the currently active wallet
-   * The menu stays open after creation so user can see the new account
-   */
   const handleCreateAccount = async () => {
     setLoading(true);
     setStatus({ type: '', message: '' });
     try {
       const response = await chrome.runtime.sendMessage({ type: 'CREATE_ACCOUNT' });
-      setToast(`Account ${response.index + 1} created`);
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-      toastTimer.current = setTimeout(() => setToast(''), 2000);
+      showToast(`Account ${response.index + 1} created`);
       await loadAccounts();
       await loadWallets();
       onAccountSwitch();
       onStateChange?.();
-      // Don't close the menu - keep it open so user can see the new account
     } catch (err) {
-      console.error('Failed to create account:', err);
       setStatus({ type: 'error', message: 'Failed to create account' });
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Switch to a different wallet
-   * This will also switch to the wallet's default account
-   */
-  const handleSwitchWallet = async (walletName: string) => {
-    if (walletName === currentWalletName) {
-      return;
-    }
-
-    setLoading(true);
-    setStatus({ type: '', message: '' });
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'SWITCH_WALLET',
-        payload: { name: walletName }
-      });
-
-      if (response.error) {
-        setStatus({ type: 'error', message: response.error });
-      } else {
-        setToast(`Switched to ${walletName}`);
-        if (toastTimer.current) clearTimeout(toastTimer.current);
-        toastTimer.current = setTimeout(() => setToast(''), 2000);
-        await Promise.all([loadWallets(), loadAccounts()]);
-        onWalletSwitch?.();
-        onStateChange?.();
-        setTimeout(() => onClose(), 300);
-      }
-    } catch (err) {
-      console.error('Failed to switch wallet:', err);
-      setStatus({ type: 'error', message: 'Failed to switch wallet' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * Create a new wallet with a generated mnemonic
-   * Shows the mnemonic to the user before switching to the new wallet
-   */
   const handleCreateWallet = async () => {
     const finalName = pendingCreateName || (await getNextWalletName());
-
     setLoading(true);
     setStatus({ type: '', message: '' });
     try {
@@ -260,59 +163,41 @@ function AccountMenu({
         type: 'CREATE_WALLET',
         payload: { name: finalName }
       });
-
       if (response.error) {
         setStatus({ type: 'error', message: response.error });
       } else {
-        // Store the mnemonic and show success step
         setCreatedMnemonic(response.mnemonic || '');
-        setShowCreatedMnemonic(false); // Start hidden for security
+        setShowCreatedMnemonic(false);
         setCreatedWalletName(finalName);
         setCreateStep('success');
         setPendingCreateName(await getNextWalletName());
       }
     } catch (err) {
-      console.error('Failed to create wallet:', err);
       setStatus({ type: 'error', message: 'Failed to create wallet' });
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Complete wallet creation flow by switching to the newly created wallet
-   * Called after user confirms they've saved the mnemonic
-   */
   const handleCreateWalletDone = async () => {
-    // Now switch to the newly created wallet
     setLoading(true);
     try {
       await Promise.all([loadWallets(), loadAccounts()]);
       await chrome.runtime.sendMessage({ type: 'SWITCH_WALLET', payload: { name: createdWalletName } });
-      setToast(`Switched to ${createdWalletName}`);
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-      toastTimer.current = setTimeout(() => setToast(''), 2000);
+      showToast(`Switched to ${createdWalletName}`);
       onWalletSwitch?.();
       onStateChange?.();
-      
-      // Reset modal state
       setShowCreateModal(false);
       setCreateStep('form');
       setShowCreatedMnemonic(false);
       setCreatedMnemonic('');
-      setStatus({ type: '', message: '' });
     } catch (err) {
-      console.error('Failed to switch to new wallet:', err);
-      setStatus({ type: 'error', message: 'Wallet created but failed to switch to it' });
+      setStatus({ type: 'error', message: 'Wallet created but failed to switch' });
     } finally {
       setLoading(false);
     }
   };
 
-  /**
-   * Import an existing wallet using a mnemonic phrase
-   * Validates the mnemonic and creates the wallet if valid
-   */
   const handleImportWallet = async () => {
     const finalName = pendingImportName || (await getNextWalletName());
     if (!importMnemonic.trim()) {
@@ -331,23 +216,19 @@ function AccountMenu({
         type: 'IMPORT_WALLET',
         payload: { mnemonic: importMnemonic.trim(), name: finalName }
       });
-
       if (response.error) {
         setStatus({ type: 'error', message: response.error });
       } else {
-        setStatus({ type: 'success', message: `Imported wallet "${finalName}"` });
         setImportMnemonic('');
         setImportedWalletName(finalName);
         setImportStep('success');
         await Promise.all([loadWallets(), loadAccounts()]);
-        // Switch to the newly imported wallet
         await chrome.runtime.sendMessage({ type: 'SWITCH_WALLET', payload: { name: finalName } });
         onWalletSwitch?.();
         onStateChange?.();
         setPendingImportName(await getNextWalletName());
       }
     } catch (err) {
-      console.error('Failed to import wallet:', err);
       setStatus({ type: 'error', message: 'Failed to import wallet' });
     } finally {
       setLoading(false);
@@ -356,42 +237,23 @@ function AccountMenu({
 
   const formatAddress = (addr: string) => `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
 
-  const handleCopyAddress = (address: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(address);
-  };
-
-  /**
-   * Build hierarchical structure grouping accounts under their wallets
-   * Applies search filtering across wallet names and account addresses
-   */
   const getWalletsWithAccounts = () => {
-    return wallets.map(wallet => {
-      const walletAccounts = Object.entries(wallet.accounts || {}).map(([index, data]: [string, any]) => ({
-        index: parseInt(index, 10),
-        address: data.address,
-        createdAt: data.createdAt
-      })).sort((a, b) => a.index - b.index);
-      
-      return {
-        name: wallet.name,
-        accounts: walletAccounts
-      };
-    }).filter(wallet => {
-      // Apply search filter
-      if (!search.trim()) return true;
-      const term = search.trim().toLowerCase();
-      return wallet.name.toLowerCase().includes(term) || 
-             wallet.accounts.some(acc => 
-               acc.address.toLowerCase().includes(term) || 
-               `account ${acc.index + 1}`.toLowerCase().includes(term)
-             );
-    });
+    return wallets.map(wallet => ({
+      name: wallet.name,
+      accounts: Object.entries(wallet.accounts || {})
+        .map(([index, data]: [string, any]) => ({
+          index: parseInt(index, 10),
+          address: data.address,
+          createdAt: data.createdAt
+        }))
+        .sort((a, b) => a.index - b.index)
+    }));
   };
 
   return (
     <div className="account-menu-overlay" onClick={onClose}>
       <div className="account-menu" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
         <div className="account-menu-header">
           <div className="account-menu-title-group">
             <div className="account-menu-label">Current wallet</div>
@@ -400,48 +262,48 @@ function AccountMenu({
           <button className="close-btn" onClick={onClose}>×</button>
         </div>
 
+        {/* Status Alert */}
         {status.message && (
-          <div className={`alert ${status.type === 'error' ? 'alert-error' : 'alert-success'} account-menu-alert`}>
+          <div className={`account-menu-alert alert ${status.type === 'error' ? 'alert-error' : 'alert-success'}`}>
             {status.message}
           </div>
         )}
 
+        {/* Content */}
         <div className="account-menu-section">
+          {/* Section Header */}
           <div className="section-header">
-            <div>
-              <div className="section-title">Wallets</div>
-              <div className="section-sub">Tap an account to switch. Total: ${wallets.reduce((sum, w) => sum + (w.accounts ? Object.keys(w.accounts).length : 0), 0) * 0.00}</div>
-            </div>
+            <div className="section-title">Wallets</div>
             <div className="section-actions-inline">
-              <button className="section-cta" onClick={async () => {
-                setPendingImportName(await getNextWalletName());
-                setShowImportModal(true);
-              }}>
-                Import wallet
+              <button
+                className="section-cta"
+                onClick={async () => {
+                  setPendingImportName(await getNextWalletName());
+                  setShowImportModal(true);
+                }}
+              >
+                Import
               </button>
-              <button className="section-cta" onClick={async () => {
-                setPendingCreateName(await getNextWalletName());
-                setShowCreateModal(true);
-              }}>
-                Create wallet
+              <button
+                className="btn btn-primary btn-inline"
+                onClick={async () => {
+                  setPendingCreateName(await getNextWalletName());
+                  setShowCreateModal(true);
+                }}
+              >
+                Create
               </button>
             </div>
           </div>
 
-          <input
-            className="account-search"
-            placeholder="Search wallets or accounts"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-
+          {/* Wallet List */}
           <div className="wallet-list">
             {getWalletsWithAccounts().map((wallet) => (
               <div key={wallet.name} className="wallet-group">
                 <div className="wallet-group-header">
-                  {wallet.name.toUpperCase()}
+                  {wallet.name}
                 </div>
-                
+
                 <div className="account-list">
                   {wallet.accounts.map((account) => (
                     <div
@@ -455,16 +317,13 @@ function AccountMenu({
                       <div className="account-details">
                         <div className="account-name">Account {account.index + 1}</div>
                         <div className="account-address">{formatAddress(account.address)}</div>
-                        <div className="account-balance">$0.00</div>
                       </div>
-                      <div className="account-actions">
-                        {account.address === currentAddress && (
-                          <span className="active-badge">✓</span>
-                        )}
-                      </div>
+                      {account.address === currentAddress && (
+                        <span className="active-badge">✓</span>
+                      )}
                     </div>
                   ))}
-                  
+
                   {wallet.name === currentWalletName && (
                     <button
                       className="add-account-btn"
@@ -482,49 +341,32 @@ function AccountMenu({
             ))}
 
             {getWalletsWithAccounts().length === 0 && (
-              <div className="empty-state" style={{ padding: '16px' }}>
-                <p>No wallets match that search.</p>
+              <div className="empty-state">
+                <p>No wallets yet</p>
+                <span>Create or import one to get started.</span>
               </div>
             )}
           </div>
         </div>
       </div>
 
+      {/* Create Wallet Modal */}
       {showCreateModal && (
-        <div className="modal-overlay" onClick={(e) => {
-          if (createStep === 'success') {
-            e.stopPropagation(); // Prevent closing when showing mnemonic
-          } else {
-            setShowCreateModal(false);
-          }
-        }}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div>
-                <div className="section-title">Create wallet</div>
-                <div className="section-sub">
-                  {createStep === 'success' 
-                    ? `Wallet created: ${createdWalletName}` 
-                    : `New wallet will be named: ${pendingCreateName}`}
-                </div>
-              </div>
-              <button 
-                className="close-btn" 
-                onClick={() => {
-                  if (createStep === 'success') {
-                    const confirmed = confirm('Are you sure? Make sure you\'ve saved your recovery phrase!');
-                    if (!confirmed) return;
-                  }
-                  setShowCreateModal(false);
-                  setCreateStep('form');
-                  setShowCreatedMnemonic(false);
-                  setCreatedMnemonic('');
-                  setStatus({ type: '', message: '' });
-                }}
-              >×</button>
+              <h3>{createStep === 'success' ? `Wallet: ${createdWalletName}` : 'Create wallet'}</h3>
+              <button className="close-btn" onClick={() => {
+                if (createStep === 'success') {
+                  if (!confirm("Make sure you've saved your recovery phrase!")) return;
+                }
+                setShowCreateModal(false);
+                setCreateStep('form');
+                setCreatedMnemonic('');
+              }}>×</button>
             </div>
 
-            {status.type && status.message && (
+            {status.message && createStep === 'form' && (
               <div className={`alert ${status.type === 'error' ? 'alert-error' : 'alert-success'}`}>
                 {status.message}
               </div>
@@ -532,120 +374,99 @@ function AccountMenu({
 
             {createStep === 'success' && createdMnemonic && (
               <>
-                <div className="alert" style={{ 
-                  background: '#fef3c7', 
-                  borderColor: '#fbbf24', 
-                  color: '#92400e',
-                  marginBottom: '16px'
-                }}>
+                <div className="mnemonic-warning">
                   <strong>⚠️ Save your recovery phrase!</strong>
-                  <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                    This is the only way to recover your wallet. Store it somewhere safe.
-                  </div>
+                  <span>This is the only way to recover your wallet.</span>
                 </div>
-                
+
                 <div className="mnemonic-panel">
                   <div className="mnemonic-panel-header">
-                    <span>Recovery phrase — {createdWalletName}</span>
-                    <div className="mnemonic-actions">
+                    <span>Recovery phrase</span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
                       <button
-                        className="btn btn-secondary btn-inline"
+                        className="section-cta"
                         onClick={() => {
                           navigator.clipboard.writeText(createdMnemonic);
-                          setToast('Copied to clipboard');
-                          if (toastTimer.current) clearTimeout(toastTimer.current);
-                          toastTimer.current = setTimeout(() => setToast(''), 2000);
+                          showToast('Copied!');
                         }}
                       >
                         📋 Copy
                       </button>
                       <button
-                        className="btn btn-secondary btn-inline"
+                        className="section-cta"
                         onClick={() => setShowCreatedMnemonic(v => !v)}
                       >
                         {showCreatedMnemonic ? '👁️ Hide' : '👁️ Reveal'}
                       </button>
                     </div>
                   </div>
-                  <div className={`mnemonic-box inline ${showCreatedMnemonic ? 'revealed' : 'masked'}`}>
+                  <div className={`mnemonic-box ${showCreatedMnemonic ? 'revealed' : 'masked'}`}>
                     {showCreatedMnemonic ? createdMnemonic : '•••• •••• •••• •••• •••• •••• •••• •••• •••• •••• •••• ••••'}
                   </div>
                 </div>
               </>
             )}
 
-            {createStep === 'form' && (
-              <button
-                className="btn btn-primary"
-                onClick={handleCreateWallet}
-                disabled={loading}
-              >
-                {loading ? 'Working...' : 'Create wallet'}
+            {createStep === 'form' ? (
+              <button className="btn btn-primary" onClick={handleCreateWallet} disabled={loading}>
+                {loading ? 'Creating...' : 'Create wallet'}
               </button>
-            )}
-
-            {createStep === 'success' && (
-              <button
-                className="btn btn-primary"
-                onClick={handleCreateWalletDone}
-                disabled={loading}
-              >
-                {loading ? 'Switching...' : 'Done — Switch to this wallet'}
+            ) : (
+              <button className="btn btn-primary" onClick={handleCreateWalletDone} disabled={loading}>
+                {loading ? 'Switching...' : 'Done — Switch to wallet'}
               </button>
             )}
           </div>
         </div>
       )}
 
+      {/* Import Wallet Modal */}
       {showImportModal && (
-        <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <div>
-                <div className="section-title">Import wallet</div>
-                <div className="section-sub">New wallet will be named: {pendingImportName}</div>
-              </div>
-              <button className="close-btn" onClick={() => setShowImportModal(false)}>×</button>
+              <h3>Import wallet</h3>
+              <button className="close-btn" onClick={() => {
+                setShowImportModal(false);
+                setImportStep('form');
+                setImportMnemonic('');
+              }}>×</button>
             </div>
 
-            {status.type && status.message && (
+            {status.message && (
               <div className={`alert ${status.type === 'error' ? 'alert-error' : 'alert-success'}`}>
                 {status.message}
               </div>
             )}
 
-            {importStep === 'form' && (
+            {importStep === 'form' ? (
               <>
-                <textarea
-                  rows={3}
-                  placeholder="Recovery phrase"
-                  value={importMnemonic}
-                  onChange={(e) => setImportMnemonic(e.target.value)}
-                />
-
+                <div className="form-group">
+                  <label>Recovery Phrase</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Enter your 12-24 word phrase"
+                    value={importMnemonic}
+                    onChange={(e) => setImportMnemonic(e.target.value)}
+                  />
+                </div>
                 <button
                   className="btn btn-primary"
                   onClick={handleImportWallet}
                   disabled={loading || importMnemonic.trim().split(/\s+/).length < 12}
                 >
-                  {loading ? 'Working...' : 'Import wallet'}
+                  {loading ? 'Importing...' : 'Import wallet'}
                 </button>
               </>
-            )}
-
-            {importStep === 'success' && (
+            ) : (
               <>
-                <div className="alert alert-success" style={{ marginBottom: '12px' }}>
-                  Wallet {importedWalletName || pendingImportName} imported and unlocked.
+                <div className="alert alert-success">
+                  Wallet "{importedWalletName}" imported successfully!
                 </div>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    setShowImportModal(false);
-                    setImportStep('form');
-                    setStatus({ type: '', message: '' });
-                  }}
-                >
+                <button className="btn btn-primary" onClick={() => {
+                  setShowImportModal(false);
+                  setImportStep('form');
+                }}>
                   Go to wallet
                 </button>
               </>
@@ -654,7 +475,10 @@ function AccountMenu({
         </div>
       )}
 
-      {toast && <div className="toast">{toast}</div>}
+      {/* Toast */}
+      {toast && (
+        <div className="toast">{toast}</div>
+      )}
     </div>
   );
 }

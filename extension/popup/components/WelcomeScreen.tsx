@@ -18,6 +18,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [flowType, setFlowType] = useState<'create' | 'import'>('create');
+  const [showMnemonic, setShowMnemonic] = useState(false);
 
   const validateMnemonicInput = (phrase: string) => {
     const words = phrase.trim().split(/\s+/);
@@ -165,14 +166,8 @@ function WelcomeScreen({ onWalletCreated }: Props) {
           <h1>🔒 Set Your Password</h1>
         </div>
         <div className="content">
-          <div className="info-box" style={{
-            background: '#eff6ff',
-            border: '1px solid #93c5fd',
-            borderRadius: '8px',
-            padding: '12px',
-            marginBottom: '20px'
-          }}>
-            <p style={{ margin: '0', fontSize: '13px', color: '#1e40af' }}>
+          <div className="info-box bg-primary-50 border border-primary-100 rounded-wallet-sm p-3 mb-5">
+            <p className="m-0 text-sm text-primary-700">
               This password encrypts your wallet on this device. You'll need it to unlock your wallet.
             </p>
           </div>
@@ -238,7 +233,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
         <div className="content">
           <div className="welcome-message">
             <p>Welcome to Simple Crypto Wallet</p>
-            <p style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
+            <p className="text-sm text-text-secondary mt-2">
               Manage your crypto assets securely
             </p>
           </div>
@@ -274,28 +269,46 @@ function WelcomeScreen({ onWalletCreated }: Props) {
         </div>
         <div className="content">
           <div className="mnemonic-warning">
-            <strong>Save these 12 words.</strong> Save to a password manager, or write down and store in a secure place. Do not share with anyone.
+            <strong>⚠️ Save your recovery phrase!</strong>
+            <span>Save to a password manager, or write down and store in a secure place. Do not share with anyone.</span>
           </div>
 
-          <div className="mnemonic-box">
-            {generatedMnemonic}
+          <div className="mnemonic-panel">
+            <div className="mnemonic-panel-header">
+              <span>Recovery phrase</span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className="section-cta"
+                  onClick={handleCopyMnemonic}
+                  disabled={!generatedMnemonic}
+                >
+                  {copyState === 'copied' ? '✓ Copied' : '📋 Copy'}
+                </button>
+                <button
+                  className="section-cta"
+                  onClick={() => setShowMnemonic(v => !v)}
+                >
+                  {showMnemonic ? '👁️ Hide' : '👁️ Reveal'}
+                </button>
+              </div>
+            </div>
+            <div className={`mnemonic-box ${showMnemonic ? 'revealed' : 'masked'}`}>
+              {showMnemonic ? generatedMnemonic : '•••• •••• •••• •••• •••• •••• •••• •••• •••• •••• •••• ••••'}
+            </div>
           </div>
 
           <div className="action-buttons">
-            <button className="btn btn-secondary" onClick={handleCopyMnemonic} disabled={!generatedMnemonic}>
-              {copyState === 'copied' ? 'Copied' : 'Copy'}
-            </button>
             <button className="btn btn-primary" onClick={handleCreateFinalize} disabled={loading}>
               {loading ? 'Creating...' : 'Continue'}
             </button>
           </div>
 
           {copyState === 'error' && (
-            <div className="alert alert-error" style={{ marginTop: '10px' }}>
+            <div className="alert alert-error mt-2.5">
               Could not copy. Please manually copy the words.
             </div>
           )}
-          {error && <div className="error" style={{ marginTop: '10px' }}>{error}</div>}
+          {error && <div className="error mt-2.5">{error}</div>}
         </div>
       </div>
     );
@@ -312,7 +325,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
           <h1>Import Wallet</h1>
         </div>
         <div className="content">
-          <p style={{ marginBottom: '20px', color: '#666' }}>
+          <p className="mb-5 text-text-secondary">
             Enter the recovery phrase for the wallet you want to import.
           </p>
 

@@ -6,9 +6,6 @@
  * - Send/receive functionality
  * - Activity/transaction history
  * - Multi-view navigation (assets, send, receive, activity, settings)
- * 
- * Manages wallet state and communicates with the background service worker
- * for all blockchain operations.
  */
 import React, { useState, useEffect } from 'react';
 import SettingsView from './SettingsView';
@@ -41,7 +38,6 @@ interface TokenBalance {
 type View = 'assets' | 'activity' | 'receive' | 'send' | 'settings';
 
 function MainWallet({ address, network, onLock, onStateChange }: Props) {
-  // Notify parent component of state changes
   const notifyStateChange = () => {
     if (onStateChange) {
       onStateChange();
@@ -69,9 +65,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     loadData();
   }, [network]);
 
-  /**
-   * Load portfolio, networks, and account info from the background service
-   */
   const loadData = async () => {
     setLoading(true);
     try {
@@ -126,10 +119,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     }
   };
 
-  const handleCopyAddress = () => {
-    navigator.clipboard.writeText(address);
-  };
-
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     setSendError('');
@@ -170,26 +159,11 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     }
   };
 
-  const formatAddress = (addr: string) => {
-    return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
-  };
-
   const formatBalance = (balance: string | number) => {
     const num = typeof balance === 'string' ? parseFloat(balance) : balance;
-
     if (num === 0) return '0';
-
-    // For very small amounts (less than 0.0001), show up to 8 decimals
-    if (num < 0.0001) {
-      return num.toFixed(8).replace(/\.?0+$/, '');
-    }
-
-    // For small amounts (less than 1), show up to 6 decimals
-    if (num < 1) {
-      return num.toFixed(6).replace(/\.?0+$/, '');
-    }
-
-    // For larger amounts, show up to 4 decimals
+    if (num < 0.0001) return num.toFixed(8).replace(/\.?0+$/, '');
+    if (num < 1) return num.toFixed(6).replace(/\.?0+$/, '');
     return num.toFixed(4).replace(/\.?0+$/, '');
   };
 
@@ -218,50 +192,32 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
           onAccountSwitch={() => {
             loadData();
             notifyStateChange();
-            // Don't close menu when switching/creating accounts - let user see the change
           }}
           onWalletSwitch={() => {
             loadData();
             notifyStateChange();
-            setShowAccountMenu(false); // Close menu after wallet switch
+            setShowAccountMenu(false);
           }}
           onStateChange={notifyStateChange}
         />
       )}
 
+      {/* Navigation Tabs */}
       {view !== 'settings' && (
         <div className="top-nav">
-          <button
-            className={`nav-item ${view === 'assets' ? 'active' : ''}`}
-            onClick={() => setView('assets')}
-          >
-            <span className="nav-icon">💰</span>
-            <span>Assets</span>
-          </button>
-          <button
-            className={`nav-item ${view === 'receive' ? 'active' : ''}`}
-            onClick={() => setView('receive')}
-          >
-            <span className="nav-icon">📥</span>
-            <span>Receive</span>
-          </button>
-          <button
-            className={`nav-item ${view === 'send' ? 'active' : ''}`}
-            onClick={() => setView('send')}
-          >
-            <span className="nav-icon">📤</span>
-            <span>Send</span>
-          </button>
-          <button
-            className={`nav-item ${view === 'activity' ? 'active' : ''}`}
-            onClick={() => setView('activity')}
-          >
-            <span className="nav-icon">📊</span>
-            <span>Activity</span>
-          </button>
+          {['assets', 'receive', 'send', 'activity'].map((tab) => (
+            <button
+              key={tab}
+              className={`nav-item ${view === tab ? 'active' : ''}`}
+              onClick={() => setView(tab as View)}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
       )}
 
+      {/* Content Area */}
       <div className="content">
         {view === 'settings' ? (
           <SettingsView
@@ -273,18 +229,17 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
           />
         ) : view === 'assets' ? (
           <>
-            {/* Main Balance */}
+            {/* Main Balance Card */}
             <div className="wallet-card">
               <div className="balance-label">Total Balance</div>
               <div className="balance">
                 <span className="balance-amount">{formatBalance(nativeBalance)}</span>
                 <span className="balance-symbol">{nativeToken?.token.symbol || 'ETH'}</span>
               </div>
-              <button
+              <button 
                 className="btn btn-secondary"
                 onClick={handleRefresh}
                 disabled={refreshing}
-                style={{ marginTop: '12px' }}
               >
                 {refreshing ? 'Refreshing...' : 'Refresh'}
               </button>
@@ -292,7 +247,9 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
             {/* Token List */}
             {loading ? (
-              <div className="loading">Loading tokens...</div>
+              <div className="loading">
+                Loading tokens...
+              </div>
             ) : (
               <div className="token-list">
                 {portfolio.map((item, index) => (
@@ -317,18 +274,10 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
             )}
           </>
         ) : view === 'activity' ? (
-          <ActivityView
-            currentAddress={address}
-            network={network}
-          />
+          <ActivityView currentAddress={address} network={network} />
         ) : view === 'receive' ? (
-          <ReceiveView
-            address={address}
-            network={network}
-            networks={networks}
-          />
+          <ReceiveView address={address} network={network} networks={networks} />
         ) : view === 'send' ? (
-          /* Send Form */
           <form onSubmit={handleSend}>
             <div className="form-group">
               <label>Token</label>
@@ -340,8 +289,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 }}
               >
                 <option value="">Select a token</option>
-                {portfolio.map((item, index) => (
-                  <option key={index} value={item.token.symbol}>
+                {portfolio.map((item) => (
+                  <option key={item.token.symbol} value={item.token.symbol}>
                     {item.token.symbol} ({formatBalance(item.balance)})
                   </option>
                 ))}
@@ -371,11 +320,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
             {sendError && <div className="error">{sendError}</div>}
             {sendSuccess && <div className="success">{sendSuccess}</div>}
 
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={sendLoading}
-            >
+            <button type="submit" className="btn btn-primary" disabled={sendLoading}>
               {sendLoading ? 'Sending...' : 'Send'}
             </button>
           </form>

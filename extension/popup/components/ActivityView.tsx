@@ -59,65 +59,25 @@ function ActivityView({ currentAddress, network }: Props) {
     const now = new Date();
     const diff = now.getTime() - date.getTime();
 
-    // Less than a minute
-    if (diff < 60000) {
-      return 'Just now';
-    }
-
-    // Less than an hour
-    if (diff < 3600000) {
-      const minutes = Math.floor(diff / 60000);
-      return `${minutes}m ago`;
-    }
-
-    // Less than a day
-    if (diff < 86400000) {
-      const hours = Math.floor(diff / 3600000);
-      return `${hours}h ago`;
-    }
-
-    // Less than a week
-    if (diff < 604800000) {
-      const days = Math.floor(diff / 86400000);
-      return `${days}d ago`;
-    }
-
-    // Show date
+    if (diff < 60000) return 'Just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
     return date.toLocaleDateString();
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'pending':
-        return '⏳';
-      case 'confirmed':
-        return '✅';
-      case 'failed':
-        return '❌';
-      default:
-        return '';
-    }
-  };
-
-  const getStatusClass = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'tx-status-pending';
-      case 'confirmed':
-        return 'tx-status-confirmed';
-      case 'failed':
-        return 'tx-status-failed';
-      default:
-        return '';
+      case 'pending': return '⏳';
+      case 'confirmed': return '✅';
+      case 'failed': return '❌';
+      default: return '';
     }
   };
 
   const getTransactionType = (tx: Transaction) => {
-    if (tx.from.toLowerCase() === currentAddress.toLowerCase()) {
-      return 'Sent';
-    } else if (tx.to.toLowerCase() === currentAddress.toLowerCase()) {
-      return 'Received';
-    }
+    if (tx.from.toLowerCase() === currentAddress.toLowerCase()) return 'Sent';
+    if (tx.to.toLowerCase() === currentAddress.toLowerCase()) return 'Received';
     return 'Contract';
   };
 
@@ -133,103 +93,101 @@ function ActivityView({ currentAddress, network }: Props) {
 
   if (loading) {
     return (
-      <div className="activity-view">
-        <div className="loading">Loading transactions...</div>
+      <div className="loading">
+        Loading transactions...
       </div>
     );
   }
 
   return (
     <div className="activity-view">
+      {/* Header */}
       <div className="activity-header">
         <h2>Transaction History</h2>
-        <button className="btn-refresh" onClick={loadTransactions} title="Refresh">
+        <button
+          className="btn-refresh"
+          onClick={loadTransactions}
+          title="Refresh"
+        >
           🔄
         </button>
       </div>
 
       {/* Filter Tabs */}
       <div className="activity-filters">
-        <button
-          className={`filter-btn ${filter === 'all' ? 'active' : ''}`}
-          onClick={() => setFilter('all')}
-        >
-          All ({transactions.length})
-        </button>
-        <button
-          className={`filter-btn ${filter === 'pending' ? 'active' : ''}`}
-          onClick={() => setFilter('pending')}
-        >
-          Pending ({transactions.filter(tx => tx.status === 'pending').length})
-        </button>
-        <button
-          className={`filter-btn ${filter === 'confirmed' ? 'active' : ''}`}
-          onClick={() => setFilter('confirmed')}
-        >
-          Confirmed ({transactions.filter(tx => tx.status === 'confirmed').length})
-        </button>
-        <button
-          className={`filter-btn ${filter === 'failed' ? 'active' : ''}`}
-          onClick={() => setFilter('failed')}
-        >
-          Failed ({transactions.filter(tx => tx.status === 'failed').length})
-        </button>
+        {(['all', 'pending', 'confirmed', 'failed'] as const).map((filterType) => {
+          const count = filterType === 'all'
+            ? transactions.length
+            : transactions.filter(tx => tx.status === filterType).length;
+          return (
+            <button
+              key={filterType}
+              className={`filter-btn ${filter === filterType ? 'active' : ''}`}
+              onClick={() => setFilter(filterType)}
+            >
+              {filterType.charAt(0).toUpperCase() + filterType.slice(1)} ({count})
+            </button>
+          );
+        })}
       </div>
 
       {/* Transaction List */}
       <div className="transaction-list">
         {filteredTransactions.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">📋</div>
-            <p>No transactions yet</p>
+          <div className="loading" style={{ flexDirection: 'column', textAlign: 'center' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>📋</div>
+            <p style={{ fontWeight: 600, marginBottom: '8px' }}>No transactions yet</p>
             <span>Your transaction history will appear here</span>
           </div>
         ) : (
-          filteredTransactions.map((tx) => (
-            <div key={tx.hash} className="transaction-item">
-              <div className="tx-icon">
-                <span className={`tx-type-badge ${tx.type}`}>
-                  {tx.type === 'send' ? '📤' : '📥'}
-                </span>
-              </div>
-
-              <div className="tx-details">
-                <div className="tx-main">
-                  <span className="tx-type">{getTransactionType(tx)}</span>
-                  <span className={`tx-status ${getStatusClass(tx.status)}`}>
-                    {getStatusIcon(tx.status)} {tx.status}
-                  </span>
-                </div>
-
-                <div className="tx-addresses">
-                  <span className="tx-address">
-                    {tx.type === 'send' ? `To: ${formatAddress(tx.to)}` : `From: ${formatAddress(tx.from)}`}
-                  </span>
-                  <span className="tx-time">{formatDate(tx.timestamp)}</span>
-                </div>
-
-                <div className="tx-amount">
-                  {tx.value} {tx.tokenSymbol || 'ETH'}
-                </div>
-
-                {tx.error && (
-                  <div className="tx-error">
-                    <span className="error-icon">⚠️</span> {tx.error}
+          <div>
+            {filteredTransactions.map((tx) => (
+              <div key={tx.hash} className="transaction-item">
+                {/* Icon */}
+                <div className="tx-icon">
+                  <div className={`tx-type-badge ${tx.type}`}>
+                    {tx.type === 'send' ? '📤' : '📥'}
                   </div>
-                )}
-              </div>
+                </div>
 
-              <div className="tx-actions">
+                {/* Details */}
+                <div className="tx-details">
+                  <div className="tx-main">
+                    <span className="tx-type">{getTransactionType(tx)}</span>
+                    <span className={`tx-status tx-status-${tx.status}`}>
+                      {getStatusIcon(tx.status)} {tx.status}
+                    </span>
+                  </div>
+
+                  <div className="tx-meta">
+                    <span className="tx-address">
+                      {tx.type === 'send' ? `To: ${formatAddress(tx.to)}` : `From: ${formatAddress(tx.from)}`}
+                    </span>
+                    <span className="tx-time">{formatDate(tx.timestamp)}</span>
+                  </div>
+
+                  <div className="tx-amount">
+                    {tx.type === 'send' ? '-' : '+'}{tx.value} {tx.tokenSymbol || 'ETH'}
+                  </div>
+
+                  {tx.error && (
+                    <div className="tx-error">
+                      <span>⚠️</span> {tx.error}
+                    </div>
+                  )}
+                </div>
+
+                {/* Explorer Link */}
                 <button
-                  className="btn-explorer"
+                  className="btn-refresh"
                   onClick={() => openInExplorer(tx.hash)}
                   title="View on Explorer"
                 >
                   🔗
                 </button>
               </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </div>
     </div>

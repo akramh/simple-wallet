@@ -7,7 +7,7 @@
  * - Account/wallet selector button (shows wallet:account format)
  * - Settings and lock buttons
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
 interface Props {
   network: string;
@@ -45,6 +45,7 @@ function Header({
 
   return (
     <div className="header-new">
+      {/* Top row: Logo + Actions */}
       <div className="header-top">
         <div className="logo">
           <span className="logo-icon">🔐</span>
@@ -52,16 +53,25 @@ function Header({
         </div>
         <div className="header-actions">
           {onOpenSettings && (
-            <button className="icon-btn" onClick={onOpenSettings} title="Settings">
+            <button 
+              className="icon-btn"
+              onClick={onOpenSettings} 
+              title="Settings"
+            >
               ⚙️
             </button>
           )}
-          <button className="lock-btn" onClick={onLock} title="Lock Wallet">
+          <button 
+            className="lock-btn"
+            onClick={onLock} 
+            title="Lock Wallet"
+          >
             🔒
           </button>
         </div>
       </div>
 
+      {/* Controls row */}
       <div className="header-controls">
         {/* Network Selector */}
         <div className="network-selector-new">
@@ -84,7 +94,7 @@ function Header({
                 >
                   <span className="network-dot"></span>
                   <span>{net.name}</span>
-                  {key === network && <span className="check">✓</span>}
+                  {key === network && <span style={{ marginLeft: 'auto' }}>✓</span>}
                 </div>
               ))}
             </div>
@@ -92,7 +102,10 @@ function Header({
         </div>
 
         {/* Account Button */}
-        <button className="account-button" onClick={onAccountMenuClick}>
+        <button 
+          className="account-button"
+          onClick={onAccountMenuClick}
+        >
           <div className="account-avatar">
             {currentAddress.substring(2, 4).toUpperCase()}
           </div>

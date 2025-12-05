@@ -20,7 +20,7 @@ function UnlockScreen({ onUnlocked }: Props) {
           const walletNames = Object.keys(response.wallets);
           setAvailableWallets(walletNames);
           if (walletNames.length > 0 && !walletNames.includes('default')) {
-            setWalletName(walletNames[0]); // Use first available wallet
+            setWalletName(walletNames[0]);
           }
         }
       } catch (err) {
@@ -64,6 +64,11 @@ function UnlockScreen({ onUnlocked }: Props) {
         <h1>Welcome Back</h1>
       </div>
       <div className="content">
+        <div className="text-center mb-8">
+          <div className="text-6xl mb-4">🔐</div>
+          <p className="text-text-secondary text-base">Enter your password to unlock</p>
+        </div>
+
         <form onSubmit={handleUnlock}>
           {availableWallets.length > 1 && (
             <div className="form-group">
@@ -72,10 +77,8 @@ function UnlockScreen({ onUnlocked }: Props) {
                 value={walletName}
                 onChange={(e) => setWalletName(e.target.value)}
               >
-                {availableWallets.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
+                {availableWallets.map(name => (
+                  <option key={name} value={name}>{name}</option>
                 ))}
               </select>
             </div>
@@ -96,7 +99,7 @@ function UnlockScreen({ onUnlocked }: Props) {
 
           <button
             type="submit"
-            className="btn btn-primary"
+            className="btn btn-primary btn-large mt-3"
             disabled={loading}
           >
             {loading ? 'Unlocking...' : 'Unlock'}

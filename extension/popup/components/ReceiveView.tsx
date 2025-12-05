@@ -25,11 +25,13 @@ function ReceiveView({ address, network, networks }: Props) {
 
   return (
     <div className="receive-view">
+      {/* Header */}
       <div className="receive-header">
         <h2>Receive {nativeSymbol}</h2>
         <p className="receive-subtitle">Scan QR code or copy address</p>
       </div>
 
+      {/* QR Code */}
       <div className="qr-container">
         <div className="qr-code-wrapper">
           <QRCodeSVG
@@ -41,20 +43,16 @@ function ReceiveView({ address, network, networks }: Props) {
         </div>
       </div>
 
+      {/* Address Section */}
       <div className="receive-address-section">
         <div className="receive-label">Your Address</div>
-        <div className="receive-address">
-          {address}
-        </div>
-        <button
-          className="btn btn-primary"
-          onClick={handleCopyAddress}
-          style={{ marginTop: '12px' }}
-        >
+        <div className="receive-address">{address}</div>
+        <button className="btn btn-primary" style={{ marginTop: '16px' }} onClick={handleCopyAddress}>
           {copied ? '✓ Copied!' : 'Copy Address'}
         </button>
       </div>
 
+      {/* Warning */}
       <div className="receive-warning">
         <div className="warning-icon">⚠️</div>
         <div className="warning-content">
