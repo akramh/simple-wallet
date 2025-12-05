@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { TransactionHistoryManager } from '../../../src/transaction-history.js';
 
 interface Transaction {
   hash: string;
   from: string;
-  to: string;
+  to: string | null;
   value: string;
   network: string;
   status: 'pending' | 'confirmed' | 'failed';
@@ -23,34 +23,64 @@ interface Props {
   network: string;
 }
 
+type DataSource = 'explorer' | 'local';
+
 function ActivityView({ currentAddress, network }: Props) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'failed'>('all');
+  const [dataSource, setDataSource] = useState<DataSource>('explorer');
+  const [error, setError] = useState<string | null>(null);
+  const [explorerSupported, setExplorerSupported] = useState(true);
 
-  useEffect(() => {
-    loadTransactions();
-  }, [network]);
-
-  const loadTransactions = async () => {
+  const loadTransactions = useCallback(async () => {
     setLoading(true);
+    setError(null);
+    
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'GET_TRANSACTIONS_BY_NETWORK',
-        payload: { network }
-      });
+      if (dataSource === 'explorer') {
+        // Fetch from block explorer API
+        const response = await chrome.runtime.sendMessage({
+          type: 'GET_EXPLORER_TRANSACTIONS',
+          payload: { network, address: currentAddress }
+        });
 
-      if (response.transactions) {
-        setTransactions(response.transactions);
+        setExplorerSupported(response.supported !== false);
+        
+        if (response.error || !response.supported) {
+          if (response.error) setError(response.error);
+          // Fall back to local transactions
+          const localResponse = await chrome.runtime.sendMessage({
+            type: 'GET_TRANSACTIONS_BY_NETWORK',
+            payload: { network }
+          });
+          setTransactions(localResponse.transactions || []);
+        } else {
+          setTransactions(response.transactions || []);
+        }
+      } else {
+        // Fetch from local storage (wallet-initiated txs only)
+        const response = await chrome.runtime.sendMessage({
+          type: 'GET_TRANSACTIONS_BY_NETWORK',
+          payload: { network }
+        });
+        setTransactions(response.transactions || []);
       }
-    } catch (error) {
-      console.error('Failed to load transactions:', error);
+    } catch (err: any) {
+      console.error('Failed to load transactions:', err);
+      setError(err.message);
+      setTransactions([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [network, dataSource, currentAddress]);
 
-  const formatAddress = (addr: string) => {
+  useEffect(() => {
+    loadTransactions();
+  }, [loadTransactions]);
+
+  const formatAddress = (addr: string | undefined | null) => {
+    if (!addr) return 'Unknown';
     return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
   };
 
@@ -76,9 +106,25 @@ function ActivityView({ currentAddress, network }: Props) {
   };
 
   const getTransactionType = (tx: Transaction) => {
-    if (tx.from.toLowerCase() === currentAddress.toLowerCase()) return 'Sent';
-    if (tx.to.toLowerCase() === currentAddress.toLowerCase()) return 'Received';
+    if (tx.from?.toLowerCase() === currentAddress.toLowerCase()) return 'Sent';
+    if (tx.to?.toLowerCase() === currentAddress.toLowerCase()) return 'Received';
     return 'Contract';
+  };
+
+  const formatValue = (value: string, tokenSymbol?: string) => {
+    // Explorer API returns value in wei for ETH, raw for tokens
+    if (!tokenSymbol || tokenSymbol === 'ETH') {
+      // Convert wei to ETH
+      const ethValue = parseFloat(value) / 1e18;
+      if (ethValue === 0) return '0 ETH';
+      if (ethValue < 0.0001) return '<0.0001 ETH';
+      return `${ethValue.toFixed(4)} ETH`;
+    }
+    // For tokens, the value might already be formatted or need decimal adjustment
+    const numValue = parseFloat(value);
+    if (numValue === 0) return `0 ${tokenSymbol}`;
+    if (numValue < 0.0001) return `<0.0001 ${tokenSymbol}`;
+    return `${numValue.toFixed(4)} ${tokenSymbol}`;
   };
 
   const openInExplorer = (hash: string) => {
@@ -103,15 +149,49 @@ function ActivityView({ currentAddress, network }: Props) {
     <div className="activity-view">
       {/* Header */}
       <div className="activity-header">
-        <h2>Transaction History</h2>
-        <button
-          className="btn-refresh"
-          onClick={loadTransactions}
-          title="Refresh"
-        >
-          🔄
-        </button>
+        <h2>Activity</h2>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {explorerSupported && (
+            <select
+              value={dataSource}
+              onChange={(e) => setDataSource(e.target.value as DataSource)}
+              style={{
+                padding: '4px 8px',
+                borderRadius: '6px',
+                border: '1px solid var(--border)',
+                background: 'var(--bg-secondary)',
+                fontSize: '12px',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="explorer">Explorer</option>
+              <option value="local">Local</option>
+            </select>
+          )}
+          <button
+            className="btn-refresh"
+            onClick={loadTransactions}
+            title="Refresh"
+          >
+            🔄
+          </button>
+        </div>
       </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div style={{
+          padding: '8px 12px',
+          background: 'var(--warning-light)',
+          border: '1px solid var(--warning)',
+          borderRadius: '6px',
+          fontSize: '12px',
+          color: 'var(--warning-dark)',
+          marginBottom: '12px'
+        }}>
+          ⚠️ {error}. Showing local transactions.
+        </div>
+      )}
 
       {/* Filter Tabs */}
       <div className="activity-filters">
@@ -167,7 +247,7 @@ function ActivityView({ currentAddress, network }: Props) {
                   </div>
 
                   <div className="tx-amount">
-                    {tx.type === 'send' ? '-' : '+'}{tx.value} {tx.tokenSymbol || 'ETH'}
+                    {tx.type === 'send' ? '-' : '+'}{formatValue(tx.value, tx.tokenSymbol)}
                   </div>
 
                   {tx.error && (

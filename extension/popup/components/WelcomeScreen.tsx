@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ethers } from 'ethers';
+import { MnemonicDisplay } from './ui';
 
 interface Props {
   onWalletCreated: () => void;
@@ -292,9 +293,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
                 </button>
               </div>
             </div>
-            <div className={`mnemonic-box ${showMnemonic ? 'revealed' : 'masked'}`}>
-              {showMnemonic ? generatedMnemonic : '•••• •••• •••• •••• •••• •••• •••• •••• •••• •••• •••• ••••'}
-            </div>
+            <MnemonicDisplay mnemonic={generatedMnemonic} isRevealed={showMnemonic} />
           </div>
 
           <div className="action-buttons">

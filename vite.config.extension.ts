@@ -15,6 +15,14 @@ export default defineConfig({
         {
           src: 'extension/assets',
           dest: '.'
+        },
+        {
+          src: 'tokens.json',
+          dest: '.'
+        },
+        {
+          src: 'config.json',
+          dest: '.'
         }
       ]
     })

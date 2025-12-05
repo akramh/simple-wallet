@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import WelcomeScreen from './components/WelcomeScreen';
 import UnlockScreen from './components/UnlockScreen';
 import MainWallet from './components/MainWallet';
@@ -14,18 +14,11 @@ function App() {
   const [state, setState] = useState<WalletState | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadState();
-
-    // Listen for wallet lock events
-    chrome.runtime.onMessage.addListener((message) => {
-      if (message.type === 'WALLET_LOCKED') {
-        setState(prev => prev ? { ...prev, isUnlocked: false, address: null } : null);
-      }
-    });
+  const handleLockEvent = useCallback(() => {
+    setState(prev => prev ? { ...prev, isUnlocked: false, address: null } : null);
   }, []);
 
-  const loadState = async () => {
+  const loadState = useCallback(async () => {
     try {
       const response = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
       setState(response);
@@ -34,7 +27,33 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadState();
+
+    // Listen for wallet lock events via message
+    const messageListener = (message: any) => {
+      if (message.type === 'WALLET_LOCKED') {
+        handleLockEvent();
+      }
+    };
+    chrome.runtime.onMessage.addListener(messageListener);
+
+    // Listen for wallet lock events via storage (more reliable for side panel)
+    const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes.walletLocked) {
+        handleLockEvent();
+      }
+    };
+    chrome.storage.session?.onChanged.addListener(storageListener);
+
+    // Cleanup listeners on unmount
+    return () => {
+      chrome.runtime.onMessage.removeListener(messageListener);
+      chrome.storage.session?.onChanged.removeListener(storageListener);
+    };
+  }, [loadState, handleLockEvent]);
 
   const handleWalletCreated = () => {
     loadState();

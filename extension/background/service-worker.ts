@@ -6,6 +6,7 @@ import { createProviderFactory } from '../../src/providers.js';
 import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
+import { explorerAPI } from '../../src/explorer-api.js';
 import type { Config } from '../../src/types/index.js';
 
 // Set up WebCrypto for browser environment
@@ -58,59 +59,70 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-// Default configuration
-const defaultConfig: Config & { network: string } = {
+// Minimal fallback config (primary config loaded from bundled config.json)
+const fallbackConfig: Config & { network: string } = {
   network: 'sepolia',
   networks: {
     sepolia: {
       name: 'Sepolia Testnet',
-      // Rotate through multiple public RPCs to avoid single-endpoint timeouts in the popup
-      rpcUrl: [
-        'https://ethereum-sepolia-rpc.publicnode.com',
-        'https://sepolia.gateway.tenderly.co',
-        'https://endpoints.omniatech.io/v1/eth/sepolia/public',
-        'https://rpc.sepolia.org'
-      ],
+      rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com',
       chainId: 11155111,
       nativeSymbol: 'ETH',
-      nativeName: 'Sepolia Ether'
-    },
-    mainnet: {
-      name: 'Ethereum Mainnet',
-      rpcUrl: 'https://eth.llamarpc.com',
-      chainId: 1,
-      nativeSymbol: 'ETH',
-      nativeName: 'Ether'
-    },
-    polygon: {
-      name: 'Polygon',
-      rpcUrl: 'https://polygon-rpc.com',
-      chainId: 137,
-      nativeSymbol: 'MATIC',
-      nativeName: 'Polygon'
-    },
-    base: {
-      name: 'Base',
-      rpcUrl: 'https://mainnet.base.org',
-      chainId: 8453,
-      nativeSymbol: 'ETH',
-      nativeName: 'Ether'
+      nativeName: 'Sepolia Ether',
+      blockExplorer: 'https://sepolia.etherscan.io',
+      explorerApiUrl: 'https://api-sepolia.etherscan.io/api'
     }
   }
 };
+
+// Load config from bundled config.json asset
+async function loadBundledConfig(): Promise<Config & { network: string }> {
+  try {
+    const configUrl = chrome.runtime.getURL('config.json');
+    const response = await fetch(configUrl);
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (err) {
+    console.warn('Failed to load bundled config.json:', err);
+  }
+  return fallbackConfig;
+}
 
 // Initialize wallet service
 async function initializeWalletService(): Promise<void> {
   const storage = new ChromeStorageAdapter();
   await storage.initialize();
 
-  // Load or use default config
-  const config = storage.readJSON<Config & { network: string }>('config.json', defaultConfig);
+  // Load config from bundled asset (source of truth), with minimal fallback
+  const bundledConfig = await loadBundledConfig();
+  console.log('[Config] Loaded bundled config, networks:', Object.keys(bundledConfig.networks));
+  
+  // User overrides from storage (e.g., selected network) merged with bundled config
+  const storedConfig = storage.readJSON<Partial<Config & { network: string; explorerApiKey?: string }>>('config.json', {});
+  const config = { ...bundledConfig, ...storedConfig, networks: { ...bundledConfig.networks, ...storedConfig.networks } };
+
+  // Register explorer API URLs from network config (pass global API key)
+  const globalApiKey = (config as any).explorerApiKey;
+  explorerAPI.registerNetworks(config.networks, globalApiKey);
+  console.log('[Explorer] Registered networks:', explorerAPI.getRegisteredNetworks(), 'API key:', globalApiKey ? 'set' : 'not set');
+
+  // Load bundled tokens.json (static asset)
+  let builtInTokens = {};
+  try {
+    const tokensUrl = chrome.runtime.getURL('tokens.json');
+    const response = await fetch(tokensUrl);
+    if (response.ok) {
+      builtInTokens = await response.json();
+    }
+  } catch (err) {
+    console.warn('Failed to load bundled tokens.json:', err);
+  }
 
   const wallet = new Wallet(config, storage, createProviderFactory());
   walletService = new WalletAppService(wallet, config, {
     storage,
-    tokenListPath: 'tokens.json',
+    builtInTokens,
     customTokenPath: 'tokens-user.json',
     configPath: 'config.json'
   });
@@ -137,9 +149,15 @@ function lockWallet(): void {
     autoLockTimer = null;
   }
 
-  // Notify popup that wallet is locked
+  // Notify all extension contexts (popup, side panel, etc.) that wallet is locked
+  // Use storage change event as a reliable broadcast mechanism
+  chrome.storage.session.set({ walletLocked: Date.now() }).catch(() => {
+    // Fallback for browsers without session storage
+  });
+  
+  // Also try direct message (works for popup)
   chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }).catch(() => {
-    // Ignore errors if popup is not open
+    // Ignore errors if no listeners
   });
 }
 
@@ -354,9 +372,46 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const networkTxs = transactionHistory?.getTransactionsByNetwork(payload.network) || [];
       return { transactions: networkTxs };
 
+    case 'GET_EXPLORER_TRANSACTIONS':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      try {
+        const explorerAddress = payload.address || walletService!.getAddress();
+        const explorerNetwork = payload.network || walletService!.config.network;
+        const isSupported = explorerAPI.isSupported(explorerNetwork);
+        
+        console.log('[Explorer] Request:', { network: explorerNetwork, address: explorerAddress, isSupported });
+        
+        if (!isSupported) {
+          console.log('[Explorer] Network not supported, registered networks:', explorerAPI.getRegisteredNetworks?.() || 'unknown');
+          return { transactions: [], supported: false };
+        }
+        
+        const explorerTxs = await explorerAPI.getAllTransactions(
+          explorerAddress,
+          explorerNetwork,
+          payload.page || 1,
+          payload.pageSize || 25
+        );
+        console.log('[Explorer] Fetched transactions:', explorerTxs.length);
+        return { transactions: explorerTxs, supported: true };
+      } catch (err: any) {
+        console.error('Failed to fetch explorer transactions:', err);
+        return { transactions: [], error: err.message, supported: true };
+      }
+
     case 'ADD_CUSTOM_TOKEN':
       walletService!.addCustomToken(walletService!.config.network, payload.token);
       return { success: true };
+
+    case 'GET_TOKEN_METADATA':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      try {
+        const metadata = await walletService!.wallet.getTokenMetadata(payload.address);
+        return { metadata };
+      } catch (err: any) {
+        return { error: err.message || 'Failed to fetch token metadata' };
+      }
 
     case 'GET_TOKENS':
       const tokens = walletService!.getTokensForNetwork(payload.network || walletService!.config.network);
@@ -365,6 +420,28 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'GET_ADDRESS':
       if (!isUnlocked) throw new Error('Wallet is locked');
       return { address: walletService!.getAddress() };
+
+    case 'GET_SECRET_PHRASE':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      if (!payload.password) throw new Error('Password required');
+      try {
+        const mnemonic = walletService!.getMnemonic(payload.password);
+        return { mnemonic };
+      } catch (err: any) {
+        return { error: err.message || 'Failed to retrieve secret phrase' };
+      }
+
+    case 'GET_PRIVATE_KEY':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      if (!payload.password) throw new Error('Password required');
+      try {
+        const privateKey = walletService!.getPrivateKey(payload.password);
+        return { privateKey };
+      } catch (err: any) {
+        return { error: err.message || 'Failed to retrieve private key' };
+      }
 
     case 'GET_ACCOUNTS':
       if (!isUnlocked) throw new Error('Wallet is locked');

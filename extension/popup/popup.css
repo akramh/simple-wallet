@@ -1186,6 +1186,36 @@
   filter: none;
 }
 
+/* Mnemonic Grid Display - Numbered words in 3-column layout */
+.mnemonic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.mnemonic-word {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.mnemonic-index {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  min-width: 16px;
+}
+
+.mnemonic-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: monospace;
+}
+
 .toast {
   position: fixed;
   bottom: 20px;

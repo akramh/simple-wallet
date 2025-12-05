@@ -5,6 +5,7 @@
  * Features: view/switch wallets & accounts, create/import wallets
  */
 import React, { useState, useEffect, useRef } from 'react';
+import { MnemonicDisplay } from './ui';
 
 interface Account {
   index: number;
@@ -400,9 +401,7 @@ function AccountMenu({
                       </button>
                     </div>
                   </div>
-                  <div className={`mnemonic-box ${showCreatedMnemonic ? 'revealed' : 'masked'}`}>
-                    {showCreatedMnemonic ? createdMnemonic : '•••• •••• •••• •••• •••• •••• •••• •••• •••• •••• •••• ••••'}
-                  </div>
+                  <MnemonicDisplay mnemonic={createdMnemonic} isRevealed={showCreatedMnemonic} />
                 </div>
               </>
             )}

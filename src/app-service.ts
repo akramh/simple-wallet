@@ -37,6 +37,7 @@ export class WalletAppService {
       configPath?: string;
       storage?: StorageAdapter;
       providerFactory?: ProviderFactory;
+      builtInTokens?: TokenRegistry;
     } = {}
   ) {
     if (options.providerFactory) {
@@ -50,7 +51,8 @@ export class WalletAppService {
     this.customTokenPath = options.customTokenPath ?? 'tokens-user.json';
     this.configPath = options.configPath ?? 'config.json';
 
-    this.builtInTokens = this.safeReadRegistry(this.tokenListPath);
+    // Use provided built-in tokens (e.g., from bundled JSON in extension) or read from storage
+    this.builtInTokens = options.builtInTokens ?? this.safeReadRegistry(this.tokenListPath);
     this.customTokens = this.safeReadRegistry(this.customTokenPath);
   }
 
@@ -117,6 +119,22 @@ export class WalletAppService {
 
   async getTokenMetadata(address: string): Promise<TokenMetadata> {
     return this.wallet.getTokenMetadata(address);
+  }
+
+  /**
+   * Get the private key for the current account.
+   * Requires password verification.
+   */
+  getPrivateKey(password: string): string {
+    return this.wallet.getPrivateKey(password);
+  }
+
+  /**
+   * Get the mnemonic (secret recovery phrase) for the wallet.
+   * Requires password verification.
+   */
+  getMnemonic(password: string): string {
+    return this.wallet.getMnemonic(password);
   }
 
   private safeReadRegistry(path: string): TokenRegistry {

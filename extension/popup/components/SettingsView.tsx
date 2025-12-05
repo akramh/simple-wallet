@@ -1,16 +1,28 @@
 /**
  * SettingsView Component
  * 
- * Simplified settings page that directs users to the AccountMenu
- * for all wallet and account management operations.
+ * Settings page with security options and wallet management.
  */
-import React from 'react';
+import React, { useState } from 'react';
+import RevealSecretModal from './RevealSecretModal';
 
 interface Props {
+  currentAddress?: string;
+  onAccountSwitch?: () => void;
+  onWalletSwitch?: () => void;
+  onStateChange?: () => void;
   onClose?: () => void;
 }
 
 function SettingsView({ onClose }: Props) {
+  const [showSecretModal, setShowSecretModal] = useState(false);
+  const [secretType, setSecretType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
+
+  const handleRevealSecret = (type: 'mnemonic' | 'privateKey') => {
+    setSecretType(type);
+    setShowSecretModal(true);
+  };
+
   return (
     <div className="container">
       {/* Header */}
@@ -25,6 +37,73 @@ function SettingsView({ onClose }: Props) {
 
       {/* Content */}
       <div className="content">
+        {/* Security Section */}
+        <div style={{ marginBottom: '24px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+            Security
+          </div>
+          
+          <div className="wallet-card" style={{ padding: '0' }}>
+            <button
+              onClick={() => handleRevealSecret('mnemonic')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                width: '100%',
+                padding: '14px 16px',
+                background: 'transparent',
+                border: 'none',
+                borderBottom: '1px solid var(--border)',
+                cursor: 'pointer',
+                textAlign: 'left'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '20px' }}>🔑</span>
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    Secret Recovery Phrase
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    View your 12-word recovery phrase
+                  </div>
+                </div>
+              </div>
+              <span style={{ color: 'var(--text-tertiary)', fontSize: '18px' }}>›</span>
+            </button>
+
+            <button
+              onClick={() => handleRevealSecret('privateKey')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                width: '100%',
+                padding: '14px 16px',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                textAlign: 'left'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '20px' }}>🔐</span>
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    Private Key
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    Export your account's private key
+                  </div>
+                </div>
+              </div>
+              <span style={{ color: 'var(--text-tertiary)', fontSize: '18px' }}>›</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Info Section */}
         <div className="wallet-card" style={{ textAlign: 'center' }}>
           <div style={{ fontSize: '32px', marginBottom: '16px' }}>⚙️</div>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '12px', lineHeight: 1.5 }}>
@@ -35,10 +114,10 @@ function SettingsView({ onClose }: Props) {
           </p>
         </div>
 
-        {/* Future settings sections can be added here */}
-        <div style={{ marginTop: '32px' }}>
+        {/* Preferences Section */}
+        <div style={{ marginTop: '24px' }}>
           <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
-            Preferences
+            About
           </div>
           
           <div className="wallet-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -50,6 +129,13 @@ function SettingsView({ onClose }: Props) {
           </div>
         </div>
       </div>
+
+      {/* Reveal Secret Modal */}
+      <RevealSecretModal
+        isOpen={showSecretModal}
+        onClose={() => setShowSecretModal(false)}
+        secretType={secretType}
+      />
     </div>
   );
 }

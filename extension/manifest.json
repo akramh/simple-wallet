@@ -43,7 +43,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["content/provider.js"],
+      "resources": ["content/provider.js", "tokens.json"],
       "matches": ["<all_urls>"]
     }
   ],
