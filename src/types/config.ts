@@ -4,6 +4,8 @@ export interface NetworkConfig {
   nativeSymbol: string;
   nativeName: string;
   blockExplorer?: string;
+  explorerApiUrl?: string;
+  explorerApiKey?: string;
   name?: string;
 }
 

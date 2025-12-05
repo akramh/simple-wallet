@@ -13,6 +13,7 @@ import Header from './Header';
 import AccountMenu from './AccountMenu';
 import ReceiveView from './ReceiveView';
 import ActivityView from './ActivityView';
+import AddTokenModal from './AddTokenModal';
 
 interface Props {
   address: string;
@@ -50,6 +51,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [showAddToken, setShowAddToken] = useState(false);
   const [currentWalletName, setCurrentWalletName] = useState('default');
   const [currentAccountIndex, setCurrentAccountIndex] = useState(0);
 
@@ -270,8 +272,32 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                     </div>
                   </div>
                 ))}
+
+                {/* Add Token Button */}
+                <button
+                  className="token-item add-token-btn"
+                  onClick={() => setShowAddToken(true)}
+                  style={{
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    border: '2px dashed var(--border)',
+                    background: 'transparent'
+                  }}
+                >
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+                    + Add Custom Token
+                  </span>
+                </button>
               </div>
             )}
+
+            {/* Add Token Modal */}
+            <AddTokenModal
+              isOpen={showAddToken}
+              onClose={() => setShowAddToken(false)}
+              network={networks[network]?.name || network}
+              onTokenAdded={handleRefresh}
+            />
           </>
         ) : view === 'activity' ? (
           <ActivityView currentAddress={address} network={network} />
