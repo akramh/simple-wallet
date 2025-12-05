@@ -353,7 +353,7 @@ function AccountMenu({
       {/* Create Wallet Modal */}
       {showCreateModal && (
         <div className="modal-overlay">
-          <div className="modal">
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{createStep === 'success' ? `Wallet: ${createdWalletName}` : 'Create wallet'}</h3>
               <button className="close-btn" onClick={() => {
@@ -423,7 +423,7 @@ function AccountMenu({
       {/* Import Wallet Modal */}
       {showImportModal && (
         <div className="modal-overlay">
-          <div className="modal">
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Import wallet</h3>
               <button className="close-btn" onClick={() => {

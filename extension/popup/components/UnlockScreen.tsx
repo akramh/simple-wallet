@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Input, Select } from './ui/Input';
 
 interface Props {
   onUnlocked: () => void;
@@ -70,27 +69,34 @@ function UnlockScreen({ onUnlocked }: Props) {
           <p className="text-text-secondary text-base">Enter your password to unlock</p>
         </div>
 
-        <form onSubmit={handleUnlock} className="space-y-4">
+        <form onSubmit={handleUnlock}>
           {availableWallets.length > 1 && (
-            <Select
-              label="Wallet"
-              value={walletName}
-              onChange={(e) => setWalletName(e.target.value)}
-              options={availableWallets.map(name => ({ value: name, label: name }))}
-            />
+            <div className="form-group">
+              <label>Wallet</label>
+              <select
+                value={walletName}
+                onChange={(e) => setWalletName(e.target.value)}
+              >
+                {availableWallets.map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
           )}
 
           <div className="form-group">
-          <label>Password</label>
-          <Input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your password"
-            error={error}
-            autoFocus
-          />
+            <label>Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter your password"
+              autoFocus
+            />
           </div>
+
+          {error && <div className="error">{error}</div>}
+
           <button
             type="submit"
             className="btn btn-primary btn-large mt-3"
