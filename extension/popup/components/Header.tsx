@@ -44,9 +44,9 @@ function Header({
   };
 
   return (
-    <div className="bg-white border-b border-border px-4 py-3">
+    <div className="bg-white border-b border-border px-4 py-4">
       {/* Top row: Logo + Actions */}
-      <div className="flex justify-between items-center mb-3">
+      <div className="flex justify-between items-center mb-4">
         <div className="flex items-center gap-3">
           <span className="text-2xl">🔐</span>
           <span className="text-lg font-bold text-text-primary">Simple Wallet</span>

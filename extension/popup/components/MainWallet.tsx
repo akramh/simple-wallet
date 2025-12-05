@@ -207,11 +207,11 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
       {/* Navigation Tabs */}
       {view !== 'settings' && (
-        <div className="flex bg-white border-b border-border px-3 py-2 gap-2">
+        <div className="flex bg-white border-b border-border px-5 py-4 gap-4">
           {['assets', 'receive', 'send', 'activity'].map((tab) => (
             <button
               key={tab}
-              className={`flex-1 py-3 px-3 rounded-wallet-sm text-sm font-semibold transition-all capitalize
+              className={`flex-1 py-3.5 px-4 rounded-wallet-sm text-sm font-semibold transition-all capitalize
                 ${view === tab 
                   ? 'bg-primary text-white' 
                   : 'text-text-secondary hover:bg-surface-secondary hover:text-text-primary'
@@ -225,7 +225,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       )}
 
       {/* Content Area */}
-      <div className="flex-1 p-5 overflow-y-auto">
+      <div className="flex-1 p-6 overflow-y-auto">
         {view === 'settings' ? (
           <SettingsView
             currentAddress={address}
@@ -237,9 +237,9 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         ) : view === 'assets' ? (
           <>
             {/* Main Balance Card */}
-            <Card className="mb-5 p-5">
-              <div className="text-sm uppercase tracking-wide text-text-secondary mb-3">Total Balance</div>
-              <div className="flex items-baseline gap-2 mb-4">
+            <Card className="mb-7 p-5">
+              <div className="text-sm uppercase tracking-wide text-text-secondary mb-3.5">Total Balance</div>
+              <div className="flex items-baseline gap-3.5 mb-4">
                 <span className="text-3xl font-bold text-text-primary">{formatBalance(nativeBalance)}</span>
                 <span className="text-lg font-semibold text-text-secondary">{nativeToken?.token.symbol || 'ETH'}</span>
               </div>
@@ -259,14 +259,14 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 Loading tokens...
               </div>
             ) : (
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-4.5">
                 {portfolio.map((item, index) => (
                   <div 
                     key={index} 
-                    className="flex items-center justify-between p-4 bg-surface-secondary rounded-wallet"
+                    className="flex items-center justify-between p-5 bg-surface-secondary rounded-wallet"
                   >
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center font-semibold text-base">
+                      <div className="w-11 h-11 rounded-full bg-primary text-white flex items-center justify-center font-semibold text-base">
                         {item.token.symbol.substring(0, 1)}
                       </div>
                       <div>

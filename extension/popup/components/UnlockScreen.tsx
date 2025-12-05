@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Button } from './ui/Button';
 import { Input, Select } from './ui/Input';
 
 interface Props {
@@ -61,17 +60,17 @@ function UnlockScreen({ onUnlocked }: Props) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-white">
-      <div className="px-5 py-5 bg-primary text-white">
-        <h1 className="text-xl font-semibold">Welcome Back</h1>
+    <div className="container">
+      <div className="header">
+        <h1>Welcome Back</h1>
       </div>
-      <div className="flex-1 p-6 overflow-y-auto">
+      <div className="content">
         <div className="text-center mb-8">
           <div className="text-6xl mb-4">🔐</div>
           <p className="text-text-secondary text-base">Enter your password to unlock</p>
         </div>
 
-        <form onSubmit={handleUnlock} className="space-y-5">
+        <form onSubmit={handleUnlock} className="space-y-4">
           {availableWallets.length > 1 && (
             <Select
               label="Wallet"
@@ -81,8 +80,9 @@ function UnlockScreen({ onUnlocked }: Props) {
             />
           )}
 
+          <div className="form-group">
+          <label>Password</label>
           <Input
-            label="Password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -90,10 +90,14 @@ function UnlockScreen({ onUnlocked }: Props) {
             error={error}
             autoFocus
           />
-
-          <Button type="submit" fullWidth loading={loading} className="mt-4">
+          </div>
+          <button
+            type="submit"
+            className="btn btn-primary btn-large mt-3"
+            disabled={loading}
+          >
             {loading ? 'Unlocking...' : 'Unlock'}
-          </Button>
+          </button>
         </form>
       </div>
     </div>

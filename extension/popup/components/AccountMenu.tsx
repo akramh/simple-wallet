@@ -255,11 +255,11 @@ function AccountMenu({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-5 bg-black/60 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 animate-fade-in"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-wallet-lg w-full max-w-[440px] max-h-[90vh] flex flex-col shadow-modal animate-slide-up overflow-hidden"
+        className="bg-white rounded-wallet-lg w-full max-w-[520px] max-h-[90vh] flex flex-col shadow-modal animate-slide-up overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -288,9 +288,9 @@ function AccountMenu({
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-7 space-y-7">
           {/* Section Header */}
-          <div className="flex justify-between items-center gap-4 mb-6">
+          <div className="flex justify-between items-center gap-4">
             <div className="text-lg font-bold text-text-primary">Wallets</div>
             <div className="flex gap-3">
               <button
@@ -322,11 +322,11 @@ function AccountMenu({
                   {wallet.name}
                 </div>
 
-                <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto scrollbar-thin pr-1">
+                <div className="flex flex-col gap-3.5 max-h-[320px] overflow-y-auto scrollbar-thin pr-1">
                   {wallet.accounts.map((account) => (
                     <div
                       key={`${wallet.name}-${account.index}`}
-                      className={`flex items-center gap-4 p-4 rounded-wallet cursor-pointer transition-all border-2
+                      className={`flex items-center gap-5 p-5 rounded-wallet cursor-pointer transition-all border-2
                         ${account.address === currentAddress
                           ? 'bg-gradient-to-r from-primary-50 to-primary-100 border-primary shadow-sm'
                           : 'border-transparent hover:bg-surface-secondary hover:border-border-dark'
