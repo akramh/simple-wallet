@@ -72,6 +72,13 @@ interface TokenBalance {
 
 type View = 'tokens' | 'activity' | 'receive' | 'send' | 'settings';
 
+interface TokenWithBalance {
+  token: Token;
+  balance: string | null;
+  lastUpdated: number | null;
+  isLoading: boolean;
+}
+
 function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const notifyStateChange = () => {
     if (onStateChange) {
@@ -97,21 +104,45 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [sendError, setSendError] = useState('');
   const [sendSuccess, setSendSuccess] = useState('');
 
+  // Load tokens immediately, then trigger async balance refresh
   useEffect(() => {
-    loadData();
+    loadTokensAndData();
+    
+    // Listen for balance updates from background
+    const handleMessage = (message: any) => {
+      if (message.type === 'BALANCES_UPDATED' && message.network === network) {
+        // Update portfolio with new balances
+        setPortfolio(message.balances.map((item: any) => ({
+          token: item.token,
+          balance: item.balance || '0',
+          error: item.error
+        })));
+      }
+    };
+    
+    chrome.runtime.onMessage.addListener(handleMessage);
+    return () => {
+      chrome.runtime.onMessage.removeListener(handleMessage);
+    };
   }, [network]);
 
-  const loadData = async () => {
+  const loadTokensAndData = async () => {
     setLoading(true);
     try {
-      const [portfolioResponse, networksResponse, accountsResponse] = await Promise.all([
-        chrome.runtime.sendMessage({ type: 'GET_PORTFOLIO' }),
+      // Load tokens instantly with cached balances, networks, and accounts in parallel
+      const [tokensResponse, networksResponse, accountsResponse] = await Promise.all([
+        chrome.runtime.sendMessage({ type: 'GET_TOKENS' }),
         chrome.runtime.sendMessage({ type: 'GET_NETWORKS' }),
         chrome.runtime.sendMessage({ type: 'GET_ACCOUNTS' })
       ]);
 
-      if (portfolioResponse.portfolio) {
-        setPortfolio(portfolioResponse.portfolio);
+      // Set tokens with cached balances immediately
+      if (tokensResponse.tokens) {
+        setPortfolio(tokensResponse.tokens.map((item: TokenWithBalance) => ({
+          token: item.token,
+          balance: item.balance || '0',
+          error: undefined
+        })));
       }
       if (networksResponse.networks) {
         setNetworks(networksResponse.networks);
@@ -122,6 +153,10 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       if (accountsResponse.currentAccountIndex !== undefined) {
         setCurrentAccountIndex(accountsResponse.currentAccountIndex);
       }
+      
+      // Trigger async balance refresh (non-blocking)
+      chrome.runtime.sendMessage({ type: 'REFRESH_BALANCES' }).catch(() => {});
+      
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
@@ -131,7 +166,10 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadData();
+    // Trigger balance refresh and wait for broadcast
+    await chrome.runtime.sendMessage({ type: 'REFRESH_BALANCES' });
+    // Also reload the full token list in case tokens changed
+    await loadTokensAndData();
     setRefreshing(false);
   };
 
@@ -147,9 +185,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         payload: { network: newNetwork }
       });
       notifyStateChange();
-      setTimeout(() => {
-        loadData();
-      }, 300);
+      // Load tokens immediately for new network
+      loadTokensAndData();
     } catch (error) {
       console.error('Failed to switch network:', error);
     }
@@ -229,11 +266,11 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
           currentWalletName={currentWalletName}
           onClose={() => setShowAccountMenu(false)}
           onAccountSwitch={() => {
-            loadData();
+            loadTokensAndData();
             notifyStateChange();
           }}
           onWalletSwitch={() => {
-            loadData();
+            loadTokensAndData();
             notifyStateChange();
             setShowAccountMenu(false);
           }}
@@ -316,8 +353,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         {view === 'settings' ? (
           <SettingsView
             currentAddress={address}
-            onAccountSwitch={() => loadData()}
-            onWalletSwitch={() => loadData()}
+            onAccountSwitch={() => loadTokensAndData()}
+            onWalletSwitch={() => loadTokensAndData()}
             onStateChange={notifyStateChange}
             onClose={() => setView('tokens')}
           />
