@@ -1,19 +1,80 @@
-// This script runs in the page context and provides the window.ethereum object
-// It implements the EIP-1193 provider interface for dApp compatibility
+/**
+ * @file provider.ts
+ * @description EIP-1193 Web3 provider injected into the page context.
+ * 
+ * Creates the window.ethereum object that dApps use to interact with the wallet.
+ * Implements the standard EIP-1193 provider interface plus legacy methods for
+ * backward compatibility with older dApps.
+ * 
+ * @responsibilities
+ * - Provide window.ethereum object for dApp detection
+ * - Implement EIP-1193 request() method for RPC calls
+ * - Support legacy send() and sendAsync() methods
+ * - Emit provider events (accountsChanged, chainChanged, connect)
+ * - Track selected account and chain ID state
+ * - Announce via EIP-6963 for modern dApp discovery
+ * 
+ * @eip-compliance
+ * - EIP-1193: Ethereum Provider JavaScript API
+ * - EIP-6963: Multi Injected Provider Discovery
+ * 
+ * @example
+ * ```javascript
+ * // dApp usage:
+ * const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+ * const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+ * 
+ * window.ethereum.on('accountsChanged', (accounts) => {
+ *   console.log('Accounts changed:', accounts);
+ * });
+ * ```
+ */
 
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+/**
+ * EIP-1193 request arguments structure.
+ */
 interface RequestArguments {
+  /** JSON-RPC method name */
   method: string;
+  /** Optional method parameters */
   params?: unknown[] | object;
 }
 
+// ============================================================================
+// SimpleWalletProvider Class
+// ============================================================================
+
+/**
+ * EIP-1193 compliant Ethereum provider.
+ * Injected as window.ethereum for dApp compatibility.
+ */
 class SimpleWalletProvider {
+  /** Identifies this provider as Simple Wallet */
   public isSimpleWallet = true;
-  public isMetaMask = true; // Improve dApp compatibility checks
+  
+  /** MetaMask compatibility flag - helps with dApp detection */
+  public isMetaMask = true;
+  
+  /** Currently selected account address (null if not connected) */
   public selectedAddress: string | null = null;
+  
+  /** Current chain ID in hex format (e.g., '0x1' for mainnet) */
   public chainId: string | null = null;
+  
+  /** Auto-incrementing request ID for tracking responses */
   private requestId = 0;
+  
+  /** Map of pending request IDs to their resolve/reject callbacks */
   private pendingRequests = new Map<number, { resolve: Function; reject: Function }>();
 
+  /**
+   * Initializes the provider and sets up message listeners.
+   * Listens for responses and events from the content script.
+   */
   constructor() {
     // Listen for responses from content script
     window.addEventListener('message', (event) => {
@@ -44,7 +105,26 @@ class SimpleWalletProvider {
     });
   }
 
-  // Main request method (EIP-1193)
+  // ============================================================================
+  // EIP-1193 Methods
+  // ============================================================================
+
+  /**
+   * Main EIP-1193 request method for JSON-RPC calls.
+   * All wallet interactions go through this method.
+   * 
+   * @param args - Request arguments with method and optional params
+   * @returns Promise resolving to the RPC response
+   * @throws Error if request times out (60s) or is rejected
+   * 
+   * @example
+   * ```javascript
+   * const balance = await provider.request({
+   *   method: 'eth_getBalance',
+   *   params: ['0x...', 'latest']
+   * });
+   * ```
+   */
   async request(args: RequestArguments): Promise<any> {
     const id = ++this.requestId;
 
@@ -69,11 +149,23 @@ class SimpleWalletProvider {
     });
   }
 
-  // Legacy method support (for older dApps)
+  // ============================================================================
+  // Legacy Method Support
+  // ============================================================================
+
+  /**
+   * Legacy send method for older dApps.
+   * @deprecated Use request() instead
+   */
   async send(method: string, params?: any[]): Promise<any> {
     return this.request({ method, params });
   }
 
+  /**
+   * Legacy sendAsync method with callback pattern.
+   * Used by some older Web3.js versions.
+   * @deprecated Use request() instead
+   */
   async sendAsync(payload: any, callback: Function): Promise<void> {
     try {
       const result = await this.request({
@@ -86,7 +178,18 @@ class SimpleWalletProvider {
     }
   }
 
-  // Process specific result types
+  // ============================================================================
+  // Response Processing
+  // ============================================================================
+
+  /**
+   * Processes and normalizes results from the background script.
+   * Extracts relevant data and updates local state as needed.
+   * 
+   * @param result - Raw result from background script
+   * @returns Processed result suitable for dApp consumption
+   * @private
+   */
   private processResult(result: any): any {
     if (result.accounts) {
       const accounts = result.accounts;
@@ -111,9 +214,20 @@ class SimpleWalletProvider {
     return result;
   }
 
-  // Event emitter methods (simplified)
+  // ============================================================================
+  // Event Emitter Methods
+  // ============================================================================
+
+  /** Internal storage for event listeners */
   private listeners = new Map<string, Function[]>();
 
+  /**
+   * Registers an event listener.
+   * 
+   * @param event - Event name: 'accountsChanged', 'chainChanged', 'connect', 'disconnect'
+   * @param listener - Callback function for the event
+   * @returns this for chaining
+   */
   on(event: string, listener: Function): this {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, []);
@@ -122,6 +236,13 @@ class SimpleWalletProvider {
     return this;
   }
 
+  /**
+   * Removes an event listener.
+   * 
+   * @param event - Event name
+   * @param listener - Previously registered callback
+   * @returns this for chaining
+   */
   removeListener(event: string, listener: Function): this {
     const eventListeners = this.listeners.get(event);
     if (eventListeners) {
@@ -133,6 +254,12 @@ class SimpleWalletProvider {
     return this;
   }
 
+  /**
+   * Emits an event to all registered listeners.
+   * 
+   * @param event - Event name
+   * @param args - Arguments to pass to listeners
+   */
   emit(event: string, ...args: any[]): void {
     const eventListeners = this.listeners.get(event);
     if (eventListeners) {
@@ -141,35 +268,56 @@ class SimpleWalletProvider {
   }
 }
 
-// Inject the provider into window.ethereum
+// ============================================================================
+// Provider Installation
+// ============================================================================
+
+/**
+ * Injects the provider as window.ethereum if not already present.
+ * Announces via EIP-6963 for modern dApp discovery.
+ */
 if (!window.ethereum) {
   const provider = new SimpleWalletProvider();
+  
+  // Make window.ethereum read-only to prevent overwriting
   Object.defineProperty(window, 'ethereum', {
     value: provider,
     writable: false,
     configurable: false
   });
 
-  // Announce provider to the page
+  // Legacy event for provider detection
   window.dispatchEvent(new Event('ethereum#initialized'));
 
-   // EIP-6963 provider discovery
-   const info = {
-     uuid: 'simple-wallet-eip6963',
-     name: 'Simple Wallet',
-     icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>',
-     rdns: 'simple.wallet'
-   };
-   const announce = () => {
-     window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info, provider } }));
-   };
-   window.addEventListener('eip6963:requestProvider', announce);
-   announce();
+  /**
+   * EIP-6963 provider discovery.
+   * Allows dApps to discover multiple wallet providers.
+   */
+  const info = {
+    uuid: 'simple-wallet-eip6963',
+    name: 'Simple Wallet',
+    icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>',
+    rdns: 'simple.wallet'
+  };
+  
+  const announce = () => {
+    window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info, provider } }));
+  };
+  
+  window.addEventListener('eip6963:requestProvider', announce);
+  announce();
 
   console.log('Simple Wallet provider injected');
 }
 
-// TypeScript declarations
+// ============================================================================
+// TypeScript Global Declarations
+// ============================================================================
+
+/**
+ * Extends the global Window interface to include ethereum provider.
+ * Required for TypeScript to recognize window.ethereum.
+ */
 declare global {
   interface Window {
     ethereum?: SimpleWalletProvider;

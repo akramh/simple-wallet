@@ -1,13 +1,36 @@
+/**
+ * @fileoverview UI-agnostic wallet application service layer.
+ * 
+ * WalletAppService centralizes non-UI wallet operations so the same logic can
+ * be reused by different frontends (CLI, browser extension, mobile, etc.).
+ * 
+ * This service provides:
+ * - Wallet lifecycle management (create, import, load, save, delete)
+ * - Account management within HD wallets
+ * - Token registry management (built-in + user-added custom tokens)
+ * - Network switching with optional persistence
+ * - Portfolio queries and transaction sending
+ * 
+ * The service is initialized with a Wallet instance and configuration,
+ * then coordinates between the wallet core and token registry.
+ * 
+ * @module app-service
+ */
+
 import type { Config, Token, TokenRegistry, TokenMetadata } from './types/index.js';
 import { Wallet } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 
-// Options controlling how network changes are persisted.
+/**
+ * Options for network switching behavior.
+ */
 interface SetNetworkOptions {
+  /** Whether to persist the network change to config file (default: true) */
   persist?: boolean;
 }
 
+/** Wallet creation/import result */
 type WalletInfo = {
   address: string;
   mnemonic: string;
@@ -15,19 +38,54 @@ type WalletInfo = {
 };
 
 /**
- * WalletAppService centralizes non-UI wallet operations so the same logic can
- * be reused by different frontends (CLI, browser extension, mobile, etc.).
+ * UI-agnostic wallet application service.
+ * 
+ * Orchestrates wallet operations and token registry management.
+ * Both CLI (`src/index.ts`) and extension (`service-worker.ts`) instantiate
+ * this service with environment-specific adapters.
+ * 
+ * @example
+ * ```typescript
+ * const storage = new FileStorage();
+ * const wallet = new Wallet(config, storage);
+ * const service = new WalletAppService(wallet, config, { storage });
+ * await service.initialize();
+ * 
+ * const info = service.createWallet(password);
+ * service.saveWallet('MyWallet');
+ * ```
  */
 export class WalletAppService {
+  /** Current network configuration */
   config: Config & { network: string };
+  /** Core wallet instance for blockchain operations */
   wallet: Wallet;
+  /** Path to built-in token list file */
   tokenListPath: string;
+  /** Path to user-added custom tokens file */
   customTokenPath: string;
+  /** Path to config file for persistence */
   configPath: string;
+  /** Built-in token registry (read-only, from bundled JSON) */
   builtInTokens: TokenRegistry;
+  /** User-added custom tokens (persisted on modification) */
   customTokens: TokenRegistry;
+  /** Storage adapter for persistence */
   storage: StorageAdapter;
 
+  /**
+   * Create a new WalletAppService instance.
+   * 
+   * @param wallet - Initialized Wallet instance
+   * @param config - Application configuration with current network
+   * @param options - Service configuration options
+   * @param options.tokenListPath - Path to built-in tokens JSON (default: 'tokens.json')
+   * @param options.customTokenPath - Path to custom tokens JSON (default: 'tokens-user.json')
+   * @param options.configPath - Path to config JSON (default: 'config.json')
+   * @param options.storage - Storage adapter (default: MemoryStorage)
+   * @param options.providerFactory - Provider factory to inject into wallet
+   * @param options.builtInTokens - Pre-loaded built-in tokens (for bundled assets)
+   */
   constructor(
     wallet: Wallet,
     config: Config & { network: string },
@@ -56,67 +114,148 @@ export class WalletAppService {
     this.customTokens = this.safeReadRegistry(this.customTokenPath);
   }
 
+  /**
+   * Initialize the service by setting up the wallet's RPC provider.
+   * Must be called before any blockchain operations.
+   */
   async initialize(): Promise<void> {
     await this.wallet.initialize();
   }
 
+  /**
+   * Create a new HD wallet with random mnemonic.
+   * @param password - Master password for encryption
+   * @returns Wallet info including address and mnemonic
+   */
   createWallet(password: string): WalletInfo {
     return this.wallet.createNewWallet(password);
   }
 
+  /**
+   * Import a wallet from existing mnemonic phrase.
+   * @param mnemonic - BIP-39 mnemonic (12-24 words)
+   * @param password - Master password for encryption
+   * @param accountIndex - BIP-44 account index (default: 0)
+   * @returns Wallet info with derived address
+   */
   importWallet(mnemonic: string, password: string, accountIndex: number = 0): WalletInfo {
     return this.wallet.importWallet(mnemonic, password, accountIndex);
   }
 
+  /**
+   * Load and decrypt a wallet from storage.
+   * @param walletName - Name of saved wallet
+   * @param password - Master password
+   * @param accountIndex - Optional account index override
+   * @returns Wallet info or null if not found
+   */
   loadWallet(walletName: string, password: string, accountIndex: number | null = null): WalletInfo | null {
     return this.wallet.loadWallet(walletName, password, accountIndex);
   }
 
+  /**
+   * Save the current wallet to persistent storage.
+   * @param walletName - Optional name (defaults to address prefix)
+   * @returns Name used for saving
+   */
   saveWallet(walletName?: string): string {
     return this.wallet.saveWallet(walletName);
   }
 
+  /**
+   * Delete a wallet from storage.
+   * @param walletName - Name of wallet to delete
+   * @returns True if deletion succeeded
+   */
   deleteWallet(walletName: string): boolean {
     return this.wallet.deleteWallet(walletName);
   }
 
+  /**
+   * Get all accounts for a wallet.
+   * @param walletName - Wallet name
+   * @returns Map of account indices to addresses
+   */
   getWalletAccounts(walletName: string): Record<number, { address: string; createdAt: string }> {
     return this.wallet.getWalletAccounts(walletName);
   }
 
+  /**
+   * Get all saved wallets.
+   * @returns Map of wallet names to encrypted data
+   */
   getAllWallets(): Record<string, any> {
     return this.wallet.getAllWallets();
   }
 
+  /**
+   * Switch to a different account within the wallet.
+   * @param index - BIP-44 account index
+   * @returns New account info
+   */
   switchAccount(index: number): { address: string; accountIndex: number } {
     return this.wallet.switchAccount(index);
   }
 
+  /**
+   * Get the current account index.
+   * @returns Current BIP-44 account index
+   */
   getCurrentAccountIndex(): number {
     return this.wallet.getCurrentAccountIndex();
   }
 
+  /**
+   * Get address for a specific account index.
+   * @param index - BIP-44 account index
+   * @returns Account address
+   */
   getAccountAddress(index: number): string {
     return this.wallet.getAccountAddress(index);
   }
 
+  /**
+   * Get the current wallet address.
+   * @returns Checksummed address
+   */
   getAddress(): string {
     return this.wallet.getAddress();
   }
 
+  /**
+   * Get native currency balance.
+   * @returns Balance in ETH
+   */
   getBalance(): Promise<string> {
     return this.wallet.getBalance();
   }
 
+  /**
+   * Get portfolio balances for all tokens on a network.
+   * @param networkKey - Network identifier
+   * @returns Array of token balances
+   */
   async getPortfolioForNetwork(networkKey: string): Promise<{ token: Token; balance: string; error?: string }[]> {
     const tokens = this.getTokensForNetwork(networkKey);
     return this.wallet.getPortfolio(tokens);
   }
 
+  /**
+   * Send a token or native currency.
+   * @param token - Token to send
+   * @param toAddress - Recipient address
+   * @param amount - Amount to send
+   * @returns Transaction receipt
+   */
   async sendToken(token: Token, toAddress: string, amount: string): Promise<{ hash: string; blockNumber: number; gasUsed: string }> {
     return this.wallet.sendToken(token, toAddress, amount);
   }
 
+  /**
+   * Fetch on-chain metadata for an ERC-20 token.
+   * @param address - Token contract address
+   * @returns Token metadata
+   */
   async getTokenMetadata(address: string): Promise<TokenMetadata> {
     return this.wallet.getTokenMetadata(address);
   }
@@ -137,14 +276,29 @@ export class WalletAppService {
     return this.wallet.getMnemonic(password);
   }
 
+  /**
+   * Safely read a token registry from storage.
+   * @param path - Storage path
+   * @returns Token registry or empty object
+   * @private
+   */
   private safeReadRegistry(path: string): TokenRegistry {
     return this.storage.readJSON<TokenRegistry>(path, {});
   }
 
+  /**
+   * Persist custom tokens to storage.
+   * @private
+   */
   private saveCustomTokens(): void {
     this.storage.writeJSON(this.customTokenPath, this.customTokens);
   }
 
+  /**
+   * Get the native token definition for a network.
+   * @param networkKey - Network identifier
+   * @returns Native token (ETH, MATIC, etc.)
+   */
   getNativeToken(networkKey: string): Token {
     const networkConfig = this.config.networks[networkKey] || {};
     const symbol = networkConfig.nativeSymbol || 'ETH';
@@ -158,6 +312,13 @@ export class WalletAppService {
     };
   }
 
+  /**
+   * Get all tokens (native + ERC-20) for a network.
+   * Merges built-in and custom tokens, deduplicating by address.
+   * 
+   * @param networkKey - Network identifier
+   * @returns Array of tokens with native first
+   */
   getTokensForNetwork(networkKey: string): Token[] {
     const tokens: Token[] = [];
     const nativeToken = this.getNativeToken(networkKey);
@@ -190,15 +351,33 @@ export class WalletAppService {
     return tokens;
   }
 
+  /**
+   * Get user-added custom tokens for a network.
+   * @param networkKey - Network identifier
+   * @returns Array of custom tokens
+   */
   getCustomTokens(networkKey: string): Token[] {
     return this.customTokens[networkKey] || [];
   }
 
+  /**
+   * Find a token by symbol on a network.
+   * @param networkKey - Network identifier
+   * @param symbol - Token symbol (case-insensitive)
+   * @returns Token if found, undefined otherwise
+   */
   findTokenBySymbol(networkKey: string, symbol: string): Token | undefined {
     const tokens = this.getTokensForNetwork(networkKey);
     return tokens.find(t => t.symbol.toLowerCase() === symbol.toLowerCase());
   }
 
+  /**
+   * Add or update a custom ERC-20 token for a network.
+   * Token is persisted to custom tokens storage.
+   * 
+   * @param networkKey - Network identifier
+   * @param token - Token definition to add
+   */
   addCustomToken(networkKey: string, token: Token): void {
     if (!this.customTokens[networkKey]) {
       this.customTokens[networkKey] = [];
@@ -225,6 +404,12 @@ export class WalletAppService {
     this.saveCustomTokens();
   }
 
+  /**
+   * Remove a custom token from a network.
+   * 
+   * @param networkKey - Network identifier
+   * @param address - Token contract address to remove
+   */
   removeCustomToken(networkKey: string, address: string): void {
     if (!this.customTokens[networkKey]) return;
     this.customTokens[networkKey] = this.customTokens[networkKey].filter(
@@ -233,6 +418,14 @@ export class WalletAppService {
     this.saveCustomTokens();
   }
 
+  /**
+   * Switch to a different blockchain network.
+   * Optionally persists the change to config file.
+   * 
+   * @param networkKey - Network identifier
+   * @param options - Persistence options
+   * @param options.persist - Whether to save to config file (default: true)
+   */
   async setNetwork(networkKey: string, options: SetNetworkOptions = {}): Promise<void> {
     const persist = options.persist ?? true;
     this.config.network = networkKey;

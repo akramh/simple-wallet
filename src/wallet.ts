@@ -1,9 +1,31 @@
+/**
+ * @fileoverview Core HD wallet implementation for Ethereum and EVM-compatible chains.
+ * 
+ * This module provides the main Wallet class that handles:
+ * - BIP-44 hierarchical deterministic (HD) wallet creation and import
+ * - Mnemonic phrase encryption/decryption with AES-256-GCM
+ * - ETH and ERC-20 token balance queries
+ * - Transaction sending for native currency and ERC-20 transfers
+ * - Multi-account support within a single seed phrase
+ * - RPC failover across multiple endpoints
+ * - Token metadata caching to reduce RPC calls
+ * 
+ * The wallet uses ethers.js v6 for all blockchain interactions and
+ * supports injectable storage and provider factories for testing.
+ * 
+ * @module wallet
+ */
+
 import { ethers } from 'ethers';
 import { encryptMnemonic, decryptMnemonic, validateMnemonic } from './crypto-utils.js';
 import type { Config, TokenMetadata, Token, PortfolioToken } from './types/index.js';
 import type { StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 
+/**
+ * Minimal ERC-20 ABI for token interactions.
+ * Includes standard read functions and transfer capability.
+ */
 const ERC20_ABI = [
   'function name() view returns (string)',
   'function symbol() view returns (string)',
@@ -14,69 +36,153 @@ const ERC20_ABI = [
   'function approve(address spender, uint256 value) returns (bool)'
 ];
 
+// ============================================================================
+// Internal Type Definitions
+// ============================================================================
+
+/** Wallet creation/import result with sensitive data */
 interface WalletInfo {
+  /** Checksummed Ethereum address (lowercase) */
   address: string;
+  /** BIP-39 mnemonic phrase (sensitive - display once then discard) */
   mnemonic: string;
+  /** Private key hex string (sensitive) */
   privateKey: string;
 }
 
+/** Account switch result */
 interface AccountInfo {
+  /** Account address */
   address: string;
+  /** BIP-44 account index */
   accountIndex: number;
 }
 
+/** Transaction receipt after confirmation */
 interface TransactionReceipt {
+  /** Transaction hash */
   hash: string;
+  /** Block number where mined */
   blockNumber: number;
+  /** Actual gas consumed */
   gasUsed: string;
 }
 
+/** Encrypted wallet storage format */
 interface WalletData {
+  /** AES-256-GCM encrypted mnemonic */
   encryptedMnemonic: string;
+  /** PBKDF2 salt */
   salt: string;
+  /** AES initialization vector */
   iv: string;
+  /** GCM authentication tag */
   authTag: string;
+  /** Wallet creation timestamp */
   createdAt: string;
+  /** Map of account indices to addresses */
   accounts: Record<number, { address: string; createdAt: string }>;
+  /** Currently active account index */
   currentAccountIndex: number;
 }
 
+/** wallets.json file structure */
 interface WalletsFile {
   [walletName: string]: WalletData;
 }
 
+/** Encrypted wallet export format */
 interface ExportData {
+  /** Export format version */
   version: string;
+  /** Export timestamp */
   exportedAt: string;
+  /** Wallet data including name */
   wallet: {
     name: string;
   } & WalletData;
 }
 
+/** Portfolio balance query result */
 interface PortfolioResult {
+  /** Token definition */
   token: Token;
+  /** Formatted balance string */
   balance: string;
+  /** Error message if balance fetch failed */
   error?: string;
 }
 
+// ============================================================================
+// Wallet Class
+// ============================================================================
+
+/**
+ * Core HD wallet implementation for Ethereum and EVM-compatible chains.
+ * 
+ * Features:
+ * - BIP-44 HD wallet with multiple account support
+ * - Encrypted mnemonic storage with AES-256-GCM
+ * - RPC failover across multiple endpoints
+ * - ETH and ERC-20 token operations
+ * - Token metadata caching
+ * 
+ * @example
+ * ```typescript
+ * const storage = new FileStorage();
+ * const wallet = new Wallet(config, storage, createProviderFactory());
+ * await wallet.initialize();
+ * 
+ * // Create new wallet
+ * const info = wallet.createNewWallet(password);
+ * console.log('Address:', info.address);
+ * 
+ * // Check balance
+ * const balance = await wallet.getBalance();
+ * ```
+ */
 export class Wallet {
+  /** Current network configuration */
   config: Config;
+  /** Active ethers HD wallet instance */
   wallet: ethers.HDNodeWallet | null;
+  /** Current JSON-RPC provider */
   provider: ethers.JsonRpcProvider | null;
+  /** Provider cache keyed by network */
   providers: Record<string, ethers.JsonRpcProvider>;
+  /** Current RPC URL index per network for failover */
   rpcIndex: Record<string, number>;
+  /** Decrypted mnemonic (in-memory only while unlocked) */
   mnemonic: string | null;
+  /** Encrypted mnemonic ciphertext */
   encryptedMnemonic: string | null;
+  /** PBKDF2 salt for key derivation */
   salt: string | null;
+  /** AES-GCM initialization vector */
   iv: string | null;
+  /** GCM authentication tag */
   authTag: string | null;
+  /** Current BIP-44 account index */
   currentAccountIndex: number;
+  /** Token metadata cache to reduce RPC calls */
   tokenMetadataCache: Record<string, TokenMetadata>;
+  /** ethers Provider class reference (for testing override) */
   ProviderClass: typeof ethers.JsonRpcProvider;
+  /** ethers Contract class reference (for testing override) */
   ContractClass: typeof ethers.Contract;
+  /** Provider factory for creating RPC connections */
   providerFactory: ProviderFactory;
+  /** Storage adapter for persistence */
   storage: StorageAdapter;
 
+  /**
+   * Create a new Wallet instance.
+   * Call initialize() after construction to set up the provider.
+   * 
+   * @param config - Network configuration
+   * @param storage - Storage adapter for wallet persistence
+   * @param providerFactory - Optional factory for creating providers (useful for testing)
+   */
   constructor(config: Config, storage: StorageAdapter, providerFactory?: ProviderFactory) {
     this.config = config;
     this.storage = storage;
@@ -99,7 +205,15 @@ export class Wallet {
   }
 
   /**
-   * Retry RPC requests with exponential backoff
+   * Execute an RPC operation with exponential backoff retry.
+   * Includes a 30-second timeout per attempt.
+   * 
+   * @param operation - Async function to execute
+   * @param maxRetries - Maximum retry attempts (default: 3)
+   * @param baseDelay - Initial delay in ms, doubles each retry (default: 1000)
+   * @returns Result of the operation
+   * @throws Last error after all retries exhausted
+   * @private
    */
   async _retryRpcRequest<T>(operation: () => Promise<T>, maxRetries: number = 3, baseDelay: number = 1000): Promise<T> {
     let lastError: Error | undefined;
@@ -126,10 +240,22 @@ export class Wallet {
     throw lastError;
   }
 
+  /**
+   * Initialize the wallet by establishing RPC provider connection.
+   * Must be called before any blockchain operations.
+   */
   async initialize(): Promise<void> {
     await this._ensureProvider(this.config.network);
   }
 
+  /**
+   * Get list of RPC URLs for a network.
+   * Supports both single URL and array configurations.
+   * 
+   * @param networkKey - Network identifier from config
+   * @returns Array of RPC URLs (deduplicated)
+   * @private
+   */
   _getRpcList(networkKey: string): string[] {
     const networkConfig = this.config.networks[networkKey];
     if (!networkConfig) return [];
@@ -144,6 +270,16 @@ export class Wallet {
     return [...new Set(urls)];
   }
 
+  /**
+   * Ensure a working provider exists for the network.
+   * Tries each RPC URL in sequence until one works.
+   * Uses provider cache to avoid redundant connections.
+   * 
+   * @param networkKey - Network identifier
+   * @returns Connected provider
+   * @throws Error if all RPC endpoints fail
+   * @private
+   */
   async _ensureProvider(networkKey: string): Promise<ethers.JsonRpcProvider> {
     const rpcList = this._getRpcList(networkKey);
     if (!rpcList.length) {
@@ -176,6 +312,13 @@ export class Wallet {
     throw new Error(`All RPC endpoints failed for ${networkKey}: ${lastError?.message || 'unknown error'}`);
   }
 
+  /**
+   * Switch to a different blockchain network.
+   * Updates provider and reconnects wallet if loaded.
+   * 
+   * @param networkKey - Network identifier from config
+   * @throws Error if network not found in configuration
+   */
   async setNetwork(networkKey: string): Promise<void> {
     const networkConfig = this.config.networks[networkKey];
     if (!networkConfig) {
@@ -190,6 +333,13 @@ export class Wallet {
     }
   }
 
+  /**
+   * Create a new HD wallet with random mnemonic.
+   * Encrypts the mnemonic with the provided password.
+   * 
+   * @param password - Master password for mnemonic encryption
+   * @returns Wallet info including address, mnemonic (display once!), and private key
+   */
   createNewWallet(password: string): WalletInfo {
     const randomWallet = ethers.Wallet.createRandom();
     this.mnemonic = randomWallet.mnemonic!.phrase;
@@ -210,6 +360,16 @@ export class Wallet {
     };
   }
 
+  /**
+   * Import an existing wallet from a BIP-39 mnemonic phrase.
+   * Validates the mnemonic format and encrypts it.
+   * 
+   * @param mnemonic - Space-separated BIP-39 mnemonic (12-24 words)
+   * @param password - Master password for encryption
+   * @param accountIndex - BIP-44 account index to use (default: 0)
+   * @returns Wallet info with derived address
+   * @throws Error if mnemonic is invalid
+   */
   importWallet(mnemonic: string, password: string, accountIndex: number = 0): WalletInfo {
     const normalizedMnemonic = mnemonic.trim().toLowerCase();
 
@@ -239,6 +399,15 @@ export class Wallet {
     }
   }
 
+  /**
+   * Derive an HD wallet account at a specific BIP-44 index.
+   * Uses path: m/44'/60'/0'/0/{index}
+   * 
+   * @param index - BIP-44 account index
+   * @returns HD wallet for the account (not connected to provider)
+   * @throws Error if no mnemonic is loaded
+   * @private
+   */
   _deriveAccount(index: number): ethers.HDNodeWallet {
     if (!this.mnemonic) {
       throw new Error('No mnemonic available');
@@ -247,6 +416,13 @@ export class Wallet {
     return ethers.HDNodeWallet.fromPhrase(this.mnemonic, "", path);
   }
 
+  /**
+   * Switch to a different account within the same wallet.
+   * 
+   * @param accountIndex - BIP-44 account index to switch to
+   * @returns New account info with address
+   * @throws Error if no mnemonic is loaded
+   */
   switchAccount(accountIndex: number): AccountInfo {
     if (!this.mnemonic) {
       throw new Error('No mnemonic loaded');
@@ -259,6 +435,13 @@ export class Wallet {
     };
   }
 
+  /**
+   * Get the address for a specific account index without switching.
+   * 
+   * @param index - BIP-44 account index
+   * @returns Checksummed address (lowercase)
+   * @throws Error if no mnemonic is loaded
+   */
   getAccountAddress(index: number): string {
     if (!this.mnemonic) {
       throw new Error('No mnemonic loaded');
@@ -270,11 +453,19 @@ export class Wallet {
   /**
    * Return the currently selected account index.
    * Useful for UI components that need to highlight the active account.
+   * 
+   * @returns Current BIP-44 account index
    */
   getCurrentAccountIndex(): number {
     return this.currentAccountIndex;
   }
 
+  /**
+   * Get the native currency balance (ETH) for the current account.
+   * 
+   * @returns Balance in ETH as string with full precision
+   * @throws Error if no wallet loaded or network timeout
+   */
   async getBalance(): Promise<string> {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
@@ -295,6 +486,12 @@ export class Wallet {
     }
   }
 
+  /**
+   * Get the current wallet's address.
+   * 
+   * @returns Checksummed address (lowercase)
+   * @throws Error if no wallet loaded
+   */
   getAddress(): string {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
@@ -302,6 +499,15 @@ export class Wallet {
     return this.wallet.address.toLowerCase();
   }
 
+  /**
+   * Send native currency (ETH) to another address.
+   * Includes balance validation and gas estimation.
+   * 
+   * @param toAddress - Recipient address (0x-prefixed, 42 chars)
+   * @param amount - Amount in ETH as decimal string (e.g., "0.1")
+   * @returns Transaction receipt after confirmation
+   * @throws Error if insufficient balance, invalid address, or transaction fails
+   */
   async sendTransaction(toAddress: string, amount: string): Promise<TransactionReceipt> {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
@@ -388,11 +594,27 @@ export class Wallet {
     }
   }
 
+  /**
+   * Create an ERC-20 contract instance.
+   * 
+   * @param address - Token contract address
+   * @param withSigner - If true, use wallet for signing; if false, use provider (read-only)
+   * @returns ethers Contract instance
+   * @private
+   */
   _getTokenContract(address: string, withSigner: boolean = true): ethers.Contract {
     const target = withSigner ? this.wallet : this.provider;
     return new this.ContractClass(address, ERC20_ABI, target);
   }
 
+  /**
+   * Fetch on-chain metadata for an ERC-20 token.
+   * Results are cached to minimize RPC calls.
+   * 
+   * @param address - Token contract address
+   * @returns Token metadata (symbol, name, decimals)
+   * @throws Error if contract doesn't implement ERC-20 metadata
+   */
   async getTokenMetadata(address: string): Promise<TokenMetadata> {
     if (!address) {
       throw new Error('Token address is required');
@@ -425,6 +647,13 @@ export class Wallet {
     }
   }
 
+  /**
+   * Resolve token decimals, using cached metadata if available.
+   * 
+   * @param token - Token definition
+   * @returns Number of decimal places
+   * @private
+   */
   async _resolveTokenDecimals(token: Token): Promise<number> {
     if (typeof token.decimals === 'number') {
       return token.decimals;
@@ -434,6 +663,13 @@ export class Wallet {
     return metadata.decimals;
   }
 
+  /**
+   * Get the balance of a specific token for the current account.
+   * 
+   * @param token - Token definition (native or ERC-20)
+   * @returns Balance as formatted string with proper decimals
+   * @throws Error if no wallet loaded or RPC fails
+   */
   async getTokenBalance(token: Token): Promise<string> {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
@@ -461,6 +697,12 @@ export class Wallet {
     }
   }
 
+  /**
+   * Get balances for multiple tokens in parallel.
+   * 
+   * @param tokens - Array of token definitions
+   * @returns Array of results with balance or error for each token
+   */
   async getPortfolio(tokens: Token[] = []): Promise<PortfolioResult[]> {
     const promises = tokens.map(async (token): Promise<PortfolioResult> => {
       try {
@@ -474,6 +716,16 @@ export class Wallet {
     return Promise.all(promises);
   }
 
+  /**
+   * Send an ERC-20 token or native currency.
+   * Validates gas availability for token transfers.
+   * 
+   * @param token - Token to send
+   * @param toAddress - Recipient address
+   * @param amount - Amount in token units (e.g., "100" for 100 USDC)
+   * @returns Transaction receipt
+   * @throws Error if insufficient balance or gas
+   */
   async sendToken(token: Token, toAddress: string, amount: string): Promise<TransactionReceipt> {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
@@ -535,6 +787,14 @@ export class Wallet {
     }
   }
 
+  /**
+   * Save the current wallet to persistent storage.
+   * Creates or updates wallet entry in wallets.json.
+   * 
+   * @param walletName - Optional name for the wallet (defaults to address prefix)
+   * @returns The wallet name used for saving
+   * @throws Error if wallet not properly initialized
+   */
   saveWallet(walletName?: string): string {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
@@ -574,6 +834,15 @@ export class Wallet {
     return walletName;
   }
 
+  /**
+   * Load and decrypt a wallet from storage.
+   * 
+   * @param walletName - Name of the wallet to load
+   * @param password - Master password for decryption
+   * @param accountIndex - Optional account index to load (defaults to stored index)
+   * @returns Wallet info if successful, null if wallet not found
+   * @throws Error if password is incorrect
+   */
   loadWallet(walletName: string, password: string, accountIndex: number | null = null): WalletInfo | null {
     try {
       const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
@@ -623,6 +892,12 @@ export class Wallet {
     }
   }
 
+  /**
+   * Get all accounts associated with a wallet.
+   * 
+   * @param walletName - Name of the wallet
+   * @returns Map of account indices to addresses and creation dates
+   */
   getWalletAccounts(walletName: string): Record<number, { address: string; createdAt: string }> {
     try {
       const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
@@ -635,6 +910,11 @@ export class Wallet {
     }
   }
 
+  /**
+   * Get all saved wallets from storage.
+   * 
+   * @returns Map of wallet names to their encrypted data
+   */
   getAllWallets(): WalletsFile {
     try {
       const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
@@ -644,6 +924,12 @@ export class Wallet {
     }
   }
 
+  /**
+   * Delete a wallet from storage.
+   * 
+   * @param walletName - Name of the wallet to delete
+   * @returns True if deletion succeeded
+   */
   deleteWallet(walletName: string): boolean {
     try {
       const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
@@ -655,6 +941,15 @@ export class Wallet {
     }
   }
 
+  /**
+   * Export a wallet to a backup file.
+   * The export includes encrypted mnemonic and all account data.
+   * 
+   * @param walletName - Name of wallet to export
+   * @param exportPath - File path for the backup
+   * @returns True if export succeeded
+   * @throws Error if wallet not found or write fails
+   */
   exportWallet(walletName: string, exportPath: string): boolean {
     try {
       const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
@@ -679,6 +974,15 @@ export class Wallet {
     }
   }
 
+  /**
+   * Import a wallet from a backup file.
+   * Validates the password matches before importing.
+   * 
+   * @param importPath - Path to the backup file
+   * @param password - Password for the backup
+   * @returns Name assigned to the imported wallet
+   * @throws Error if file invalid or password incorrect
+   */
   importFromBackup(importPath: string, password: string): string {
     try {
       const fileContents = this.storage.readFile(importPath);
@@ -731,6 +1035,14 @@ export class Wallet {
     }
   }
 
+  /**
+   * Get the private key for the current account.
+   * Requires password verification for security.
+   * 
+   * @param password - Master password to verify
+   * @returns Private key hex string
+   * @throws Error if password incorrect or no wallet loaded
+   */
   getPrivateKey(password: string): string {
     if (!this.wallet) {
       throw new Error('No wallet loaded');
@@ -745,6 +1057,14 @@ export class Wallet {
     return this.wallet.privateKey;
   }
 
+  /**
+   * Get the mnemonic phrase for the wallet.
+   * Requires password verification for security.
+   * 
+   * @param password - Master password to verify
+   * @returns BIP-39 mnemonic phrase
+   * @throws Error if password incorrect or no wallet loaded
+   */
   getMnemonic(password: string): string {
     if (!this.encryptedMnemonic || !this.salt || !this.iv || !this.authTag) {
       throw new Error('No encrypted wallet loaded');

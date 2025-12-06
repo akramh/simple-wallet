@@ -1,20 +1,61 @@
-// Content script that injects the Web3 provider into the page
-// This runs in an isolated context and communicates with the page via window.postMessage
+/**
+ * @file injected.ts
+ * @description Content script that bridges page context and extension context.
+ * 
+ * This script runs in an isolated content script context and handles communication
+ * between the injected Web3 provider (provider.ts) running in the page context
+ * and the background service worker.
+ * 
+ * @responsibilities
+ * - Inject provider.ts script into the page's DOM
+ * - Relay messages from page to background service worker
+ * - Forward provider events from background to page
+ * - Map JSON-RPC method names to internal message types
+ * 
+ * @message-flow
+ * ```
+ * dApp → window.ethereum.request()
+ *      → provider.ts (page context, postMessage)
+ *      → injected.ts (content script, chrome.runtime.sendMessage)
+ *      → service-worker.ts (background)
+ *      → response flows back through same path
+ * ```
+ * 
+ * @security
+ * - Validates message source (same window only)
+ * - Filters for our specific message types
+ * - Uses chrome.runtime for secure extension communication
+ */
 
-// Inject the provider script into the page context
+// ============================================================================
+// Provider Script Injection
+// ============================================================================
+
+/**
+ * Injects the Web3 provider script into the page context.
+ * The provider script creates window.ethereum for dApp compatibility.
+ * Script is removed from DOM after injection to keep the page clean.
+ */
 const script = document.createElement('script');
 script.src = chrome.runtime.getURL('content/provider.js');
 script.onload = function() {
-  // Remove script after injection
+  // Remove script element after execution (provider persists in memory)
   if (script.parentNode) {
     script.parentNode.removeChild(script);
   }
 };
 (document.head || document.documentElement).appendChild(script);
 
-// Listen for messages from the injected provider
+// ============================================================================
+// Page → Background Message Relay
+// ============================================================================
+
+/**
+ * Listens for messages from the injected provider in the page context.
+ * Forwards wallet requests to the background service worker.
+ */
 window.addEventListener('message', async (event) => {
-  // Only accept messages from the same window
+  // Security: Only accept messages from the same window
   if (event.source !== window) return;
 
   const { type, id, method, params } = event.data;
@@ -52,7 +93,14 @@ window.addEventListener('message', async (event) => {
   }
 });
 
-// Forward provider events from background to the page provider
+// ============================================================================
+// Background → Page Event Relay
+// ============================================================================
+
+/**
+ * Forwards provider events from background to the page provider.
+ * Events include: accountsChanged, chainChanged, connect, disconnect.
+ */
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'PROVIDER_EVENT') {
     window.postMessage({
@@ -63,7 +111,17 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-// Map JSON-RPC methods to background message types
+// ============================================================================
+// JSON-RPC Method Mapping
+// ============================================================================
+
+/**
+ * Maps standard JSON-RPC method names to internal message types.
+ * Unmapped methods are routed to GENERIC_RPC for direct provider passthrough.
+ * 
+ * @param method - JSON-RPC method name (e.g., 'eth_accounts')
+ * @returns Internal message type (e.g., 'ETH_ACCOUNTS')
+ */
 function mapMethodToBackgroundType(method: string): string {
   const methodMap: Record<string, string> = {
     'eth_accounts': 'ETH_ACCOUNTS',

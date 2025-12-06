@@ -1,23 +1,73 @@
+/**
+ * @fileoverview Cryptographic utilities for wallet encryption and data protection.
+ * 
+ * This module provides high-level encryption functions for securing wallet data,
+ * specifically mnemonic phrases. It uses AES-256-GCM encryption with PBKDF2 key
+ * derivation following industry best practices.
+ * 
+ * Security parameters:
+ * - Algorithm: AES-256-GCM (authenticated encryption)
+ * - Key derivation: PBKDF2-HMAC-SHA256 with 100,000 iterations
+ * - Salt: 256-bit random value (unique per encryption)
+ * - IV: 128-bit random value (unique per encryption)
+ * 
+ * The module supports swappable crypto backends via setCryptoAdapter() to enable
+ * browser compatibility (WebCrypto) alongside Node.js (crypto module).
+ * 
+ * @module crypto-utils
+ */
+
 import crypto from 'crypto';
 import fs from 'fs';
 import type { EncryptionResult } from './types/index.js';
 import type { CryptoAdapter } from './crypto-adapter.js';
 import { createNodeCryptoAdapter } from './crypto-adapter.js';
 
-// Constants - Industry standard encryption parameters
+// ============================================================================
+// Encryption Constants
+// ============================================================================
+
+/** AES-256-GCM provides authenticated encryption with associated data */
 const ALGORITHM = 'aes-256-gcm';
-const KEY_LENGTH = 32; // 256 bits
-const IV_LENGTH = 16; // 128 bits
-const SALT_LENGTH = 32; // 256 bits
-const PBKDF2_ITERATIONS = 100000; // Industry standard (100k iterations)
+/** 256-bit key for AES-256 */
+const KEY_LENGTH = 32;
+/** 128-bit IV as recommended for GCM mode */
+const IV_LENGTH = 16;
+/** 256-bit salt for PBKDF2 key derivation */
+const SALT_LENGTH = 32;
+/** Industry standard iteration count for PBKDF2 (balance of security and UX) */
+const PBKDF2_ITERATIONS = 100000;
+/** SHA-256 digest for PBKDF2 */
 const PBKDF2_DIGEST = 'sha256';
 
+// ============================================================================
+// Crypto Adapter Management
+// ============================================================================
+
+/** Current crypto adapter instance */
 let adapter: CryptoAdapter = createNodeCryptoAdapter();
 
+/**
+ * Replace the crypto adapter with a custom implementation.
+ * Call this to switch from Node.js crypto to WebCrypto in browser environments.
+ * 
+ * @param custom - CryptoAdapter implementation to use
+ * 
+ * @example
+ * ```typescript
+ * import { createWebCryptoAdapter } from './crypto-adapter.js';
+ * setCryptoAdapter(createWebCryptoAdapter());
+ * ```
+ */
 export function setCryptoAdapter(custom: CryptoAdapter): void {
   adapter = custom;
 }
 
+/**
+ * Get the current crypto adapter.
+ * @returns Currently configured CryptoAdapter instance
+ * @private
+ */
 function getCrypto(): CryptoAdapter {
   return adapter;
 }
@@ -33,8 +83,23 @@ interface WalletData {
   [key: string]: any;
 }
 
+// ============================================================================
+// Password Validation
+// ============================================================================
+
 /**
- * Validates password meets minimum requirements
+ * Validate that a password meets minimum security requirements.
+ * Currently requires at least 8 characters.
+ * 
+ * @param password - Password string to validate
+ * @returns True if password meets requirements, false otherwise
+ * 
+ * @example
+ * ```typescript
+ * if (!validatePasswordLength(password)) {
+ *   throw new Error('Password must be at least 8 characters');
+ * }
+ * ```
  */
 export function validatePasswordLength(password: string): boolean {
   if (!password || typeof password !== 'string') {
@@ -43,15 +108,27 @@ export function validatePasswordLength(password: string): boolean {
   return password.length >= 8;
 }
 
+// ============================================================================
+// Key Derivation
+// ============================================================================
+
 /**
- * Generates a random salt
+ * Generate a cryptographically secure random salt.
+ * Used as input to PBKDF2 key derivation.
+ * 
+ * @returns Hex-encoded 256-bit random salt
  */
 export function generateSalt(): string {
   return Buffer.from(getCrypto().randomBytes(SALT_LENGTH)).toString('hex');
 }
 
 /**
- * Derives encryption key from password and salt using PBKDF2
+ * Derive an encryption key from a password using PBKDF2.
+ * Uses HMAC-SHA256 with 100,000 iterations for brute-force resistance.
+ * 
+ * @param password - User's password
+ * @param saltHex - Hex-encoded salt (from generateSalt())
+ * @returns 256-bit derived key as Buffer
  */
 export function deriveKey(password: string, saltHex: string): Buffer {
   const salt = Buffer.from(saltHex, 'hex');
@@ -64,8 +141,23 @@ export function deriveKey(password: string, saltHex: string): Buffer {
   ) as any);
 }
 
+// ============================================================================
+// Encryption/Decryption Functions
+// ============================================================================
+
 /**
- * Encrypts data using AES-256-GCM
+ * Encrypt plaintext data using AES-256-GCM.
+ * Generates a unique salt and IV for each encryption operation.
+ * 
+ * @param plaintext - Data to encrypt (typically a mnemonic phrase)
+ * @param password - User's password for key derivation
+ * @returns Object containing encrypted data (format: "iv:authTag:ciphertext") and salt
+ * 
+ * @example
+ * ```typescript
+ * const { encrypted, salt } = encryptData(mnemonic, password);
+ * // Store encrypted and salt together
+ * ```
  */
 export function encryptData(plaintext: string, password: string): LegacyEncryptionResult {
   // Generate unique salt for this encryption
@@ -97,8 +189,14 @@ export function encryptData(plaintext: string, password: string): LegacyEncrypti
 }
 
 /**
- * Decrypts data using AES-256-GCM
- * @throws {Error} - If decryption fails (wrong password or corrupted data)
+ * Decrypt data encrypted with encryptData().
+ * Uses GCM authentication tag to verify integrity.
+ * 
+ * @param encryptedData - Encrypted data in format "iv:authTag:ciphertext"
+ * @param password - Password used during encryption
+ * @param saltHex - Hex-encoded salt from encryption
+ * @returns Decrypted plaintext
+ * @throws Error if decryption fails (wrong password, corrupted data, or tampered ciphertext)
  */
 export function decryptData(encryptedData: string, password: string, saltHex: string): string {
   // Parse encrypted data
@@ -125,8 +223,17 @@ export function decryptData(encryptedData: string, password: string, saltHex: st
   return decrypted;
 }
 
+// ============================================================================
+// Mnemonic-Specific Functions
+// ============================================================================
+
 /**
- * Encrypts mnemonic phrase
+ * Encrypt a BIP-39 mnemonic phrase.
+ * Returns individual components suitable for JSON storage.
+ * 
+ * @param mnemonic - BIP-39 mnemonic phrase (12-24 words)
+ * @param password - Master password for encryption
+ * @returns Encryption result with separated components for storage
  */
 export function encryptMnemonic(mnemonic: string, password: string): EncryptionResult {
   const result = encryptData(mnemonic, password);
@@ -142,16 +249,30 @@ export function encryptMnemonic(mnemonic: string, password: string): EncryptionR
 }
 
 /**
- * Decrypts mnemonic phrase
- * @throws {Error} - If password is incorrect
+ * Decrypt a mnemonic phrase from its stored components.
+ * 
+ * @param encryptedMnemonic - Encrypted ciphertext
+ * @param password - Master password used during encryption
+ * @param salt - PBKDF2 salt from storage
+ * @param iv - Initialization vector from storage
+ * @param authTag - GCM authentication tag from storage
+ * @returns Decrypted mnemonic phrase
+ * @throws Error if password is incorrect (authentication tag verification fails)
  */
 export function decryptMnemonic(encryptedMnemonic: string, password: string, salt: string, iv: string, authTag: string): string {
   const encryptedData = `${iv}:${authTag}:${encryptedMnemonic}`;
   return decryptData(encryptedData, password, salt);
 }
 
+// ============================================================================
+// Wallet File Utilities
+// ============================================================================
+
 /**
- * Checks if any wallets exist (determines if first-time setup needed)
+ * Check if any wallets exist (determines if first-time setup is needed).
+ * Reads wallets.json to detect existing wallet data.
+ * 
+ * @returns True if at least one wallet exists
  */
 export function hasExistingWallets(): boolean {
   try {
@@ -168,7 +289,10 @@ export function hasExistingWallets(): boolean {
 }
 
 /**
- * Checks if wallets need migration from plaintext to encrypted format
+ * Check if wallets need migration from plaintext to encrypted format.
+ * Detects legacy wallet storage that has unencrypted mnemonic fields.
+ * 
+ * @returns True if any wallet contains plaintext mnemonic requiring encryption
  */
 export function needsMigration(): boolean {
   try {
@@ -192,7 +316,18 @@ export function needsMigration(): boolean {
 }
 
 /**
- * Validates mnemonic phrase format and checksum
+ * Validate a BIP-39 mnemonic phrase format.
+ * Checks word count and basic structure (does not verify checksum).
+ * 
+ * Valid word counts per BIP-39:
+ * - 12 words: 128-bit entropy
+ * - 15 words: 160-bit entropy
+ * - 18 words: 192-bit entropy
+ * - 21 words: 224-bit entropy
+ * - 24 words: 256-bit entropy
+ * 
+ * @param mnemonic - Space-separated mnemonic phrase
+ * @returns True if mnemonic has valid format
  */
 export function validateMnemonic(mnemonic: string): boolean {
   if (!mnemonic || typeof mnemonic !== 'string') {
@@ -215,10 +350,24 @@ export function validateMnemonic(mnemonic: string): boolean {
   return true;
 }
 
+// ============================================================================
+// Safe File Operations
+// ============================================================================
+
 /**
- * Safely writes JSON to file with atomic operation
- * Creates backup before writing, writes to temp file first, then renames
- * @throws {Error} - If write fails
+ * Safely write JSON to file with atomic operation and backup.
+ * 
+ * Operation sequence:
+ * 1. Create backup of existing file (if present)
+ * 2. Write to temporary file
+ * 3. Verify temporary file contains valid JSON
+ * 4. Atomically rename temp file to target (atomic on most filesystems)
+ * 
+ * On failure, attempts to restore from backup if main file is corrupted.
+ * 
+ * @param filePath - Target file path
+ * @param data - Object to serialize and write
+ * @throws Error if write fails and recovery is not possible
  */
 export function safeWriteJSON<T>(filePath: string, data: T): void {
   const tempPath = `${filePath}.tmp`;
@@ -262,8 +411,16 @@ export function safeWriteJSON<T>(filePath: string, data: T): void {
 }
 
 /**
- * Safely reads and parses JSON file with recovery
- * @throws {Error} - If file cannot be read or recovered
+ * Safely read and parse JSON file with automatic recovery from backup.
+ * 
+ * Recovery sequence:
+ * 1. Try to read main file
+ * 2. If main file missing/corrupted, try backup file
+ * 3. Restore main file from backup if recovery succeeds
+ * 
+ * @param filePath - File path to read
+ * @returns Parsed JSON object
+ * @throws Error if file cannot be read or recovered
  */
 export function safeReadJSON<T = any>(filePath: string): T {
   const backupPath = `${filePath}.backup`;
