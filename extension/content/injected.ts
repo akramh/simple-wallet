@@ -24,12 +24,17 @@ window.addEventListener('message', async (event) => {
 
   try {
     // Forward request to background script
+    const mapped = mapMethodToBackgroundType(method);
+    if (mapped === 'UNKNOWN_METHOD') {
+      window.postMessage({ type: 'SIMPLE_WALLET_PROVIDER_RESPONSE', id, result: null, error: 'Method not supported' }, '*');
+      return;
+    }
+
     const response = await chrome.runtime.sendMessage({
-      type: mapMethodToBackgroundType(method),
-      payload: { method, params }
+      type: mapped,
+      payload: { method, params, origin: window.location.origin }
     });
 
-    // Send response back to page
     window.postMessage({
       type: 'SIMPLE_WALLET_PROVIDER_RESPONSE',
       id,
@@ -47,22 +52,35 @@ window.addEventListener('message', async (event) => {
   }
 });
 
+// Forward provider events from background to the page provider
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === 'PROVIDER_EVENT') {
+    window.postMessage({
+      type: 'SIMPLE_WALLET_PROVIDER_EVENT',
+      event: message.event,
+      data: message.data
+    }, '*');
+  }
+});
+
 // Map JSON-RPC methods to background message types
 function mapMethodToBackgroundType(method: string): string {
   const methodMap: Record<string, string> = {
     'eth_accounts': 'ETH_ACCOUNTS',
     'eth_requestAccounts': 'ETH_REQUEST_ACCOUNTS',
     'eth_chainId': 'ETH_CHAIN_ID',
+    'net_version': 'ETH_NET_VERSION',
     'eth_sendTransaction': 'ETH_SEND_TRANSACTION',
     'personal_sign': 'PERSONAL_SIGN',
     'eth_sign': 'ETH_SIGN',
     'eth_signTypedData': 'ETH_SIGN_TYPED_DATA',
     'eth_signTypedData_v4': 'ETH_SIGN_TYPED_DATA_V4',
+    'personal_ecRecover': 'PERSONAL_EC_RECOVER',
     'wallet_switchEthereumChain': 'WALLET_SWITCH_CHAIN',
     'wallet_addEthereumChain': 'WALLET_ADD_CHAIN'
   };
 
-  return methodMap[method] || 'UNKNOWN_METHOD';
+  return methodMap[method] || 'GENERIC_RPC';
 }
 
 console.log('Simple Wallet content script loaded');

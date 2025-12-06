@@ -172,6 +172,57 @@
   border-bottom-color: var(--primary);
 }
 
+/* Approval modal */
+.approval-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.approval-modal {
+  background: #fff;
+  color: var(--text-primary);
+  border-radius: 12px;
+  padding: 20px;
+  width: min(420px, 90vw);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.approval-label {
+  font-weight: 700;
+  margin: 0;
+}
+
+.approval-value {
+  margin: 0;
+  word-break: break-word;
+}
+
+.approval-box {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  font-family: monospace;
+  font-size: 12px;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 /* Welcome Screen Styles */
 .welcome-message {
   text-align: center;

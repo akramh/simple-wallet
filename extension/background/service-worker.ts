@@ -8,6 +8,7 @@ import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
 import type { Config } from '../../src/types/index.js';
+import { ethers } from 'ethers';
 
 // Set up WebCrypto for browser environment
 setCryptoAdapter(createWebCryptoAdapter());
@@ -20,6 +21,144 @@ let autoLockTimer: NodeJS.Timeout | null = null;
 const AUTO_LOCK_TIMEOUT = 15 * 60 * 1000; // 15 minutes
 let transactionHistory: TransactionHistoryManager | null = null;
 let sessionPassword: string | null = null;
+let approvedDappOrigins = new Set<string>();
+type PendingRequest =
+  | { id: string; type: 'connect'; origin: string; createdAt: number }
+  | { id: string; type: 'transaction'; origin: string; createdAt: number; tx: any }
+  | { id: string; type: 'signature'; origin: string; createdAt: number; method: string; params: any[] };
+
+const pendingRequests: PendingRequest[] = [];
+const approvalResolvers = new Map<string, { resolve: (value: any) => void; reject: (reason?: any) => void }>();
+const resolveOrigin = (sender: chrome.runtime.MessageSender, payload?: any): string | undefined => {
+  const fromPayload = payload?.origin;
+  if (typeof fromPayload === 'string' && fromPayload.startsWith('http')) {
+    return new URL(fromPayload).origin;
+  }
+  if (sender.origin) return sender.origin;
+  if (sender.url) {
+    try {
+      return new URL(sender.url).origin;
+    } catch (_) {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
+async function loadApprovedOrigins(): Promise<void> {
+  try {
+    const stored = await chrome.storage.local.get('approvedDapps');
+    const list: string[] = stored?.approvedDapps || [];
+    approvedDappOrigins = new Set(list);
+  } catch (err) {
+    console.warn('Failed to load approved origins', err);
+  }
+}
+
+async function saveApprovedOrigins(): Promise<void> {
+  try {
+    await chrome.storage.local.set({ approvedDapps: Array.from(approvedDappOrigins) });
+  } catch (err) {
+    console.warn('Failed to save approved origins', err);
+  }
+}
+
+function emitProviderEvent(event: 'connect' | 'accountsChanged' | 'chainChanged', data: any): void {
+  chrome.runtime.sendMessage({ type: 'PROVIDER_EVENT', event, data }).catch(() => {});
+}
+
+function broadcastPendingRequests(): void {
+  chrome.runtime.sendMessage({ type: 'PENDING_REQUESTS_UPDATED', pending: pendingRequests }).catch(() => {});
+}
+
+function broadcastAccountsChanged(accounts: string[]): void {
+  emitProviderEvent('accountsChanged', accounts);
+}
+
+function broadcastChainChanged(chainIdHex: string): void {
+  emitProviderEvent('chainChanged', chainIdHex);
+}
+
+function createRequestId(): string {
+  return crypto.randomUUID ? crypto.randomUUID() : `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+// Keep only types reachable from the primary type to satisfy ethers signTypedData
+function pruneTypedDataTypes(primaryType: string, types: Record<string, Array<{ name: string; type: string }>>): Record<string, Array<{ name: string; type: string }>> {
+  if (!primaryType || !types) return types || {};
+  const keep = new Set<string>();
+  const stack = [primaryType];
+  while (stack.length) {
+    const type = stack.pop()!;
+    if (keep.has(type)) continue;
+    keep.add(type);
+    const fields = types[type] || [];
+    for (const field of fields) {
+      const base = field.type.replace(/\[[^\]]*\]$/, ''); // strip array suffix
+      if (types[base] && !keep.has(base)) stack.push(base);
+    }
+  }
+  const pruned: Record<string, Array<{ name: string; type: string }>> = {};
+  for (const key of keep) {
+    if (types[key]) pruned[key] = types[key];
+  }
+  return pruned;
+}
+
+function parseTypedDataInput(input: any): any {
+  if (typeof input !== 'string') return input;
+
+  const trimmed = input.trim();
+  console.log('[parseTypedDataInput] input length', trimmed.length, 'first 200:', trimmed.slice(0, 200));
+
+  // If already looks like array or object literal, try directly
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch (_) {
+      // continue to other approaches
+    }
+  }
+
+  // Try stripping outer string wrapper (single or double quotes)
+  const stripWrapper = (val: string) =>
+    ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'")))
+      ? val.slice(1, -1)
+      : val;
+  const base = stripWrapper(trimmed);
+
+  const candidates: string[] = [];
+  candidates.push(base);
+  candidates.push(base.replace(/\\"/g, '"'));
+  candidates.push(base.replace(/\\'/g, "'"));
+  candidates.push(base.replace(/\\\\/g, '\\'));
+
+  for (const cand of candidates) {
+    try {
+      const first = JSON.parse(cand);
+      if (typeof first === 'string') {
+        try {
+          return JSON.parse(stripWrapper(first));
+        } catch {
+          return first;
+        }
+      }
+      return first;
+    } catch (_) {
+      continue;
+    }
+  }
+
+  throw new Error('Failed to parse typed data');
+}
+
+function enqueueApproval(request: PendingRequest): Promise<void> {
+  return new Promise((resolve, reject) => {
+    pendingRequests.push(request);
+    approvalResolvers.set(request.id, { resolve, reject });
+    broadcastPendingRequests();
+  });
+}
 
 // Configure action to open side panel
 const SIDE_PANEL_PATH = 'extension/sidepanel/sidepanel.html';
@@ -93,6 +232,8 @@ async function loadBundledConfig(): Promise<Config & { network: string }> {
 async function initializeWalletService(): Promise<void> {
   const storage = new ChromeStorageAdapter();
   await storage.initialize();
+
+  await loadApprovedOrigins();
 
   // Load config from bundled asset (source of truth), with minimal fallback
   const bundledConfig = await loadBundledConfig();
@@ -171,6 +312,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleMessage(message: any, sender: chrome.runtime.MessageSender): Promise<any> {
   const { type, payload } = message;
+  const origin = resolveOrigin(sender, payload);
 
   // Initialize if needed
   if (!walletService) {
@@ -178,6 +320,28 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
   }
 
   switch (type) {
+    case 'GET_PENDING_REQUESTS':
+      return { pending: pendingRequests };
+
+    case 'RESOLVE_PENDING_REQUEST': {
+      const { id, approved } = payload;
+      const resolver = approvalResolvers.get(id);
+      const idx = pendingRequests.findIndex(p => p.id === id);
+      if (idx >= 0) pendingRequests.splice(idx, 1);
+      if (resolver) {
+        approvalResolvers.delete(id);
+        if (approved) {
+          resolver.resolve(true);
+        } else {
+          const err = new Error('User rejected request');
+          (err as any).code = 4001;
+          resolver.reject(err);
+        }
+      }
+      broadcastPendingRequests();
+      return { success: true };
+    }
+
     case 'GET_STATE':
       return {
         isUnlocked,
@@ -198,6 +362,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       walletService!.saveWallet(walletName);
       currentWalletName = walletName;
       isUnlocked = true;
+
+      broadcastAccountsChanged([newWallet.address]);
 
       // Initialize transaction history for this wallet
       const createStorage = await ChromeStorageAdapter.create();
@@ -226,6 +392,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       currentWalletName = importWalletName;
       isUnlocked = true;
 
+      broadcastAccountsChanged([importedWallet.address]);
+
       // Initialize transaction history for this wallet
       const importStorage = await ChromeStorageAdapter.create();
       transactionHistory = new TransactionHistoryManager(importStorage, currentWalletName);
@@ -246,6 +414,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       sessionPassword = unlockPassword || null;
       currentWalletName = unlockWalletName;
       isUnlocked = true;
+
+      broadcastAccountsChanged([loaded.address]);
 
       // Initialize transaction history for this wallet
       const storage = await ChromeStorageAdapter.create();
@@ -357,6 +527,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'SWITCH_NETWORK':
       await walletService!.setNetwork(payload.network);
+      const chainHex = '0x' + walletService!.config.networks[payload.network].chainId.toString(16);
+      broadcastChainChanged(chainHex);
       return { success: true, network: payload.network };
 
     case 'GET_NETWORKS':
@@ -463,6 +635,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       const switchedAccount = walletService!.switchAccount(payload.index);
       walletService!.saveWallet(currentWalletName); // Save the wallet with new active account
+      broadcastAccountsChanged([switchedAccount.address]);
       return { success: true, address: switchedAccount.address, index: switchedAccount.accountIndex };
 
     case 'GET_ALL_WALLETS':
@@ -484,8 +657,51 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'ETH_REQUEST_ACCOUNTS':
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      // TODO: Show connection approval popup
-      return { accounts: [walletService!.getAddress()] };
+      if (pendingRequests.some(r => r.type === 'connect')) {
+        throw new Error('Connection request already pending');
+      }
+      await enqueueApproval({
+        id: createRequestId(),
+        type: 'connect',
+        origin: origin || 'unknown',
+        createdAt: Date.now()
+      });
+      const addr = walletService!.getAddress();
+      if (origin) {
+        approvedDappOrigins.add(origin);
+        saveApprovedOrigins();
+      }
+      emitProviderEvent('connect', { chainId: '0x' + walletService!.config.networks[walletService!.config.network].chainId.toString(16) });
+      broadcastAccountsChanged([addr]);
+      return { accounts: [addr] };
+
+    case 'ETH_NET_VERSION': {
+      const chainId = walletService!.config.networks[walletService!.config.network].chainId;
+      return chainId.toString(10);
+    }
+
+    case 'GENERIC_RPC': {
+      const { method, params } = payload || {};
+      if (!method) throw new Error('Missing RPC method');
+      // Block signing/transaction methods from generic passthrough
+      const blocked = new Set([
+        'eth_sendTransaction',
+        'eth_sign',
+        'personal_sign',
+        'eth_signTypedData',
+        'eth_signTypedData_v4',
+        'personal_ecRecover',
+        'eth_requestAccounts',
+        'eth_accounts'
+      ]);
+      if (blocked.has(method)) {
+        throw new Error('Method not supported');
+      }
+      const provider = walletService!.wallet?.provider;
+      if (!provider) throw new Error('Provider not available');
+      // Allow read-only RPCs while locked
+      return provider.send(method, params || []);
+    }
 
     case 'ETH_CHAIN_ID':
       const networkConfig = walletService!.config.networks[walletService!.config.network];
@@ -494,9 +710,123 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'ETH_SEND_TRANSACTION':
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      // TODO: Show transaction approval popup
-      // For now, this is a placeholder
-      throw new Error('Transaction approval UI not implemented yet');
+      if (!payload?.params || !Array.isArray(payload.params) || payload.params.length === 0) {
+        throw new Error('Invalid transaction params');
+      }
+      const tx = payload.params[0];
+      const currentAddress = walletService!.getAddress();
+      if (!tx.from || tx.from.toLowerCase() !== currentAddress.toLowerCase()) {
+        throw new Error('Transaction from address must match current account');
+      }
+      const pendingId = createRequestId();
+      await enqueueApproval({ id: pendingId, type: 'transaction', origin: sender.origin || 'unknown', createdAt: Date.now(), tx });
+
+      const signer = walletService!.wallet.wallet;
+      if (!signer) throw new Error('No signer available');
+      const txRequest: ethers.TransactionRequest = {
+        to: tx.to,
+        data: tx.data,
+        value: tx.value ? BigInt(tx.value) : undefined,
+        gasLimit: tx.gas || tx.gasLimit,
+        maxFeePerGas: tx.maxFeePerGas,
+        maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
+        gasPrice: tx.gasPrice
+      };
+      const resp = await signer.sendTransaction(txRequest);
+      return resp;
+
+    case 'PERSONAL_SIGN':
+    case 'ETH_SIGN':
+    case 'ETH_SIGN_TYPED_DATA':
+    case 'ETH_SIGN_TYPED_DATA_V4': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      const params = payload?.params || [];
+      const addr = walletService!.getAddress();
+      const pendingId = createRequestId();
+      await enqueueApproval({ id: pendingId, type: 'signature', origin: sender.origin || 'unknown', createdAt: Date.now(), method: type, params });
+
+      const signer = walletService!.wallet.wallet;
+      if (!signer) throw new Error('No signer available');
+
+      if (type === 'PERSONAL_SIGN' || type === 'ETH_SIGN') {
+        const message = params[0];
+        const bytes = typeof message === 'string' && message.startsWith('0x') ? ethers.getBytes(message) : new TextEncoder().encode(String(message));
+        const sig = await signer.signMessage(bytes);
+        return sig;
+      }
+
+      // Typed data (legacy and v4)
+      // Legacy eth_signTypedData sends [msgParams, from] where msgParams is an array
+      // V3/V4 send [from, msgParamsStringified]
+      let dataStr: any;
+      if (Array.isArray(params[0])) {
+        // Legacy v1 format: params[0] is the typed data array
+        dataStr = params[0];
+      } else if (typeof params[1] === 'string' && !params[1].startsWith('0x')) {
+        // v3/v4 format: params[1] is stringified typed data
+        dataStr = params[1];
+      } else if (typeof params[0] === 'string' && !params[0].startsWith('0x')) {
+        // Fallback: params[0] might be stringified typed data
+        dataStr = params[0];
+      } else {
+        // Try params[1] first (v3/v4), then params[0]
+        dataStr = params[1] ?? params[0];
+      }
+      if (!dataStr) {
+        throw new Error('Invalid typed data params');
+      }
+
+      let parsed: any = dataStr;
+      if (typeof dataStr === 'string') {
+        parsed = parseTypedDataInput(dataStr);
+      }
+
+      // Legacy array format: [{ type, name, value }, ...]
+      // eth-sig-util V1: typedSignatureHash then raw EC sign (no Ethereum prefix)
+      if (Array.isArray(parsed)) {
+        const items = parsed as Array<{ type: string; name: string; value: any }>;
+        const types = items.map(i => i.type);
+        const values = items.map(i => i.value);
+        const hash = ethers.solidityPackedKeccak256(types as any, values as any);
+        // V1 signs the raw hash without the Ethereum message prefix
+        const signingKey = (signer as any).signingKey;
+        if (signingKey && typeof signingKey.sign === 'function') {
+          const sig = signingKey.sign(hash);
+          return ethers.Signature.from(sig).serialized;
+        }
+        // Fallback if signingKey not accessible - this may not verify correctly
+        const sig = await signer.signMessage(ethers.getBytes(hash));
+        return typeof sig === 'string' ? sig : ethers.Signature.from(sig).serialized;
+      }
+
+      const { domain, types, message: msg, primaryType } = parsed || {};
+      const { EIP712Domain, ...restTypes } = types || {};
+      const resolvedPrimary = primaryType || parsed.primaryType || Object.keys(restTypes || {}).find(k => k);
+      if (!resolvedPrimary) {
+        throw new Error('Typed data primaryType is required');
+      }
+      if (!restTypes?.[resolvedPrimary]) {
+        throw new Error(`primaryType "${resolvedPrimary}" not found in types`);
+      }
+      const prunedTypes = pruneTypedDataTypes(resolvedPrimary, restTypes || {});
+      const sig = await signer.signTypedData(domain || {}, prunedTypes, msg ?? parsed.message ?? {}, resolvedPrimary);
+      return typeof sig === 'string' ? sig : ethers.Signature.from(sig).serialized;
+    }
+
+    case 'PERSONAL_EC_RECOVER': {
+      const params = payload?.params || [];
+      const message = params[0];
+      const signature = params[1];
+      if (!message || !signature) {
+        throw new Error('Invalid params for personal_ecRecover');
+      }
+      const messageStr = typeof message === 'string' ? message : JSON.stringify(message);
+      // If message is hex-prefixed, interpret as bytes; else as utf8 of the stringified value
+      const bytes = messageStr.startsWith('0x') ? ethers.getBytes(messageStr) : new TextEncoder().encode(messageStr);
+      const recovered = ethers.verifyMessage(bytes, signature);
+      return recovered.toLowerCase();
+    }
 
     default:
       throw new Error(`Unknown message type: ${type}`);
