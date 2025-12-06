@@ -241,6 +241,16 @@ export class WalletAppService {
   }
 
   /**
+   * Fetch balances for a list of tokens.
+   * Used for async balance updates after initial token list display.
+   * @param tokens - Array of tokens to fetch balances for
+   * @returns Array of token balances
+   */
+  async fetchBalances(tokens: Token[]): Promise<{ token: Token; balance: string; error?: string }[]> {
+    return this.wallet.getPortfolio(tokens);
+  }
+
+  /**
    * Send a token or native currency.
    * @param token - Token to send
    * @param toAddress - Recipient address

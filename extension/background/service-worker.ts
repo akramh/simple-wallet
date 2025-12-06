@@ -82,6 +82,163 @@ let sessionPassword: string | null = null;
 
 /** Set of approved dApp origins that don't require re-approval */
 let approvedDappOrigins = new Set<string>();
+
+// ============================================================================
+// Balance Cache
+// ============================================================================
+
+/**
+ * Cached token balance entry
+ */
+interface CachedBalance {
+  balance: string;
+  lastUpdated: number;
+}
+
+/**
+ * Balance cache structure: network -> tokenKey -> CachedBalance
+ * tokenKey is 'native' for native currency or lowercase token address
+ */
+interface BalanceCache {
+  [network: string]: {
+    [tokenKey: string]: CachedBalance;
+  };
+}
+
+/** In-memory balance cache */
+let balanceCache: BalanceCache = {};
+
+/** Balance polling interval timer */
+let balancePollingTimer: NodeJS.Timeout | null = null;
+
+/** Balance polling interval: 30 seconds */
+const BALANCE_POLLING_INTERVAL = 30 * 1000;
+
+/** Balance cache TTL: 5 minutes (used to determine if cache is stale) */
+const BALANCE_CACHE_TTL = 5 * 60 * 1000;
+
+/**
+ * Get token cache key
+ */
+function getTokenCacheKey(token: { type?: string; address?: string }): string {
+  return token.type === 'native' ? 'native' : (token.address || '').toLowerCase();
+}
+
+/**
+ * Get cached balance for a token
+ */
+function getCachedBalance(network: string, token: { type?: string; address?: string }): CachedBalance | null {
+  const key = getTokenCacheKey(token);
+  return balanceCache[network]?.[key] || null;
+}
+
+/**
+ * Update cached balance for a token
+ */
+function setCachedBalance(network: string, token: { type?: string; address?: string }, balance: string): void {
+  if (!balanceCache[network]) {
+    balanceCache[network] = {};
+  }
+  const key = getTokenCacheKey(token);
+  balanceCache[network][key] = {
+    balance,
+    lastUpdated: Date.now()
+  };
+}
+
+/**
+ * Clear balance cache for a network (or all networks)
+ */
+function clearBalanceCache(network?: string): void {
+  if (network) {
+    delete balanceCache[network];
+  } else {
+    balanceCache = {};
+  }
+}
+
+/**
+ * Load balance cache from persistent storage
+ */
+async function loadBalanceCache(): Promise<void> {
+  try {
+    const result = await chrome.storage.local.get('balanceCache');
+    if (result.balanceCache) {
+      balanceCache = result.balanceCache;
+      console.log('[BalanceCache] Loaded from storage');
+    }
+  } catch (err) {
+    console.warn('[BalanceCache] Failed to load from storage:', err);
+  }
+}
+
+/**
+ * Save balance cache to persistent storage
+ */
+async function saveBalanceCache(): Promise<void> {
+  try {
+    await chrome.storage.local.set({ balanceCache });
+  } catch (err) {
+    console.warn('[BalanceCache] Failed to save to storage:', err);
+  }
+}
+
+/**
+ * Broadcast balance update to all UI contexts
+ */
+function broadcastBalanceUpdate(network: string, balances: { token: any; balance: string }[]): void {
+  chrome.runtime.sendMessage({
+    type: 'BALANCES_UPDATED',
+    network,
+    balances
+  }).catch(() => {});
+}
+
+/**
+ * Start balance polling
+ */
+function startBalancePolling(): void {
+  if (balancePollingTimer) return;
+  
+  balancePollingTimer = setInterval(async () => {
+    if (!isUnlocked || !walletService) return;
+    
+    try {
+      const network = walletService.config.network;
+      const tokens = walletService.getTokensForNetwork(network);
+      const balances = await walletService.fetchBalances(tokens);
+      
+      // Update cache
+      for (const item of balances) {
+        if (!item.error) {
+          setCachedBalance(network, item.token, item.balance);
+        }
+      }
+      
+      // Persist cache
+      await saveBalanceCache();
+      
+      // Broadcast to UI
+      broadcastBalanceUpdate(network, balances);
+    } catch (err) {
+      console.warn('[BalancePolling] Error:', err);
+    }
+  }, BALANCE_POLLING_INTERVAL);
+  
+  console.log('[BalancePolling] Started');
+}
+
+/**
+ * Stop balance polling
+ */
+function stopBalancePolling(): void {
+  if (balancePollingTimer) {
+    clearInterval(balancePollingTimer);
+    balancePollingTimer = null;
+    console.log('[BalancePolling] Stopped');
+  }
+}
+
 // ============================================================================
 // Pending Request Management
 // ============================================================================
@@ -472,6 +629,9 @@ function lockWallet(): void {
     clearTimeout(autoLockTimer);
     autoLockTimer = null;
   }
+  
+  // Stop balance polling
+  stopBalancePolling();
 
   // Notify all extension contexts (popup, side panel, etc.) that wallet is locked
   // Use storage change event as a reliable broadcast mechanism
@@ -620,6 +780,10 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const storage = await ChromeStorageAdapter.create();
       transactionHistory = new TransactionHistoryManager(storage, currentWalletName);
 
+      // Load balance cache and start polling
+      await loadBalanceCache();
+      startBalancePolling();
+
       resetAutoLockTimer();
       return {
         success: true,
@@ -669,6 +833,58 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       const portfolio = await walletService!.getPortfolioForNetwork(walletService!.config.network);
       return { portfolio };
+
+    case 'GET_TOKENS':
+      // Returns token list immediately without fetching balances
+      // Includes cached balances if available
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      const currentNetwork = walletService!.config.network;
+      const tokenList = walletService!.getTokensForNetwork(currentNetwork);
+      
+      // Attach cached balances to tokens
+      const tokensWithCachedBalances = tokenList.map(token => {
+        const cached = getCachedBalance(currentNetwork, token);
+        return {
+          token,
+          balance: cached?.balance || null,
+          lastUpdated: cached?.lastUpdated || null,
+          isLoading: cached === null
+        };
+      });
+      
+      return { tokens: tokensWithCachedBalances, network: currentNetwork };
+
+    case 'REFRESH_BALANCES':
+      // Trigger async balance refresh for current network
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      const refreshNetwork = walletService!.config.network;
+      const tokensToRefresh = walletService!.getTokensForNetwork(refreshNetwork);
+      
+      // Fetch balances async and update cache
+      walletService!.fetchBalances(tokensToRefresh).then(async (balances) => {
+        for (const item of balances) {
+          if (!item.error) {
+            setCachedBalance(refreshNetwork, item.token, item.balance);
+          }
+        }
+        await saveBalanceCache();
+        broadcastBalanceUpdate(refreshNetwork, balances);
+      }).catch(err => {
+        console.warn('[REFRESH_BALANCES] Error:', err);
+      });
+      
+      return { success: true, message: 'Balance refresh started' };
+
+    case 'GET_CACHED_BALANCES':
+      // Returns only cached balances for a network
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      const cacheNetwork = payload?.network || walletService!.config.network;
+      return { 
+        balances: balanceCache[cacheNetwork] || {},
+        network: cacheNetwork
+      };
 
     case 'SEND_TRANSACTION':
       if (!isUnlocked) throw new Error('Wallet is locked');
@@ -783,10 +999,6 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       } catch (err: any) {
         return { error: err.message || 'Failed to fetch token metadata' };
       }
-
-    case 'GET_TOKENS':
-      const tokens = walletService!.getTokensForNetwork(payload.network || walletService!.config.network);
-      return { tokens };
 
     case 'GET_ADDRESS':
       if (!isUnlocked) throw new Error('Wallet is locked');
