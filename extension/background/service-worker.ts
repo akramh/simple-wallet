@@ -347,6 +347,29 @@ function broadcastChainChanged(chainIdHex: string): void {
 }
 
 /**
+ * Broadcasts transaction status update to the UI.
+ * @param hash - Transaction hash
+ * @param status - Current status: 'confirmed' | 'failed'
+ * @param network - Network identifier
+ * @param blockNumber - Block number (for confirmed transactions)
+ * @param error - Error message (for failed transactions)
+ */
+function broadcastTransactionStatus(
+  hash: string,
+  status: 'confirmed' | 'failed',
+  network: string,
+  blockNumber?: number,
+  error?: string
+): void {
+  chrome.runtime.sendMessage({
+    type: 'TRANSACTION_STATUS_UPDATE',
+    payload: { hash, status, network, blockNumber, error }
+  }).catch(() => {
+    // Popup may not be open - ignore
+  });
+}
+
+/**
  * Generates a unique request ID for pending approval tracking.
  * @returns UUID or timestamp-based fallback ID
  */
@@ -894,13 +917,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const network = walletService!.config.network;
 
       try {
+        // Call sendToken - this waits for confirmation
         const result = await walletService!.sendToken(
           payload.token,
           payload.toAddress,
           payload.amount
         );
 
-        // Track transaction in history
+        // Track transaction in history as confirmed
         if (transactionHistory && result.hash) {
           transactionHistory.addTransaction({
             hash: result.hash,
@@ -908,15 +932,16 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             to: payload.toAddress,
             value: payload.amount,
             network: network,
-            status: TransactionStatus.PENDING,
+            status: TransactionStatus.CONFIRMED,
             type: TransactionType.SEND,
             timestamp: Date.now(),
             tokenSymbol: payload.token.symbol,
-            tokenAddress: payload.token.address
+            tokenAddress: payload.token.address,
+            blockNumber: result.blockNumber
           });
 
-          // Start monitoring for confirmation
-          monitorTransaction(result.hash, network);
+          // Broadcast confirmation
+          broadcastTransactionStatus(result.hash, 'confirmed', network, result.blockNumber);
         }
 
         return { result };
@@ -936,9 +961,21 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             tokenAddress: payload.token.address,
             error: error.message
           });
+          broadcastTransactionStatus(error.transactionHash, 'failed', network, undefined, error.message);
         }
         throw error;
       }
+
+    case 'GET_NETWORK_CONFIG': {
+      if (!walletService) throw new Error('Wallet not initialized');
+      const netConfigNetwork = walletService.config.network;
+      const netConfigData = walletService.config.networks[netConfigNetwork];
+      return {
+        network: netConfigNetwork,
+        blockExplorer: netConfigData?.blockExplorer || null,
+        chainId: netConfigData?.chainId
+      };
+    }
 
     case 'SWITCH_NETWORK':
       await walletService!.setNetwork(payload.network);
@@ -1114,9 +1151,10 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       return provider.send(method, params || []);
     }
 
-    case 'ETH_CHAIN_ID':
-      const networkConfig = walletService!.config.networks[walletService!.config.network];
-      return { chainId: '0x' + networkConfig.chainId.toString(16) };
+    case 'ETH_CHAIN_ID': {
+      const chainIdConfig = walletService!.config.networks[walletService!.config.network];
+      return { chainId: '0x' + chainIdConfig.chainId.toString(16) };
+    }
 
     case 'ETH_SEND_TRANSACTION':
       if (!isUnlocked) throw new Error('Wallet is locked');

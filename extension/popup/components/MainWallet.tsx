@@ -14,6 +14,7 @@ import AccountMenu from './AccountMenu';
 import ReceiveView from './ReceiveView';
 import ActivityView from './ActivityView';
 import AddTokenModal from './AddTokenModal';
+import SendTransactionView from './SendTransactionView';
 import ethIcon from '../../assets/img/eth_logo.svg';
 import bnbIcon from '../../assets/img/bnb.svg';
 import solIcon from '../../assets/img/solana-logo.svg';
@@ -110,9 +111,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
-  const [sendLoading, setSendLoading] = useState(false);
   const [sendError, setSendError] = useState('');
-  const [sendSuccess, setSendSuccess] = useState('');
+  const [isSending, setIsSending] = useState(false);
 
   // Load tokens immediately, then trigger async balance refresh
   useEffect(() => {
@@ -202,44 +202,44 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     }
   };
 
-  const handleSend = async (e: React.FormEvent) => {
+  const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     setSendError('');
-    setSendSuccess('');
 
     if (!selectedToken || !recipient || !amount) {
       setSendError('Please fill in all fields');
       return;
     }
 
-    setSendLoading(true);
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'SEND_TRANSACTION',
-        payload: {
-          token: selectedToken,
-          toAddress: recipient,
-          amount
-        }
-      });
-
-      if (response.error) {
-        setSendError(response.error);
-      } else {
-        setSendSuccess(`Transaction sent! Hash: ${response.result.hash.substring(0, 10)}...`);
-        setRecipient('');
-        setAmount('');
-        notifyStateChange();
-        setTimeout(() => {
-          setView('tokens');
-          handleRefresh();
-        }, 2000);
-      }
-    } catch (err: any) {
-      setSendError(err.message || 'Failed to send transaction');
-    } finally {
-      setSendLoading(false);
+    // Validate address format
+    if (!/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
+      setSendError('Invalid Ethereum address');
+      return;
     }
+
+    // Validate amount
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      setSendError('Invalid amount');
+      return;
+    }
+
+    // Show the confirmation/send view
+    setIsSending(true);
+  };
+
+  const handleSendComplete = () => {
+    setIsSending(false);
+    setRecipient('');
+    setAmount('');
+    setSelectedToken(null);
+    setView('tokens');
+    handleRefresh();
+    notifyStateChange();
+  };
+
+  const handleSendClose = () => {
+    setIsSending(false);
   };
 
   const formatBalance = (balance: string | number) => {
@@ -454,56 +454,67 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
           </div>
         ) : view === 'send' ? (
           <div className="takeover">
-            <button className="back-button" onClick={() => setView('tokens')}>
-              <img src={backIcon} alt="Back" />
-              <span>Back</span>
-            </button>
-            <form onSubmit={handleSend}>
-              <div className="form-group">
-                <label>Token</label>
-                <select
-                  value={selectedToken?.symbol || ''}
-                  onChange={(e) => {
-                    const token = portfolio.find(p => p.token.symbol === e.target.value);
-                    setSelectedToken(token?.token || null);
-                  }}
-                >
-                  <option value="">Select a token</option>
-                  {portfolio.map((item) => (
-                    <option key={item.token.symbol} value={item.token.symbol}>
-                      {item.token.symbol} ({formatBalance(item.balance)})
-                    </option>
-                  ))}
-                </select>
-              </div>
+            {isSending && selectedToken ? (
+              <SendTransactionView
+                token={selectedToken}
+                recipient={recipient}
+                amount={amount}
+                onClose={handleSendClose}
+                onSuccess={handleSendComplete}
+              />
+            ) : (
+              <>
+                <button className="back-button" onClick={() => setView('tokens')}>
+                  <img src={backIcon} alt="Back" />
+                  <span>Back</span>
+                </button>
+                <form onSubmit={handleSend}>
+                  <div className="form-group">
+                    <label>Token</label>
+                    <select
+                      value={selectedToken?.symbol || ''}
+                      onChange={(e) => {
+                        const token = portfolio.find(p => p.token.symbol === e.target.value);
+                        setSelectedToken(token?.token || null);
+                      }}
+                    >
+                      <option value="">Select a token</option>
+                      {portfolio.map((item) => (
+                        <option key={item.token.symbol} value={item.token.symbol}>
+                          {item.token.symbol} ({formatBalance(item.balance)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-              <div className="form-group">
-                <label>Recipient Address</label>
-                <input
-                  type="text"
-                  value={recipient}
-                  onChange={(e) => setRecipient(e.target.value)}
-                  placeholder="0x..."
-                />
-              </div>
+                  <div className="form-group">
+                    <label>Recipient Address</label>
+                    <input
+                      type="text"
+                      value={recipient}
+                      onChange={(e) => setRecipient(e.target.value)}
+                      placeholder="0x..."
+                    />
+                  </div>
 
-              <div className="form-group">
-                <label>Amount</label>
-                <input
-                  type="text"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder="0.0"
-                />
-              </div>
+                  <div className="form-group">
+                    <label>Amount</label>
+                    <input
+                      type="text"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      placeholder="0.0"
+                    />
+                  </div>
 
-              {sendError && <div className="error">{sendError}</div>}
-              {sendSuccess && <div className="success">{sendSuccess}</div>}
+                  {sendError && <div className="error">{sendError}</div>}
 
-              <button type="submit" className="btn btn-primary" disabled={sendLoading}>
-                {sendLoading ? 'Sending...' : 'Send'}
-              </button>
-            </form>
+                  <button type="submit" className="btn btn-primary">
+                    Send
+                  </button>
+                </form>
+              </>
+            )}
           </div>
         ) : null}
       </div>
