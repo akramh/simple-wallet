@@ -155,6 +155,10 @@
   border-bottom: 1px solid var(--border);
 }
 
+.balance-row {
+  padding: 8px 12px;
+}
+
 .balance-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -164,8 +168,7 @@
   flex-direction: column;
   gap: 12px;
   margin: 0 auto 16px;
-  width: 95%;
-  max-width: 720px;
+  width: 100%;
   box-sizing: border-box;
 }
 

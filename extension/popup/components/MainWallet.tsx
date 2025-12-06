@@ -265,6 +265,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
           </div>
 
           {/* Balance + Actions always above tabs */}
+          <div className='balance-row'>
           <div className="balance-card">
             <div className="balance-header">
               <div className="balance-label">Total Balance</div>
@@ -293,6 +294,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 <span>Send</span>
               </button>
             </div>
+          </div>
           </div>
 
           <div className="top-nav">
