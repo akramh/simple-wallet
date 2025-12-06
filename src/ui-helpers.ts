@@ -1,27 +1,96 @@
+/**
+ * @file ui-helpers.ts
+ * @description Terminal UI formatting utilities for the CLI wallet application.
+ * 
+ * Provides a consistent visual style for the command-line interface with
+ * colored output, formatted boxes, styled messages, and menu helpers.
+ * Uses the `chalk` library for terminal color support.
+ * 
+ * @responsibilities
+ * - Consistent header and section formatting
+ * - Message styling (success, error, warning, info)
+ * - Box layouts for important information
+ * - Address, amount, and transaction hash formatting
+ * - Menu separator and choice helpers for inquirer
+ * - Secure mnemonic display formatting
+ * 
+ * @dependencies
+ * - chalk: Terminal color/styling library
+ * 
+ * @example
+ * ```typescript
+ * import { showHeader, showSuccess, showError } from './ui-helpers.js';
+ * 
+ * showHeader('main-wallet', 0, 'Ethereum Mainnet', '0x...');
+ * showSuccess('Transaction sent successfully!');
+ * showError('Insufficient balance', ['Check your balance', 'Try a smaller amount']);
+ * ```
+ */
+
 import chalk from 'chalk';
 
-// UI Helper Functions for Consistent Formatting
+// ============================================================================
+// Type Definitions
+// ============================================================================
 
+/**
+ * Type of box styling for the showBox function.
+ * Each type corresponds to a different color scheme.
+ */
 type BoxType = 'info' | 'success' | 'warning' | 'error';
 
+/**
+ * Menu separator for inquirer prompt choices.
+ * Displays a horizontal line to group related options.
+ */
 interface MenuSeparator {
   type: 'separator';
   line: string;
 }
 
+/**
+ * Menu choice item for inquirer prompt.
+ */
 interface MenuChoice {
+  /** Display name shown in the menu */
   name: string;
+  /** Value returned when this choice is selected */
   value: string;
 }
 
+/**
+ * Minimal transaction receipt for display purposes.
+ */
 interface TransactionReceipt {
+  /** Transaction hash */
   hash: string;
+  /** Block number where transaction was mined */
   blockNumber: number;
+  /** Gas used by the transaction */
   gasUsed: bigint | string;
 }
 
+// ============================================================================
+// Header and Section Functions
+// ============================================================================
+
 /**
- * Display a header with context information
+ * Displays the application header with optional wallet context.
+ * Shows a styled banner with wallet name, account number, network, and address.
+ * 
+ * @param walletName - Name of the current wallet (optional)
+ * @param accountIndex - Zero-based account index (displayed as 1-based)
+ * @param networkName - Human-readable network name (optional)
+ * @param address - Ethereum address to display (optional)
+ * 
+ * @example
+ * ```typescript
+ * // Full header with all context
+ * showHeader('main-wallet', 0, 'Ethereum Mainnet', '0x742d35Cc...');
+ * 
+ * // Simple header without context
+ * showHeader();
+ * ```
  */
 export function showHeader(walletName: string | null = null, accountIndex: number | null = null, networkName: string | null = null, address: string | null = null): void {
   console.log('\n' + chalk.cyan('═'.repeat(60)));
@@ -44,21 +113,46 @@ export function showHeader(walletName: string | null = null, accountIndex: numbe
 }
 
 /**
- * Display a section header
+ * Displays a section title in uppercase bold white text.
+ * Used to group related content in the CLI output.
+ * 
+ * @param title - Section title (will be uppercased)
+ * 
+ * @example
+ * ```typescript
+ * showSection('account details');
+ * // Outputs: ACCOUNT DETAILS
+ * ```
  */
 export function showSection(title: string): void {
   console.log(chalk.bold.white(title.toUpperCase()));
 }
 
 /**
- * Display a separator
+ * Displays a horizontal separator line.
+ * Used to visually divide sections in the CLI output.
  */
 export function showSeparator(): void {
   console.log(chalk.gray('─'.repeat(60)));
 }
 
+// ============================================================================
+// Box and Message Functions
+// ============================================================================
+
 /**
- * Display a box around important information
+ * Displays content in a styled box with a title.
+ * Box color varies by type: blue (info), green (success), yellow (warning), red (error).
+ * 
+ * @param title - Box title displayed at the top
+ * @param content - Content to display (supports newlines)
+ * @param type - Box styling type (default: 'info')
+ * 
+ * @example
+ * ```typescript
+ * showBox('Important', 'Your wallet has been created.', 'success');
+ * showBox('Warning', 'Low balance detected.\nConsider adding funds.', 'warning');
+ * ```
  */
 export function showBox(title: string, content: string, type: BoxType = 'info'): void {
   const colors: Record<BoxType, typeof chalk.blue> = {
@@ -84,14 +178,34 @@ export function showBox(title: string, content: string, type: BoxType = 'info'):
 }
 
 /**
- * Success message
+ * Displays a success message with a green checkmark.
+ * 
+ * @param message - Success message to display
+ * 
+ * @example
+ * ```typescript
+ * showSuccess('Transaction sent successfully!');
+ * // Outputs: ✓ Transaction sent successfully!
+ * ```
  */
 export function showSuccess(message: string): void {
   console.log(chalk.green('✓') + ' ' + chalk.white(message));
 }
 
 /**
- * Error message with optional suggestions
+ * Displays an error message with optional suggestions for resolution.
+ * Shows a red X icon and formats suggestions as a bullet list.
+ * 
+ * @param message - Error message to display
+ * @param suggestions - Optional array of suggestion strings
+ * 
+ * @example
+ * ```typescript
+ * showError('Insufficient balance', [
+ *   'Check your current balance',
+ *   'Try a smaller amount'
+ * ]);
+ * ```
  */
 export function showError(message: string, suggestions: string[] = []): void {
   console.log('\n' + chalk.red.bold('✗ Error\n'));
@@ -107,28 +221,43 @@ export function showError(message: string, suggestions: string[] = []): void {
 }
 
 /**
- * Warning message
+ * Displays a warning message with a yellow warning icon.
+ * 
+ * @param message - Warning message to display
  */
 export function showWarning(message: string): void {
   console.log(chalk.yellow('⚠') + ' ' + chalk.white(message));
 }
 
 /**
- * Info message
+ * Displays an informational message with a blue info icon.
+ * 
+ * @param message - Info message to display
  */
 export function showInfo(message: string): void {
   console.log(chalk.blue('ℹ') + ' ' + chalk.white(message));
 }
 
 /**
- * Loading message
+ * Displays a loading message with a hourglass icon.
+ * Use before long-running operations.
+ * 
+ * @param message - Loading message to display
  */
 export function showLoading(message: string): void {
   console.log(chalk.cyan('⏳') + ' ' + chalk.white(message));
 }
 
+// ============================================================================
+// Formatting Functions
+// ============================================================================
+
 /**
- * Format an Ethereum address for display
+ * Formats an Ethereum address with cyan coloring.
+ * Lowercases the address for consistency.
+ * 
+ * @param address - Ethereum address to format
+ * @returns Formatted address string with ANSI color codes
  */
 export function formatAddress(address: string): string {
   if (!address) return '';
@@ -136,14 +265,28 @@ export function formatAddress(address: string): string {
 }
 
 /**
- * Format ETH amount for display
+ * Formats a currency amount with the symbol.
+ * Amount is displayed in bold green, symbol in gray.
+ * 
+ * @param amount - Amount to display
+ * @param currency - Currency symbol (default: 'ETH')
+ * @returns Formatted amount string with ANSI color codes
+ * 
+ * @example
+ * ```typescript
+ * formatAmount('1.5', 'ETH');  // "1.5 ETH" (styled)
+ * formatAmount('100', 'USDC'); // "100 USDC" (styled)
+ * ```
  */
 export function formatAmount(amount: string, currency: string = 'ETH'): string {
   return chalk.green.bold(amount) + ' ' + chalk.gray(currency);
 }
 
 /**
- * Format a transaction hash
+ * Formats a transaction hash with magenta coloring.
+ * 
+ * @param hash - Transaction hash to format
+ * @returns Formatted hash string with ANSI color codes
  */
 export function formatTxHash(hash: string): string {
   if (!hash) return '';
@@ -151,7 +294,11 @@ export function formatTxHash(hash: string): string {
 }
 
 /**
- * Display account information in a clean format
+ * Displays account information in a styled format.
+ * Shows address and optional balance in a bordered section.
+ * 
+ * @param address - Ethereum address to display
+ * @param balance - Optional balance to display (in ETH)
  */
 export function showAccountInfo(address: string, balance: string | null = null): void {
   console.log('\n' + chalk.gray('━'.repeat(60)));
@@ -164,8 +311,25 @@ export function showAccountInfo(address: string, balance: string | null = null):
   console.log(chalk.gray('━'.repeat(60)) + '\n');
 }
 
+// ============================================================================
+// Menu Helper Functions (for inquirer)
+// ============================================================================
+
 /**
- * Create a menu separator for inquirer choices
+ * Creates a menu separator for use with inquirer prompts.
+ * Displays a horizontal gray line to visually group menu options.
+ * 
+ * @param label - Optional label (currently unused, reserved for future use)
+ * @returns MenuSeparator object for inquirer
+ * 
+ * @example
+ * ```typescript
+ * const choices = [
+ *   { name: 'Option 1', value: '1' },
+ *   menuSeparator(),
+ *   { name: 'Option 2', value: '2' }
+ * ];
+ * ```
  */
 export function menuSeparator(label: string = ''): MenuSeparator {
   return {
@@ -175,7 +339,21 @@ export function menuSeparator(label: string = ''): MenuSeparator {
 }
 
 /**
- * Format menu choice with description
+ * Creates a formatted menu choice for inquirer prompts.
+ * Displays name padded with optional description in gray.
+ * 
+ * @param name - Choice name (displayed prominently)
+ * @param description - Optional description (displayed in gray)
+ * @param value - Value returned when selected (defaults to name)
+ * @returns MenuChoice object for inquirer
+ * 
+ * @example
+ * ```typescript
+ * const choices = [
+ *   menuChoice('Send ETH', 'Transfer native currency'),
+ *   menuChoice('Send Token', 'Transfer ERC-20 tokens')
+ * ];
+ * ```
  */
 export function menuChoice(name: string, description: string = '', value: string | null = null): MenuChoice {
   const displayName = description
@@ -188,15 +366,41 @@ export function menuChoice(name: string, description: string = '', value: string
   };
 }
 
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
 /**
- * Clear screen helper
+ * Clears the terminal screen.
+ * Wrapper around console.clear() for consistency.
  */
 export function clearScreen(): void {
   console.clear();
 }
 
+// ============================================================================
+// Security-Sensitive Display Functions
+// ============================================================================
+
 /**
- * Display mnemonic in a secure box
+ * Displays a wallet's recovery phrase in a secure, formatted box.
+ * Shows 12-word mnemonic in two columns with numbered words.
+ * Includes prominent security warnings about protecting the phrase.
+ * 
+ * @param mnemonic - Space-separated 12-word recovery phrase
+ * 
+ * @example
+ * ```typescript
+ * showMnemonic('word1 word2 word3 ... word12');
+ * // Displays:
+ * // ┌──────────────────────────────────────────────────────────┐
+ * // │ Recovery Phrase (12 words)                               │
+ * // ├──────────────────────────────────────────────────────────┤
+ * // │  1. word1                      7. word7                  │
+ * // │  2. word2                      8. word8                  │
+ * // │  ...                                                     │
+ * // └──────────────────────────────────────────────────────────┘
+ * ```
  */
 export function showMnemonic(mnemonic: string): void {
   const words = mnemonic.split(' ');
@@ -224,8 +428,26 @@ export function showMnemonic(mnemonic: string): void {
   console.log(chalk.white('  • Store it safely offline\n'));
 }
 
+// ============================================================================
+// Block Explorer Functions
+// ============================================================================
+
 /**
- * Get block explorer URL for a transaction
+ * Generates a block explorer URL for viewing a transaction.
+ * Supports multiple EVM networks with their respective explorers.
+ * 
+ * @param txHash - Transaction hash to link to
+ * @param networkKey - Network identifier (e.g., 'mainnet', 'polygon')
+ * @returns Full explorer URL or null if network is not supported
+ * 
+ * @example
+ * ```typescript
+ * const url = getBlockExplorerUrl('0xabc...', 'mainnet');
+ * // Returns: 'https://etherscan.io/tx/0xabc...'
+ * 
+ * const unknown = getBlockExplorerUrl('0xdef...', 'unknown');
+ * // Returns: null
+ * ```
  */
 export function getBlockExplorerUrl(txHash: string, networkKey: string): string | null {
   const explorers: Record<string, string> = {
@@ -244,7 +466,19 @@ export function getBlockExplorerUrl(txHash: string, networkKey: string): string 
 }
 
 /**
- * Display transaction details with block explorer link
+ * Displays transaction receipt details with block explorer link.
+ * Shows hash, block number, gas used, and explorer URL.
+ * 
+ * @param receipt - Transaction receipt with hash, blockNumber, gasUsed
+ * @param networkKey - Network identifier for explorer URL lookup
+ * 
+ * @example
+ * ```typescript
+ * showTransactionDetails(
+ *   { hash: '0xabc...', blockNumber: 12345, gasUsed: 21000n },
+ *   'mainnet'
+ * );
+ * ```
  */
 export function showTransactionDetails(receipt: TransactionReceipt, networkKey: string): void {
   showSeparator();
@@ -260,6 +494,22 @@ export function showTransactionDetails(receipt: TransactionReceipt, networkKey: 
   showSeparator();
 }
 
+// ============================================================================
+// Default Export (all functions as object)
+// ============================================================================
+
+/**
+ * Default export containing all UI helper functions.
+ * Allows importing all functions as a single module.
+ * 
+ * @example
+ * ```typescript
+ * import ui from './ui-helpers.js';
+ * 
+ * ui.showHeader('my-wallet');
+ * ui.showSuccess('Done!');
+ * ```
+ */
 export default {
   showHeader,
   showSection,

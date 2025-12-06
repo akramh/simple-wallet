@@ -1,3 +1,41 @@
+/**
+ * @file service-worker.ts
+ * @description Chrome extension background service worker for the Simple Crypto Wallet.
+ * 
+ * Acts as the central message handler for all wallet operations in the extension context.
+ * Manages wallet state, handles dApp communication via EIP-1193 messages, and coordinates
+ * between the side panel UI and content scripts.
+ * 
+ * @responsibilities
+ * - Initialize and manage WalletAppService for the extension
+ * - Handle all message types from popup, sidepanel, and content scripts
+ * - Manage wallet lock/unlock state with auto-lock timeout (15 minutes)
+ * - Process dApp requests (eth_accounts, eth_sendTransaction, personal_sign, etc.)
+ * - Maintain transaction history and monitor pending transactions
+ * - Manage approved dApp origins for connection persistence
+ * - Configure Chrome Side Panel API for the wallet UI
+ * 
+ * @message-types
+ * - GET_STATE, CREATE_WALLET, IMPORT_WALLET, UNLOCK_WALLET, LOCK_WALLET
+ * - GET_BALANCE, GET_PORTFOLIO, SEND_TRANSACTION, GET_TRANSACTION_HISTORY
+ * - SWITCH_WALLET, SWITCH_ACCOUNT, SWITCH_NETWORK
+ * - ETH_ACCOUNTS, ETH_REQUEST_ACCOUNTS, ETH_SEND_TRANSACTION
+ * - PERSONAL_SIGN, ETH_SIGN_TYPED_DATA_V4, PERSONAL_EC_RECOVER
+ * - GET_SECRET_PHRASE, GET_PRIVATE_KEY
+ * 
+ * @security
+ * - Session password stored in memory only
+ * - Auto-lock after 15 minutes of inactivity
+ * - Password required for secret/private key retrieval
+ * - dApp approval required before exposing accounts
+ * 
+ * @dependencies
+ * - Buffer polyfill for browser compatibility
+ * - Wallet, WalletAppService, ChromeStorageAdapter
+ * - WebCrypto adapter for encryption
+ * - ethers for signing and transaction handling
+ */
+
 import '../../src/buffer-polyfill.js'; // Install Buffer polyfill
 import { Wallet } from '../../src/wallet.js';
 import { WalletAppService } from '../../src/app-service.js';
@@ -10,25 +48,66 @@ import { explorerAPI } from '../../src/explorer-api.js';
 import type { Config } from '../../src/types/index.js';
 import { ethers } from 'ethers';
 
-// Set up WebCrypto for browser environment
+// ============================================================================
+// Crypto Environment Setup
+// ============================================================================
+
+/** Configure WebCrypto adapter for browser environment (uses asmcrypto.js) */
 setCryptoAdapter(createWebCryptoAdapter());
 
-// Wallet state
+// ============================================================================
+// Global State
+// ============================================================================
+
+/** Wallet service instance for all wallet operations */
 let walletService: WalletAppService | null = null;
+
+/** Whether the wallet is currently unlocked */
 let isUnlocked = false;
-let currentWalletName = 'default'; // Track currently loaded wallet
+
+/** Name of the currently loaded wallet */
+let currentWalletName = 'default';
+
+/** Timer for auto-lock functionality */
 let autoLockTimer: NodeJS.Timeout | null = null;
-const AUTO_LOCK_TIMEOUT = 15 * 60 * 1000; // 15 minutes
+
+/** Auto-lock timeout: 15 minutes of inactivity */
+const AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
+
+/** Transaction history manager for the current wallet */
 let transactionHistory: TransactionHistoryManager | null = null;
+
+/** Cached session password (in-memory only, cleared on lock) */
 let sessionPassword: string | null = null;
+
+/** Set of approved dApp origins that don't require re-approval */
 let approvedDappOrigins = new Set<string>();
+// ============================================================================
+// Pending Request Management
+// ============================================================================
+
+/**
+ * Types of pending approval requests from dApps.
+ * Stored until user approves/rejects in the UI.
+ */
 type PendingRequest =
   | { id: string; type: 'connect'; origin: string; createdAt: number }
   | { id: string; type: 'transaction'; origin: string; createdAt: number; tx: any }
   | { id: string; type: 'signature'; origin: string; createdAt: number; method: string; params: any[] };
 
+/** Queue of pending approval requests */
 const pendingRequests: PendingRequest[] = [];
+
+/** Map of request IDs to resolve/reject callbacks */
 const approvalResolvers = new Map<string, { resolve: (value: any) => void; reject: (reason?: any) => void }>();
+/**
+ * Extracts the origin (protocol + host) from a message sender or payload.
+ * Used to identify dApp origins for approval tracking.
+ * 
+ * @param sender - Chrome runtime message sender
+ * @param payload - Message payload that may contain origin
+ * @returns Origin string or undefined if not determinable
+ */
 const resolveOrigin = (sender: chrome.runtime.MessageSender, payload?: any): string | undefined => {
   const fromPayload = payload?.origin;
   if (typeof fromPayload === 'string' && fromPayload.startsWith('http')) {
@@ -45,6 +124,10 @@ const resolveOrigin = (sender: chrome.runtime.MessageSender, payload?: any): str
   return undefined;
 };
 
+/**
+ * Loads the list of approved dApp origins from chrome.storage.local.
+ * Called during service worker initialization.
+ */
 async function loadApprovedOrigins(): Promise<void> {
   try {
     const stored = await chrome.storage.local.get('approvedDapps');
@@ -55,6 +138,10 @@ async function loadApprovedOrigins(): Promise<void> {
   }
 }
 
+/**
+ * Persists the current set of approved dApp origins to chrome.storage.local.
+ * Called after granting a new dApp connection.
+ */
 async function saveApprovedOrigins(): Promise<void> {
   try {
     await chrome.storage.local.set({ approvedDapps: Array.from(approvedDappOrigins) });
@@ -63,27 +150,65 @@ async function saveApprovedOrigins(): Promise<void> {
   }
 }
 
+// ============================================================================
+// Provider Event Broadcasting
+// ============================================================================
+
+/**
+ * Emits an EIP-1193 provider event to all extension contexts.
+ * Events are forwarded to content scripts for dApp notification.
+ * 
+ * @param event - Event type: 'connect', 'accountsChanged', 'chainChanged'
+ * @param data - Event payload (accounts array, chain ID, etc.)
+ */
 function emitProviderEvent(event: 'connect' | 'accountsChanged' | 'chainChanged', data: any): void {
   chrome.runtime.sendMessage({ type: 'PROVIDER_EVENT', event, data }).catch(() => {});
 }
 
+/**
+ * Broadcasts updated pending requests list to UI contexts.
+ * Called when requests are added or resolved.
+ */
 function broadcastPendingRequests(): void {
   chrome.runtime.sendMessage({ type: 'PENDING_REQUESTS_UPDATED', pending: pendingRequests }).catch(() => {});
 }
 
+/**
+ * Broadcasts account change to dApps via content scripts.
+ * @param accounts - Array of account addresses (usually single address)
+ */
 function broadcastAccountsChanged(accounts: string[]): void {
   emitProviderEvent('accountsChanged', accounts);
 }
 
+/**
+ * Broadcasts chain change to dApps via content scripts.
+ * @param chainIdHex - Hex-encoded chain ID (e.g., '0x1' for mainnet)
+ */
 function broadcastChainChanged(chainIdHex: string): void {
   emitProviderEvent('chainChanged', chainIdHex);
 }
 
+/**
+ * Generates a unique request ID for pending approval tracking.
+ * @returns UUID or timestamp-based fallback ID
+ */
 function createRequestId(): string {
   return crypto.randomUUID ? crypto.randomUUID() : `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-// Keep only types reachable from the primary type to satisfy ethers signTypedData
+// ============================================================================
+// EIP-712 Typed Data Helpers
+// ============================================================================
+
+/**
+ * Prunes EIP-712 types to only include those reachable from the primary type.
+ * Required because ethers.js signTypedData rejects unreferenced types.
+ * 
+ * @param primaryType - The main type being signed
+ * @param types - Full types object from typed data
+ * @returns Pruned types containing only referenced types
+ */
 function pruneTypedDataTypes(primaryType: string, types: Record<string, Array<{ name: string; type: string }>>): Record<string, Array<{ name: string; type: string }>> {
   if (!primaryType || !types) return types || {};
   const keep = new Set<string>();
@@ -105,6 +230,14 @@ function pruneTypedDataTypes(primaryType: string, types: Record<string, Array<{ 
   return pruned;
 }
 
+/**
+ * Parses typed data input from various formats dApps may send.
+ * Handles stringified JSON, double-escaped strings, and raw objects.
+ * 
+ * @param input - Raw input from dApp (string or object)
+ * @returns Parsed typed data object
+ * @throws Error if parsing fails for all attempted formats
+ */
 function parseTypedDataInput(input: any): any {
   if (typeof input !== 'string') return input;
 
@@ -152,6 +285,13 @@ function parseTypedDataInput(input: any): any {
   throw new Error('Failed to parse typed data');
 }
 
+/**
+ * Adds a pending approval request and waits for user response.
+ * Returns a promise that resolves when user approves or rejects.
+ * 
+ * @param request - Pending request to enqueue
+ * @returns Promise that resolves when approved or rejects when denied
+ */
 function enqueueApproval(request: PendingRequest): Promise<void> {
   return new Promise((resolve, reject) => {
     pendingRequests.push(request);
@@ -160,9 +300,19 @@ function enqueueApproval(request: PendingRequest): Promise<void> {
   });
 }
 
-// Configure action to open side panel
+// ============================================================================
+// Chrome Side Panel Configuration
+// ============================================================================
+
+/** Path to the side panel HTML file */
 const SIDE_PANEL_PATH = 'extension/sidepanel/sidepanel.html';
 
+/**
+ * Configures Chrome Side Panel API to open on extension icon click.
+ * Sets up the side panel behavior and path.
+ * 
+ * @param tabId - Optional tab ID for tab-specific panel configuration
+ */
 const configureSidePanel = async (tabId?: number) => {
   if (!chrome.sidePanel?.setPanelBehavior) return;
   try {
@@ -198,7 +348,14 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-// Minimal fallback config (primary config loaded from bundled config.json)
+// ============================================================================
+// Configuration Loading
+// ============================================================================
+
+/**
+ * Minimal fallback configuration if bundled config.json fails to load.
+ * Only includes Sepolia testnet for basic functionality.
+ */
 const fallbackConfig: Config & { network: string } = {
   network: 'sepolia',
   networks: {
@@ -214,7 +371,12 @@ const fallbackConfig: Config & { network: string } = {
   }
 };
 
-// Load config from bundled config.json asset
+/**
+ * Loads the bundled config.json from the extension assets.
+ * Falls back to minimal config if loading fails.
+ * 
+ * @returns Loaded configuration or fallback
+ */
 async function loadBundledConfig(): Promise<Config & { network: string }> {
   try {
     const configUrl = chrome.runtime.getURL('config.json');
@@ -228,7 +390,17 @@ async function loadBundledConfig(): Promise<Config & { network: string }> {
   return fallbackConfig;
 }
 
-// Initialize wallet service
+// ============================================================================
+// Wallet Service Initialization
+// ============================================================================
+
+/**
+ * Initializes the wallet service for the extension.
+ * Sets up storage, loads config, registers explorer APIs, and creates
+ * the WalletAppService instance.
+ * 
+ * Called on extension install, startup, and when service worker wakes up.
+ */
 async function initializeWalletService(): Promise<void> {
   const storage = new ChromeStorageAdapter();
   await storage.initialize();
@@ -271,7 +443,14 @@ async function initializeWalletService(): Promise<void> {
   await walletService.initialize();
 }
 
-// Auto-lock functionality
+// ============================================================================
+// Auto-Lock Functionality
+// ============================================================================
+
+/**
+ * Resets the auto-lock timer.
+ * Called on every user interaction to extend the session.
+ */
 function resetAutoLockTimer(): void {
   if (autoLockTimer) {
     clearTimeout(autoLockTimer);
@@ -282,6 +461,10 @@ function resetAutoLockTimer(): void {
   }, AUTO_LOCK_TIMEOUT);
 }
 
+/**
+ * Locks the wallet and clears session state.
+ * Broadcasts lock event to all extension contexts.
+ */
 function lockWallet(): void {
   isUnlocked = false;
   sessionPassword = null;
@@ -302,7 +485,14 @@ function lockWallet(): void {
   });
 }
 
-// Message handler
+// ============================================================================
+// Message Handler
+// ============================================================================
+
+/**
+ * Chrome runtime message listener.
+ * Routes all messages to handleMessage and sends async responses.
+ */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender).then(sendResponse).catch(error => {
     sendResponse({ error: error.message });
@@ -310,6 +500,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true; // Keep channel open for async response
 });
 
+/**
+ * Main message handler for all extension communication.
+ * Processes wallet operations, dApp requests, and state queries.
+ * 
+ * @param message - Message object with type and optional payload
+ * @param sender - Chrome runtime message sender info
+ * @returns Response object specific to message type
+ * @throws Error for unknown types or operation failures
+ */
 async function handleMessage(message: any, sender: chrome.runtime.MessageSender): Promise<any> {
   const { type, payload } = message;
   const origin = resolveOrigin(sender, payload);
@@ -833,7 +1032,18 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
   }
 }
 
-// Monitor transaction for confirmation
+// ============================================================================
+// Transaction Monitoring
+// ============================================================================
+
+/**
+ * Monitors a pending transaction for confirmation.
+ * Polls the blockchain every 5 seconds for up to 5 minutes.
+ * Updates transaction history when confirmed or failed.
+ * 
+ * @param txHash - Transaction hash to monitor
+ * @param network - Network identifier for the transaction
+ */
 async function monitorTransaction(txHash: string, network: string) {
   if (!walletService || !transactionHistory) return;
 
@@ -878,13 +1088,17 @@ async function monitorTransaction(txHash: string, network: string) {
   setTimeout(checkTransaction, 5000);
 }
 
-// Initialize on install
+// ============================================================================
+// Extension Lifecycle Events
+// ============================================================================
+
+/** Initialize wallet service when extension is first installed */
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Simple Crypto Wallet extension installed');
   initializeWalletService();
 });
 
-// Initialize on startup
+/** Initialize wallet service on browser startup */
 initializeWalletService();
 
 console.log('Simple Crypto Wallet background service worker loaded');

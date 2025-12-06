@@ -1,10 +1,39 @@
+/**
+ * @fileoverview Chrome extension storage adapter using chrome.storage.local API.
+ * 
+ * This module provides a StorageAdapter implementation that persists data using
+ * Chrome's extension storage API. It maintains an in-memory cache for synchronous
+ * reads while asynchronously persisting changes to chrome.storage.local.
+ * 
+ * Key features:
+ * - Synchronous read interface via in-memory cache
+ * - Async persistence to chrome.storage.local
+ * - Automatic cache hydration on initialization
+ * - Path-to-key mapping for compatibility with FileStorage paths
+ * 
+ * Usage:
+ * ```typescript
+ * const storage = await ChromeStorageAdapter.create();
+ * const wallets = storage.readJSON('wallets.json', {});
+ * ```
+ * 
+ * @module chrome-storage
+ */
+
 import type { StorageAdapter } from './storage.js';
 
 /**
  * Chrome extension storage adapter using chrome.storage.local API.
  * Provides persistent storage for the wallet extension.
+ * 
+ * Uses a two-tier approach:
+ * 1. In-memory cache for fast synchronous reads
+ * 2. Async writes to chrome.storage.local for persistence
+ * 
+ * Must call initialize() before use, or use the static create() factory.
  */
 export class ChromeStorageAdapter implements StorageAdapter {
+  /** In-memory cache for synchronous read access */
   private cache = new Map<string, any>();
 
   /**
@@ -16,6 +45,13 @@ export class ChromeStorageAdapter implements StorageAdapter {
     return storage;
   }
 
+  /**
+   * Read and parse JSON from the cache.
+   * Cache must be hydrated via initialize() first.
+   * @param path - Storage key (file path format for compatibility)
+   * @param fallback - Default value if key doesn't exist
+   * @returns Parsed JSON data or fallback
+   */
   readJSON<T>(path: string, fallback: T): T {
     try {
       // Return cached value if available
@@ -28,6 +64,12 @@ export class ChromeStorageAdapter implements StorageAdapter {
     }
   }
 
+  /**
+   * Serialize and write JSON to storage.
+   * Updates cache immediately and persists to chrome.storage.local asynchronously.
+   * @param path - Storage key (file path format for compatibility)
+   * @param data - Object to serialize and store
+   */
   writeJSON<T>(path: string, data: T): void {
     try {
       // Update cache
@@ -43,10 +85,20 @@ export class ChromeStorageAdapter implements StorageAdapter {
     }
   }
 
+  /**
+   * Check if a key exists in the cache.
+   * @param path - Storage key to check
+   * @returns True if key exists in cache
+   */
   exists(path: string): boolean {
     return this.cache.has(path);
   }
 
+  /**
+   * Read raw string value from cache.
+   * @param path - Storage key
+   * @returns Cached string value or null if not found
+   */
   readFile(path: string): string | null {
     try {
       const data = this.cache.get(path);
@@ -56,6 +108,12 @@ export class ChromeStorageAdapter implements StorageAdapter {
     }
   }
 
+  /**
+   * Write raw string value to storage.
+   * Updates cache immediately and persists asynchronously.
+   * @param path - Storage key
+   * @param contents - String data to store
+   */
   writeFile(path: string, contents: string): void {
     try {
       this.cache.set(path, contents);

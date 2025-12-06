@@ -1,3 +1,43 @@
+/**
+ * @file index.ts
+ * @description Command-line interface (CLI) entry point for the Simple Crypto Wallet.
+ * 
+ * Provides an interactive terminal interface for managing Ethereum wallets,
+ * accounts, tokens, and transactions. Uses inquirer for menu navigation
+ * and chalk for styled output.
+ * 
+ * @responsibilities
+ * - Interactive wallet creation and import workflows
+ * - Multi-wallet and multi-account management
+ * - Balance checking and transaction sending
+ * - Token management (ERC-20)
+ * - Network switching across EVM chains
+ * - Secure mnemonic/private key display
+ * - Wallet backup and restore
+ * 
+ * @dependencies
+ * - inquirer: Interactive command-line prompts
+ * - chalk: Terminal string styling
+ * - qrcode-terminal: QR code generation for receive addresses
+ * - ethers: Ethereum utilities
+ * - Internal: Wallet, WalletAppService, FileStorage, ExplorerAPI
+ * 
+ * @security
+ * - Master password required for wallet encryption
+ * - Password cached in memory during session
+ * - Mnemonic migration from plaintext to encrypted format
+ * - Secret reveal requires password re-entry
+ * 
+ * @example
+ * ```bash
+ * # Run the CLI
+ * npm run dev
+ * 
+ * # Or build and run
+ * npm run build && npm start
+ * ```
+ */
+
 import inquirer from 'inquirer';
 import { Wallet } from './wallet.js';
 import fs from 'fs';
@@ -12,16 +52,27 @@ import { createProviderFactory } from './providers.js';
 import { ExplorerAPI } from './explorer-api.js';
 import type { Config, Token, TokenMetadata } from './types/index.js';
 
-// Load and type config
+// ============================================================================
+// Configuration and Global State
+// ============================================================================
+
+/** Load and parse config.json with network definitions */
 const configData = JSON.parse(fs.readFileSync('config.json', 'utf8')) as Config & { network: string };
 const config: Config & { network: string } = configData;
+
+/** File-based storage adapter for persistent wallet data */
 const storage = new FileStorage();
+
+/** Core wallet instance with HD derivation and signing */
 const wallet = new Wallet(config, storage, createProviderFactory());
 
-// Token registry (built-in + user-added)
+// Token registry paths
+/** Built-in token list path */
 const TOKEN_LIST_PATH = 'tokens.json';
+/** User-added custom tokens path */
 const CUSTOM_TOKENS_PATH = 'tokens-user.json';
 
+/** High-level wallet service for token/network management */
 const walletService = new WalletAppService(wallet, config, {
   tokenListPath: TOKEN_LIST_PATH,
   customTokenPath: CUSTOM_TOKENS_PATH,
@@ -29,14 +80,31 @@ const walletService = new WalletAppService(wallet, config, {
   storage
 });
 
-// Initialize explorer API for transaction history
+/** Explorer API for fetching on-chain transaction history */
 const explorerAPI = new ExplorerAPI();
 explorerAPI.registerNetworks(config.networks);
 
-// Global password cache (in-memory only)
+// ============================================================================
+// Session State (In-Memory Only)
+// ============================================================================
+
+/** Cached master password for the current session */
 let masterPassword: string | null = null;
+
+/** Currently loaded wallet name */
 let currentWalletName: string | null = null;
 
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+/**
+ * Main CLI entry point.
+ * Initializes the wallet service, handles migration if needed,
+ * and presents the appropriate menu based on wallet state.
+ * 
+ * @async
+ */
 async function main(): Promise<void> {
   ui.clearScreen();
   ui.showHeader(null, null, config.networks[config.network].name);
@@ -58,7 +126,17 @@ async function main(): Promise<void> {
   }
 }
 
-// Password management functions
+// ============================================================================
+// Password Management
+// ============================================================================
+
+/**
+ * Prompts user to create a new master password with confirmation.
+ * Enforces minimum 8 character length and matching confirmation.
+ * Caches the password in memory for the session.
+ * 
+ * @returns The newly created master password
+ */
 async function promptMasterPasswordSetup(): Promise<string> {
   console.log('\n═══════════════════════════════════════');
   console.log('    🔐 Master Password Setup');
@@ -102,6 +180,12 @@ async function promptMasterPasswordSetup(): Promise<string> {
   }
 }
 
+/**
+ * Prompts user to enter their existing master password.
+ * Used for wallet decryption and secret reveal.
+ * 
+ * @returns The entered password (not validated)
+ */
 async function promptMasterPassword(): Promise<string> {
   const { password } = await inquirer.prompt<{ password: string }>([
     {
@@ -115,6 +199,12 @@ async function promptMasterPassword(): Promise<string> {
   return password;
 }
 
+/**
+ * Ensures a master password is available, prompting if not cached.
+ * Used before operations that require the password.
+ * 
+ * @returns The cached or newly entered password
+ */
 async function ensureMasterPassword(): Promise<string> {
   if (!masterPassword) {
     masterPassword = await promptMasterPassword();
@@ -122,6 +212,18 @@ async function ensureMasterPassword(): Promise<string> {
   return masterPassword;
 }
 
+// ============================================================================
+// Migration
+// ============================================================================
+
+/**
+ * Migrates plaintext wallets to encrypted format.
+ * Creates a backup of the original wallets.json before migration.
+ * Requires setting up a new master password.
+ * 
+ * @async
+ * @throws Exits process if user declines migration
+ */
 async function migrateExistingWallets(): Promise<void> {
   console.log('\n⚠️  MIGRATION REQUIRED\n');
   console.log('Your wallets are stored in plaintext format.');
@@ -182,6 +284,17 @@ async function migrateExistingWallets(): Promise<void> {
   }
 }
 
+// ============================================================================
+// Menu Functions
+// ============================================================================
+
+/**
+ * Displays wallet selection menu for users with existing wallets.
+ * Lists all saved wallets with their primary address and account count.
+ * Handles wallet loading with password validation (3 attempts max).
+ * 
+ * @param existingWallets - Map of wallet names to wallet data
+ */
 async function selectWalletMenu(existingWallets: Record<string, any>): Promise<void> {
   ui.clearScreen();
   ui.showHeader();
@@ -256,6 +369,12 @@ async function selectWalletMenu(existingWallets: Record<string, any>): Promise<v
   }
 }
 
+/**
+ * Displays initial menu for users without a loaded wallet.
+ * Offers options to create, import, or restore a wallet.
+ * 
+ * @async
+ */
 async function initialMenu(): Promise<void> {
   ui.showInfo('No wallet loaded. Create a new wallet or import an existing one.');
   console.log('');
@@ -305,6 +424,17 @@ async function initialMenu(): Promise<void> {
   }
 }
 
+// ============================================================================
+// Wallet Operations
+// ============================================================================
+
+/**
+ * Creates a new HD wallet with a random mnemonic.
+ * Displays the recovery phrase and prompts to save the wallet.
+ * Sets up master password if this is the first wallet.
+ * 
+ * @async
+ */
 async function createWallet(): Promise<void> {
   ui.clearScreen();
   ui.showHeader();
@@ -367,6 +497,13 @@ async function createWallet(): Promise<void> {
   await mainMenu(savedWalletName);
 }
 
+/**
+ * Imports an existing wallet from a 12-word mnemonic phrase.
+ * Validates the mnemonic format before import.
+ * Sets up master password if this is the first wallet.
+ * 
+ * @async
+ */
 async function importWallet(): Promise<void> {
   console.log('\n📥 Import Wallet\n');
 
@@ -442,6 +579,13 @@ async function importWallet(): Promise<void> {
   }
 }
 
+/**
+ * Restores a wallet from an encrypted backup file.
+ * Prompts for backup file path and decryption password.
+ * Handles password synchronization with existing master password.
+ * 
+ * @async
+ */
 async function importWalletFromBackup(): Promise<void> {
   ui.clearScreen();
   ui.showHeader();
@@ -527,6 +671,13 @@ async function importWalletFromBackup(): Promise<void> {
   }
 }
 
+/**
+ * Displays the main menu for a loaded wallet.
+ * Provides access to all wallet operations: balance, send, receive,
+ * accounts, tokens, secrets, export, and network switching.
+ * 
+ * @param walletName - Name of the currently loaded wallet (null if unsaved)
+ */
 async function mainMenu(walletName: string | null): Promise<void> {
   currentWalletName = walletName;
   const currentAddress = wallet.getAddress();
@@ -615,6 +766,16 @@ async function mainMenu(walletName: string | null): Promise<void> {
   }
 }
 
+// ============================================================================
+// Balance and Portfolio Functions
+// ============================================================================
+
+/**
+ * Displays the current balance for all tokens on the active network.
+ * Fetches balances from the blockchain via RPC.
+ * 
+ * @param currentWalletName - Name of the current wallet for header display
+ */
 async function checkBalance(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
@@ -662,6 +823,13 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
   await mainMenu(currentWalletName);
 }
 
+/**
+ * Displays portfolio balances across all configured networks.
+ * Temporarily switches network context to fetch each network's balances.
+ * Restores original network after completion.
+ * 
+ * @param currentWalletName - Name of the current wallet for header display
+ */
 async function checkPortfolioAllNetworks(currentWalletName: string | null): Promise<void> {
   const originalNetwork = config.network;
   const address = wallet.getAddress();
@@ -721,6 +889,17 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
   await mainMenu(currentWalletName);
 }
 
+// ============================================================================
+// Transaction Functions
+// ============================================================================
+
+/**
+ * Displays recent transaction history from block explorer.
+ * Shows up to 15 recent transactions with status, amount, and direction.
+ * Requires explorer API to be configured for the current network.
+ * 
+ * @param currentWalletName - Name of the current wallet for header display
+ */
 async function viewTransactionHistory(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
@@ -810,6 +989,13 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
   await mainMenu(currentWalletName);
 }
 
+/**
+ * Handles sending crypto (native or ERC-20 tokens).
+ * Prompts for token selection, recipient, and amount with validation.
+ * Shows transaction receipt with block explorer link on success.
+ * 
+ * @param currentWalletName - Name of the current wallet for header display
+ */
 async function sendCrypto(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
@@ -926,6 +1112,12 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
   await mainMenu(currentWalletName);
 }
 
+/**
+ * Displays the wallet's receive address with QR code.
+ * Shows supported tokens for the current network.
+ * 
+ * @param currentWalletName - Name of the current wallet for header display
+ */
 async function showReceiveAddress(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
@@ -955,6 +1147,17 @@ async function showReceiveAddress(currentWalletName: string | null): Promise<voi
   await mainMenu(currentWalletName);
 }
 
+// ============================================================================
+// Security Functions
+// ============================================================================
+
+/**
+ * Reveals wallet secrets (private key and mnemonic).
+ * Requires password re-entry for security even if password is cached.
+ * Displays prominent security warnings about protecting the information.
+ * 
+ * @param currentWalletName - Name of the current wallet for header display
+ */
 async function showWalletSecrets(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
@@ -1025,6 +1228,12 @@ async function showWalletSecrets(currentWalletName: string | null): Promise<void
   }
 }
 
+/**
+ * Exports the current wallet to an encrypted backup file.
+ * Prompts for destination path with default timestamped filename.
+ * 
+ * @param currentWalletName - Name of the wallet to export
+ */
 async function exportWallet(currentWalletName: string | null): Promise<void> {
   const address = wallet.getAddress();
   ui.clearScreen();
@@ -1077,6 +1286,16 @@ async function exportWallet(currentWalletName: string | null): Promise<void> {
   await mainMenu(currentWalletName);
 }
 
+// ============================================================================
+// Token Management
+// ============================================================================
+
+/**
+ * Token management menu for the current network.
+ * Displays all tokens (built-in and custom) with options to add/remove.
+ * 
+ * @param currentWalletName - Name of the current wallet for header display
+ */
 async function manageTokens(currentWalletName: string | null): Promise<void> {
   const networkKey = config.network;
   const tokens = walletService.getTokensForNetwork(networkKey);
@@ -1128,6 +1347,13 @@ async function manageTokens(currentWalletName: string | null): Promise<void> {
   await mainMenu(currentWalletName);
 }
 
+/**
+ * Adds a custom ERC-20 token to the current network.
+ * Attempts to auto-detect token metadata from the contract.
+ * Falls back to manual entry if auto-detection fails.
+ * 
+ * @param networkKey - Network identifier to add the token to
+ */
 async function addCustomToken(networkKey: string): Promise<void> {
   const { address } = await inquirer.prompt<{ address: string }>([
     {
@@ -1211,6 +1437,12 @@ async function addCustomToken(networkKey: string): Promise<void> {
   ui.showSuccess(`Added ${metadata.symbol} to ${config.networks[networkKey].name}`);
 }
 
+/**
+ * Removes a user-added custom token from the current network.
+ * Only allows removing custom tokens, not built-in tokens.
+ * 
+ * @param networkKey - Network identifier to remove the token from
+ */
 async function removeCustomToken(networkKey: string): Promise<void> {
   const custom = walletService.getCustomTokens(networkKey);
   if (custom.length === 0) {
@@ -1231,6 +1463,17 @@ async function removeCustomToken(networkKey: string): Promise<void> {
   ui.showSuccess('Token removed.');
 }
 
+// ============================================================================
+// Account Management
+// ============================================================================
+
+/**
+ * Account management menu for the current wallet.
+ * Shows all derived accounts with options to switch or create new ones.
+ * Uses HD derivation path m/44'/60'/0'/0/index for each account.
+ * 
+ * @param currentWalletName - Name of the current wallet
+ */
 async function manageAccounts(currentWalletName: string | null): Promise<void> {
   console.log('\n👤 Manage Accounts\n');
 
@@ -1313,6 +1556,15 @@ async function manageAccounts(currentWalletName: string | null): Promise<void> {
   }
 }
 
+// ============================================================================
+// Network Management
+// ============================================================================
+
+/**
+ * Network switching menu.
+ * Lists all configured networks and allows switching between them.
+ * Optionally persists the change to config.json.
+ */
 async function changeNetwork(): Promise<void> {
   console.log('\n⚙️  Change Network\n');
 
@@ -1357,6 +1609,10 @@ async function changeNetwork(): Promise<void> {
   }
 }
 
+/**
+ * Switches to a different saved wallet.
+ * Opens the wallet selection menu.
+ */
 async function switchWallet(): Promise<void> {
   const existingWallets = wallet.getAllWallets();
 
@@ -1368,6 +1624,13 @@ async function switchWallet(): Promise<void> {
   }
 }
 
+/**
+ * Deletes the currently loaded wallet.
+ * Requires user confirmation before deletion.
+ * Cannot be undone - wallet data is permanently removed.
+ * 
+ * @param currentWalletName - Name of the wallet to delete
+ */
 async function deleteCurrentWallet(currentWalletName: string | null): Promise<void> {
   if (!currentWalletName) {
     console.log('\n⚠️  No wallet name specified\n');
@@ -1406,12 +1669,26 @@ async function deleteCurrentWallet(currentWalletName: string | null): Promise<vo
   }
 }
 
-// Run CLI only when not under test
+// ============================================================================
+// CLI Execution
+// ============================================================================
+
+/**
+ * Run CLI only when not in test environment.
+ * Tests import individual functions for isolated testing.
+ */
 if (process.env.NODE_ENV !== 'test') {
   main().catch(console.error);
 }
 
-// Exports for tests
+// ============================================================================
+// Test Exports
+// ============================================================================
+
+/**
+ * Exported functions and instances for testing.
+ * Allows tests to call individual menu functions and access wallet state.
+ */
 export {
   main,
   wallet,
