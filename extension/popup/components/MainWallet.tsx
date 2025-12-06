@@ -21,6 +21,9 @@ import avaxIcon from '../../assets/img/avax-token.svg';
 import arbitrumIcon from '../../assets/img/arbitrum.svg';
 import baseIcon from '../../assets/img/base.svg';
 import lineaIcon from '../../assets/img/linea-logo-mainnet.svg';
+import usdcIcon from '../../assets/img/icon-usdc.png';
+import usdtIcon from '../../assets/img/usdt.svg';
+import polIcon from '../../assets/img/pol-token.svg';
 import sendIcon from '../../assets/icons/send.svg';
 import receiveIcon from '../../assets/icons/receive.svg';
 import backIcon from '../../assets/icons/arrow-left.svg';
@@ -32,7 +35,10 @@ const ICON_ASSETS: Record<string, string> = {
   'avax-token.svg': avaxIcon,
   'arbitrum.svg': arbitrumIcon,
   'base.svg': baseIcon,
-  'linea-logo-mainnet.svg': lineaIcon
+  'linea-logo-mainnet.svg': lineaIcon,
+  'icon-usdc.png': usdcIcon,
+  'usdt.svg': usdtIcon,
+  'pol-token.svg': polIcon
 };
 
 const SYMBOL_ICON_FALLBACK: Record<string, string> = {
@@ -45,7 +51,11 @@ const SYMBOL_ICON_FALLBACK: Record<string, string> = {
   wavax: 'avax-token.svg',
   arb: 'arbitrum.svg',
   base: 'base.svg',
-  linea: 'linea-logo-mainnet.svg'
+  linea: 'linea-logo-mainnet.svg',
+  usdc: 'icon-usdc.png',
+  usdt: 'usdt.svg',
+  pol: 'pol-token.svg',
+  matic: 'pol-token.svg'
 };
 
 interface Props {
