@@ -55,10 +55,12 @@ export interface Token {
   address: string;
   /** Number of decimal places for display formatting */
   decimals: number;
-  /** Human-readable token name */
+ /** Human-readable token name */
   name: string;
   /** Distinguishes native currency from ERC-20 tokens */
   type?: 'native' | 'erc20';
+  /** Optional icon file name for UI display (e.g., 'eth_logo.svg') */
+  icon?: string;
 }
 
 /**

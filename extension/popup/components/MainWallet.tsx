@@ -5,7 +5,7 @@
  * - Portfolio/asset balances
  * - Send/receive functionality
  * - Activity/transaction history
- * - Multi-view navigation (assets, send, receive, activity, settings)
+ * - Multi-view navigation (tokens, send, receive, activity, settings)
  */
 import React, { useState, useEffect } from 'react';
 import SettingsView from './SettingsView';
@@ -14,6 +14,39 @@ import AccountMenu from './AccountMenu';
 import ReceiveView from './ReceiveView';
 import ActivityView from './ActivityView';
 import AddTokenModal from './AddTokenModal';
+import ethIcon from '../../assets/img/eth_logo.svg';
+import bnbIcon from '../../assets/img/bnb.svg';
+import solIcon from '../../assets/img/solana-logo.svg';
+import avaxIcon from '../../assets/img/avax-token.svg';
+import arbitrumIcon from '../../assets/img/arbitrum.svg';
+import baseIcon from '../../assets/img/base.svg';
+import lineaIcon from '../../assets/img/linea-logo-mainnet.svg';
+import sendIcon from '../../assets/icons/send.svg';
+import receiveIcon from '../../assets/icons/receive.svg';
+import backIcon from '../../assets/icons/arrow-left.svg';
+
+const ICON_ASSETS: Record<string, string> = {
+  'eth_logo.svg': ethIcon,
+  'bnb.svg': bnbIcon,
+  'solana-logo.svg': solIcon,
+  'avax-token.svg': avaxIcon,
+  'arbitrum.svg': arbitrumIcon,
+  'base.svg': baseIcon,
+  'linea-logo-mainnet.svg': lineaIcon
+};
+
+const SYMBOL_ICON_FALLBACK: Record<string, string> = {
+  eth: 'eth_logo.svg',
+  weth: 'eth_logo.svg',
+  bnb: 'bnb.svg',
+  wbnb: 'bnb.svg',
+  sol: 'solana-logo.svg',
+  avax: 'avax-token.svg',
+  wavax: 'avax-token.svg',
+  arb: 'arbitrum.svg',
+  base: 'base.svg',
+  linea: 'linea-logo-mainnet.svg'
+};
 
 interface Props {
   address: string;
@@ -28,6 +61,7 @@ interface Token {
   type: 'native' | 'erc20';
   address?: string;
   decimals: number;
+   icon?: string;
 }
 
 interface TokenBalance {
@@ -36,7 +70,7 @@ interface TokenBalance {
   error?: string;
 }
 
-type View = 'assets' | 'activity' | 'receive' | 'send' | 'settings';
+type View = 'tokens' | 'activity' | 'receive' | 'send' | 'settings';
 
 function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const notifyStateChange = () => {
@@ -45,7 +79,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     }
   };
 
-  const [view, setView] = useState<View>('assets');
+  const [view, setView] = useState<View>('tokens');
   const [portfolio, setPortfolio] = useState<TokenBalance[]>([]);
   const [networks, setNetworks] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
@@ -150,7 +184,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         setAmount('');
         notifyStateChange();
         setTimeout(() => {
-          setView('assets');
+          setView('tokens');
           handleRefresh();
         }, 2000);
       }
@@ -169,21 +203,24 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     return num.toFixed(4).replace(/\.?0+$/, '');
   };
 
-  const nativeToken = portfolio.find(p => p.token.type === 'native');
-  const nativeBalance = nativeToken ? parseFloat(nativeToken.balance) : 0;
+  const getTokenIcon = (token: Token) => {
+    const iconName = token.icon || SYMBOL_ICON_FALLBACK[token.symbol.toLowerCase()];
+    if (iconName && ICON_ASSETS[iconName]) {
+      return ICON_ASSETS[iconName];
+    }
+    return null;
+  };
 
   return (
     <div className="container">
       <Header
-        network={network}
-        networks={networks}
         currentAddress={address}
         currentWalletName={currentWalletName}
         currentAccountIndex={currentAccountIndex}
-        onNetworkChange={handleNetworkChange}
         onAccountMenuClick={() => setShowAccountMenu(true)}
         onOpenSettings={() => setView('settings')}
         onLock={handleLock}
+        showAccountButton={false}
       />
 
       {showAccountMenu && (
@@ -204,19 +241,72 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         />
       )}
 
-      {/* Navigation Tabs */}
-      {view !== 'settings' && (
-        <div className="top-nav">
-          {['assets', 'receive', 'send', 'activity'].map((tab) => (
+      {/* Account selector and (for main tabs) balance + navigation */}
+      {view !== 'settings' && view !== 'send' && view !== 'receive' && (
+        <>
+          <div className="account-row">
             <button
-              key={tab}
-              className={`nav-item ${view === tab ? 'active' : ''}`}
-              onClick={() => setView(tab as View)}
+              className="account-button wide"
+              onClick={() => setShowAccountMenu(true)}
             >
-              {tab}
+              <div className="account-avatar">
+                {address.substring(2, 4).toUpperCase()}
+              </div>
+              <div className="account-info">
+                <div className="account-name">
+                  {currentWalletName} : Account {currentAccountIndex + 1}
+                </div>
+                <div className="account-address">
+                  {address.substring(0, 6)}...{address.substring(address.length - 4)}
+                </div>
+              </div>
+              <span className="dropdown-arrow">▼</span>
             </button>
-          ))}
-        </div>
+          </div>
+
+          {/* Balance + Actions always above tabs */}
+          <div className="balance-card">
+            <div className="balance-header">
+              <div className="balance-label">Total Balance</div>
+              <button
+                className="refresh-link"
+                onClick={handleRefresh}
+                disabled={refreshing}
+              >
+                {refreshing ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+            <div className="balance-amount-display">$0.00</div>
+            <div className="action-row">
+              <button
+                className="action-tile"
+                onClick={() => setView('receive')}
+              >
+                <img src={receiveIcon} alt="Receive" className="action-icon" />
+                <span>Receive</span>
+              </button>
+              <button
+                className="action-tile"
+                onClick={() => setView('send')}
+              >
+                <img src={sendIcon} alt="Send" className="action-icon" />
+                <span>Send</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="top-nav">
+            {['tokens', 'activity'].map((tab) => (
+              <button
+                key={tab}
+                className={`nav-item ${view === tab ? 'active' : ''}`}
+                onClick={() => setView(tab as View)}
+              >
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Content Area */}
@@ -227,51 +317,55 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
             onAccountSwitch={() => loadData()}
             onWalletSwitch={() => loadData()}
             onStateChange={notifyStateChange}
-            onClose={() => setView('assets')}
+            onClose={() => setView('tokens')}
           />
-        ) : view === 'assets' ? (
+        ) : view === 'tokens' ? (
           <>
-            {/* Main Balance Card */}
-            <div className="wallet-card">
-              <div className="balance-label">Total Balance</div>
-              <div className="balance">
-                <span className="balance-amount">{formatBalance(nativeBalance)}</span>
-                <span className="balance-symbol">{nativeToken?.token.symbol || 'ETH'}</span>
+            {/* Tokens */}
+            <div className="tokens-header">
+              <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+                <label style={{ marginBottom: 4 }}>Network</label>
+                <select
+                  value={network}
+                  onChange={(e) => handleNetworkChange(e.target.value)}
+                >
+                  {Object.entries(networks).map(([key, net]: [string, any]) => (
+                    <option key={key} value={key}>{net.name}</option>
+                  ))}
+                </select>
               </div>
-              <button 
-                className="btn btn-secondary"
-                onClick={handleRefresh}
-                disabled={refreshing}
-              >
-                {refreshing ? 'Refreshing...' : 'Refresh'}
-              </button>
             </div>
 
-            {/* Token List */}
             {loading ? (
-              <div className="loading">
-                Loading tokens...
-              </div>
+              <div className="loading">Loading tokens...</div>
             ) : (
               <div className="token-list">
-                {portfolio.map((item, index) => (
-                  <div key={index} className="token-item">
-                    <div className="token-info">
-                      <div className="token-icon">
-                        {item.token.symbol.substring(0, 1)}
+                {portfolio.map((item, index) => {
+                  const iconSrc = getTokenIcon(item.token);
+                  return (
+                    <div key={index} className="token-item">
+                      <div className="token-info">
+                        {iconSrc ? (
+                          <img src={iconSrc} alt={item.token.symbol} className="token-icon-img" />
+                        ) : (
+                          <div className="token-icon">
+                            {item.token.symbol.substring(0, 1)}
+                          </div>
+                        )}
+                        <div className="token-details">
+                          <h3>{item.token.symbol}</h3>
+                          <p>{item.token.name}</p>
+                        </div>
                       </div>
-                      <div className="token-details">
-                        <h3>{item.token.symbol}</h3>
-                        <p>{item.token.name}</p>
+                      <div className="token-balance">
+                        <div className="token-amount">
+                          {item.error ? 'Error' : formatBalance(item.balance)}
+                        </div>
+                        <div className="token-symbol">{item.token.symbol}</div>
                       </div>
                     </div>
-                    <div className="token-balance">
-                      <div className="token-amount">
-                        {item.error ? 'Error' : formatBalance(item.balance)}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {/* Add Token Button */}
                 <button
@@ -302,54 +396,66 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         ) : view === 'activity' ? (
           <ActivityView currentAddress={address} network={network} />
         ) : view === 'receive' ? (
-          <ReceiveView address={address} network={network} networks={networks} />
-        ) : view === 'send' ? (
-          <form onSubmit={handleSend}>
-            <div className="form-group">
-              <label>Token</label>
-              <select
-                value={selectedToken?.symbol || ''}
-                onChange={(e) => {
-                  const token = portfolio.find(p => p.token.symbol === e.target.value);
-                  setSelectedToken(token?.token || null);
-                }}
-              >
-                <option value="">Select a token</option>
-                {portfolio.map((item) => (
-                  <option key={item.token.symbol} value={item.token.symbol}>
-                    {item.token.symbol} ({formatBalance(item.balance)})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label>Recipient Address</label>
-              <input
-                type="text"
-                value={recipient}
-                onChange={(e) => setRecipient(e.target.value)}
-                placeholder="0x..."
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Amount</label>
-              <input
-                type="text"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="0.0"
-              />
-            </div>
-
-            {sendError && <div className="error">{sendError}</div>}
-            {sendSuccess && <div className="success">{sendSuccess}</div>}
-
-            <button type="submit" className="btn btn-primary" disabled={sendLoading}>
-              {sendLoading ? 'Sending...' : 'Send'}
+          <div className="takeover">
+            <button className="back-button" onClick={() => setView('tokens')}>
+              <img src={backIcon} alt="Back" />
+              <span>Back</span>
             </button>
-          </form>
+            <ReceiveView address={address} network={network} networks={networks} />
+          </div>
+        ) : view === 'send' ? (
+          <div className="takeover">
+            <button className="back-button" onClick={() => setView('tokens')}>
+              <img src={backIcon} alt="Back" />
+              <span>Back</span>
+            </button>
+            <form onSubmit={handleSend}>
+              <div className="form-group">
+                <label>Token</label>
+                <select
+                  value={selectedToken?.symbol || ''}
+                  onChange={(e) => {
+                    const token = portfolio.find(p => p.token.symbol === e.target.value);
+                    setSelectedToken(token?.token || null);
+                  }}
+                >
+                  <option value="">Select a token</option>
+                  {portfolio.map((item) => (
+                    <option key={item.token.symbol} value={item.token.symbol}>
+                      {item.token.symbol} ({formatBalance(item.balance)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Recipient Address</label>
+                <input
+                  type="text"
+                  value={recipient}
+                  onChange={(e) => setRecipient(e.target.value)}
+                  placeholder="0x..."
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Amount</label>
+                <input
+                  type="text"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="0.0"
+                />
+              </div>
+
+              {sendError && <div className="error">{sendError}</div>}
+              {sendSuccess && <div className="success">{sendSuccess}</div>}
+
+              <button type="submit" className="btn btn-primary" disabled={sendLoading}>
+                {sendLoading ? 'Sending...' : 'Send'}
+              </button>
+            </form>
+          </div>
         ) : null}
       </div>
     </div>
