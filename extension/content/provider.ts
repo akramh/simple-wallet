@@ -8,7 +8,9 @@ interface RequestArguments {
 
 class SimpleWalletProvider {
   public isSimpleWallet = true;
-  public isMetaMask = false; // Some dApps check for this
+  public isMetaMask = true; // Improve dApp compatibility checks
+  public selectedAddress: string | null = null;
+  public chainId: string | null = null;
   private requestId = 0;
   private pendingRequests = new Map<number, { resolve: Function; reject: Function }>();
 
@@ -17,19 +19,27 @@ class SimpleWalletProvider {
     window.addEventListener('message', (event) => {
       if (event.source !== window) return;
 
-      const { type, id, result, error } = event.data;
+      const { type, id, result, error, event: evt, data } = event.data;
 
-      if (type !== 'SIMPLE_WALLET_PROVIDER_RESPONSE') return;
+      if (type === 'SIMPLE_WALLET_PROVIDER_RESPONSE') {
+        const pending = this.pendingRequests.get(id);
+        if (!pending) return;
+        this.pendingRequests.delete(id);
+        if (error) {
+          pending.reject(new Error(error));
+        } else {
+          pending.resolve(this.processResult(result));
+        }
+      }
 
-      const pending = this.pendingRequests.get(id);
-      if (!pending) return;
-
-      this.pendingRequests.delete(id);
-
-      if (error) {
-        pending.reject(new Error(error));
-      } else {
-        pending.resolve(this.processResult(result));
+      if (type === 'SIMPLE_WALLET_PROVIDER_EVENT' && evt) {
+        if (evt === 'accountsChanged') {
+          this.selectedAddress = Array.isArray(data) && data.length ? data[0] : null;
+        }
+        if (evt === 'chainChanged') {
+          this.chainId = data;
+        }
+        this.emit(evt, data);
       }
     });
   }
@@ -78,9 +88,26 @@ class SimpleWalletProvider {
 
   // Process specific result types
   private processResult(result: any): any {
-    if (result.accounts) return result.accounts;
-    if (result.chainId) return result.chainId;
-    if (result.balance) return result.balance;
+    if (result.accounts) {
+      const accounts = result.accounts;
+      this.selectedAddress = Array.isArray(accounts) && accounts.length ? accounts[0] : null;
+      this.emit('accountsChanged', accounts);
+      return accounts;
+    }
+    if (result.chainId) {
+      this.chainId = result.chainId;
+      this.emit('chainChanged', result.chainId);
+      return result.chainId;
+    }
+    if (result && typeof result === 'object') {
+      if ('signature' in result && typeof (result as any).signature === 'string') return (result as any).signature;
+      if ('result' in result && typeof (result as any).result === 'string') return (result as any).result;
+      if (result.balance) return result.balance;
+      if (Array.isArray(result)) return result;
+      // Fallback: stringify to avoid [object Object] surfacing to dApps
+      return JSON.stringify(result);
+    }
+    if (result?.balance) return result.balance;
     return result;
   }
 
@@ -125,6 +152,19 @@ if (!window.ethereum) {
 
   // Announce provider to the page
   window.dispatchEvent(new Event('ethereum#initialized'));
+
+   // EIP-6963 provider discovery
+   const info = {
+     uuid: 'simple-wallet-eip6963',
+     name: 'Simple Wallet',
+     icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>',
+     rdns: 'simple.wallet'
+   };
+   const announce = () => {
+     window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: { info, provider } }));
+   };
+   window.addEventListener('eip6963:requestProvider', announce);
+   announce();
 
   console.log('Simple Wallet provider injected');
 }
