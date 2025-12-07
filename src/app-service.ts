@@ -21,6 +21,7 @@ import type { Config, Token, TokenRegistry, TokenMetadata } from './types/index.
 import { Wallet } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
+import { ethers } from 'ethers';
 
 /**
  * Options for network switching behavior.
