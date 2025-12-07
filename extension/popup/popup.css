@@ -60,6 +60,77 @@
   color: var(--text-primary);
 }
 
+.amount-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.amount-label-row label {
+  margin-bottom: 0;
+}
+
+.max-btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.max-btn:hover {
+  opacity: 0.85;
+}
+
+.amount-usd-value {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.gas-estimate-box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.gas-estimate-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.gas-estimate-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.gas-amount {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.gas-usd {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.gas-loading {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 .form-group input,
 .form-group textarea,
 .form-group select {
@@ -2249,7 +2320,7 @@
 .tx-detail-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border-light);
 }
@@ -2270,6 +2341,35 @@
   color: var(--text-primary);
   font-weight: 600;
   font-family: var(--font-mono, monospace);
+}
+
+.tx-detail-value-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.tx-detail-usd {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.tx-detail-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.tx-total-row {
+  padding-top: 4px;
+}
+
+.tx-total-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .tx-hash-value {

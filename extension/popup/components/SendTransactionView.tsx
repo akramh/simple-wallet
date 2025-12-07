@@ -34,6 +34,17 @@ interface NetworkConfig {
   chainId: number;
 }
 
+interface GasEstimate {
+  estimatedCostNative: string;
+  nativeSymbol: string;
+  gasLimit: string;
+}
+
+interface PriceData {
+  prices: Record<string, number | null>;
+  nativePrice?: number | null;
+}
+
 export function SendTransactionView({
   token,
   recipient,
@@ -45,9 +56,14 @@ export function SendTransactionView({
   const [txState, setTxState] = useState<TxState>({ status: 'confirm' });
   const [networkConfig, setNetworkConfig] = useState<NetworkConfig | null>(null);
   const [copied, setCopied] = useState(false);
+  const [gasEstimate, setGasEstimate] = useState<GasEstimate | null>(null);
+  const [gasEstimateStatus, setGasEstimateStatus] = useState<'loading' | 'done' | 'failed'>('loading');
+  const [priceData, setPriceData] = useState<PriceData | null>(null);
 
-  // Fetch network config for explorer link
+  // Fetch network config, gas estimate, and prices
   useEffect(() => {
+    setGasEstimateStatus('loading');
+    // Fetch network config
     chrome.runtime.sendMessage({ type: 'GET_NETWORK_CONFIG' })
       .then((response) => {
         if (response && !response.error) {
@@ -55,7 +71,82 @@ export function SendTransactionView({
         }
       })
       .catch(console.error);
-  }, []);
+
+    // Fetch gas estimate with timeout
+    const gasTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
+    const gasPromise = chrome.runtime.sendMessage({
+      type: 'GET_GAS_ESTIMATE',
+      payload: { token, toAddress: recipient, amount }
+    });
+    
+    Promise.race([gasPromise, gasTimeout])
+      .then((response) => {
+        if (response && !response.error) {
+          setGasEstimate(response);
+          setGasEstimateStatus('done');
+        } else {
+          setGasEstimateStatus('failed');
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        setGasEstimateStatus('failed');
+      });
+
+    // Fetch token prices
+    chrome.runtime.sendMessage({ type: 'GET_TOKEN_PRICES' })
+      .then((response) => {
+        if (response && !response.error) {
+          setPriceData({
+            prices: response.prices || {},
+            nativePrice: response.prices?.native || null
+          });
+        }
+      })
+      .catch(console.error);
+  }, [token, recipient, amount]);
+
+  // Calculate USD values
+  const getAmountUsd = (): string | null => {
+    if (!priceData) return null;
+    const priceKey = token.type === 'native' ? 'native' : token.address?.toLowerCase();
+    if (!priceKey) return null;
+    const price = priceData.prices[priceKey];
+    if (price === null || price === undefined) return null;
+    const value = parseFloat(amount) * price;
+    if (isNaN(value)) return null;
+    if (value < 0.01) return '<$0.01';
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const getGasUsd = (): string | null => {
+    if (!gasEstimate || !priceData?.nativePrice) return null;
+    const gasCost = parseFloat(gasEstimate.estimatedCostNative);
+    if (isNaN(gasCost)) return null;
+    const value = gasCost * priceData.nativePrice;
+    if (value < 0.01) return '<$0.01';
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const getTotalUsd = (): string | null => {
+    if (!priceData) return null;
+    let total = 0;
+    
+    // Amount value
+    const priceKey = token.type === 'native' ? 'native' : token.address?.toLowerCase();
+    if (priceKey && priceData.prices[priceKey]) {
+      total += parseFloat(amount) * (priceData.prices[priceKey] || 0);
+    }
+    
+    // Gas value (always in native token)
+    if (gasEstimate && priceData.nativePrice) {
+      total += parseFloat(gasEstimate.estimatedCostNative) * priceData.nativePrice;
+    }
+    
+    if (isNaN(total) || total === 0) return null;
+    if (total < 0.01) return '<$0.01';
+    return `$${total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
 
   // Submit transaction when user confirms
   const handleConfirmSend = useCallback(async () => {
@@ -126,7 +217,10 @@ export function SendTransactionView({
             <div className="tx-detail-rows">
               <div className="tx-detail-row">
                 <span className="tx-detail-label">Amount</span>
-                <span className="tx-detail-value tx-amount-highlight">{amount} {token.symbol}</span>
+                <div className="tx-detail-value-group">
+                  <span className="tx-detail-value tx-amount-highlight">{amount} {token.symbol}</span>
+                  {getAmountUsd() && <span className="tx-detail-usd">{getAmountUsd()}</span>}
+                </div>
               </div>
 
               <div className="tx-detail-row">
@@ -138,6 +232,32 @@ export function SendTransactionView({
                 <span className="tx-detail-label">Network</span>
                 <span className="tx-detail-value">{networkConfig?.network || 'Loading...'}</span>
               </div>
+
+              <div className="tx-detail-divider" />
+
+              <div className="tx-detail-row">
+                <span className="tx-detail-label">Estimated Network Fee</span>
+                <div className="tx-detail-value-group">
+                  <span className="tx-detail-value">
+                    {gasEstimateStatus === 'loading'
+                      ? 'Estimating...'
+                      : gasEstimate
+                        ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(6)} ${gasEstimate.nativeSymbol}`
+                        : '--'}
+                  </span>
+                  {getGasUsd() && <span className="tx-detail-usd">{getGasUsd()}</span>}
+                </div>
+              </div>
+
+              {getTotalUsd() && (
+                <>
+                  <div className="tx-detail-divider" />
+                  <div className="tx-detail-row tx-total-row">
+                    <span className="tx-detail-label">Total Cost</span>
+                    <span className="tx-detail-value tx-total-value">{getTotalUsd()}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

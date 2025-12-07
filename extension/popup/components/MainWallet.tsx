@@ -118,6 +118,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [amount, setAmount] = useState('');
   const [sendError, setSendError] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [gasEstimate, setGasEstimate] = useState<{ estimatedCostNative: string; nativeSymbol: string } | null>(null);
+  const [gasEstimateLoading, setGasEstimateLoading] = useState(false);
 
   // Load tokens immediately, then trigger async balance refresh
   useEffect(() => {
@@ -140,6 +142,47 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       chrome.runtime.onMessage.removeListener(handleMessage);
     };
   }, [network]);
+
+  // Fetch gas estimate when token/recipient changes
+  useEffect(() => {
+    if (!selectedToken || !recipient || !/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
+      setGasEstimate(null);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchGasEstimate = async () => {
+      setGasEstimateLoading(true);
+      try {
+        // Add client-side timeout as backup
+        const timeoutPromise = new Promise<null>((resolve) => 
+          setTimeout(() => resolve(null), 8000)
+        );
+        const responsePromise = chrome.runtime.sendMessage({
+          type: 'GET_GAS_ESTIMATE',
+          payload: { token: selectedToken, toAddress: recipient, amount: amount || '0' }
+        });
+        
+        const response = await Promise.race([responsePromise, timeoutPromise]);
+        if (!cancelled && response && !response.error) {
+          setGasEstimate(response);
+        }
+      } catch (err) {
+        console.warn('Failed to fetch gas estimate:', err);
+      } finally {
+        if (!cancelled) {
+          setGasEstimateLoading(false);
+        }
+      }
+    };
+
+    // Debounce the fetch
+    const timer = setTimeout(fetchGasEstimate, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [selectedToken, recipient, amount]);
 
   const loadTokensAndData = async () => {
     setLoading(true);
@@ -225,6 +268,46 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     } catch (error) {
       console.error('Failed to switch network:', error);
     }
+  };
+
+  const handleMaxClick = () => {
+    if (!selectedToken) return;
+    
+    // Find the token's balance
+    const tokenData = portfolio.find(p => p.token.symbol === selectedToken.symbol);
+    if (!tokenData) return;
+    
+    // Use full balance - user is responsible for ensuring sufficient funds for network fees
+    setAmount(tokenData.balance);
+  };
+
+  const getAmountUsdValue = (): string | null => {
+    if (!selectedToken || !amount) return null;
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) return null;
+    
+    const priceKey = selectedToken.type === 'native' ? 'native' : selectedToken.address?.toLowerCase();
+    if (!priceKey) return null;
+    
+    const price = tokenPrices[priceKey];
+    if (price === null || price === undefined) return null;
+    
+    const value = amountNum * price;
+    if (value < 0.01) return '<$0.01';
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const getGasUsdValue = (): string | null => {
+    if (!gasEstimate) return null;
+    const gasCost = parseFloat(gasEstimate.estimatedCostNative);
+    if (isNaN(gasCost)) return null;
+    
+    const nativePrice = tokenPrices['native'];
+    if (nativePrice === null || nativePrice === undefined) return null;
+    
+    const value = gasCost * nativePrice;
+    if (value < 0.01) return '<$0.01';
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const handleSend = (e: React.FormEvent) => {
@@ -544,14 +627,51 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                   </div>
 
                   <div className="form-group">
-                    <label>Amount</label>
+                    <div className="amount-label-row">
+                      <label>Amount</label>
+                      {selectedToken && (
+                        <button
+                          type="button"
+                          className="max-btn"
+                          onClick={handleMaxClick}
+                        >
+                          Max
+                        </button>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
                       placeholder="0.0"
                     />
+                    {getAmountUsdValue() && (
+                      <div className="amount-usd-value">≈ {getAmountUsdValue()}</div>
+                    )}
                   </div>
+
+                  {/* Network Fee Estimate Display */}
+                  {selectedToken && recipient && /^0x[a-fA-F0-9]{40}$/.test(recipient) && (
+                    <div className="gas-estimate-box">
+                      <div className="gas-estimate-label">Estimated Network Fee</div>
+                      <div className="gas-estimate-value">
+                        {gasEstimateLoading ? (
+                          <span className="gas-loading">Estimating...</span>
+                        ) : gasEstimate ? (
+                          <>
+                            <span className="gas-amount">
+                              ~{parseFloat(gasEstimate.estimatedCostNative).toFixed(6)} {gasEstimate.nativeSymbol}
+                            </span>
+                            {getGasUsdValue() && (
+                              <span className="gas-usd">≈ {getGasUsdValue()}</span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="gas-loading">--</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {sendError && <div className="error">{sendError}</div>}
 

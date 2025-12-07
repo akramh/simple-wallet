@@ -1043,6 +1043,90 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       };
     }
 
+    case 'GET_GAS_ESTIMATE': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      if (!walletService) throw new Error('Wallet not initialized');
+      resetAutoLockTimer();
+
+      const { token, toAddress, amount } = payload;
+      const gasNetwork = walletService.config.network;
+      const gasNetworkConfig = walletService.config.networks[gasNetwork];
+      const nativeSymbol = gasNetworkConfig?.nativeSymbol || 'ETH';
+
+      try {
+        const provider = walletService.getProvider();
+        const fromAddress = walletService.getAddress();
+        
+        // Add timeout to prevent hanging
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Gas estimation timeout')), 5000)
+        );
+        const feeData = await Promise.race([provider.getFeeData(), timeoutPromise]);
+
+        let gasLimit: bigint;
+        
+        if (token.type === 'native') {
+          // Standard native token transfer gas limit
+          gasLimit = 21000n;
+        } else {
+          // Estimate ERC-20 transfer gas with timeout
+          try {
+            const tokenContract = new ethers.Contract(
+              token.address,
+              ['function transfer(address to, uint256 amount) returns (bool)'],
+              provider
+            );
+            const tokenAmount = ethers.parseUnits(amount || '0', token.decimals || 18);
+            const estimatePromise = tokenContract.transfer.estimateGas(toAddress || fromAddress, tokenAmount, { from: fromAddress });
+            const estimateTimeout = new Promise<never>((_, reject) => 
+              setTimeout(() => reject(new Error('Estimate timeout')), 3000)
+            );
+            gasLimit = await Promise.race([estimatePromise, estimateTimeout]);
+            // Add 20% buffer for safety
+            gasLimit = (gasLimit * 120n) / 100n;
+          } catch {
+            // Fallback to default ERC-20 gas limit
+            gasLimit = 65000n;
+          }
+        }
+
+        // Calculate estimated cost
+        // For EIP-1559, use a more realistic estimate: baseFee + priorityFee
+        // maxFeePerGas is the maximum, not the expected cost
+        let effectiveGasPrice: bigint;
+        if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+          // Estimate: use gasPrice as it represents current market rate
+          // or calculate based on priority fee + a reasonable base fee estimate
+          effectiveGasPrice = feeData.gasPrice || feeData.maxFeePerGas;
+        } else {
+          effectiveGasPrice = feeData.gasPrice || 0n;
+        }
+        const estimatedCostWei = gasLimit * effectiveGasPrice;
+
+        return {
+          gasLimit: gasLimit.toString(),
+          gasPrice: feeData.gasPrice?.toString() || '0',
+          maxFeePerGas: feeData.maxFeePerGas?.toString() || null,
+          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString() || null,
+          estimatedCostWei: estimatedCostWei.toString(),
+          estimatedCostNative: ethers.formatEther(estimatedCostWei),
+          nativeSymbol,
+          supportsEIP1559: !!feeData.maxFeePerGas,
+          network: gasNetwork
+        };
+      } catch (error: any) {
+        console.warn('[GET_GAS_ESTIMATE] Error:', error);
+        return {
+          error: error.message || 'Failed to estimate gas',
+          gasLimit: token.type === 'native' ? '21000' : '65000',
+          estimatedCostWei: '0',
+          estimatedCostNative: '0',
+          nativeSymbol,
+          network: gasNetwork
+        };
+      }
+    }
+
     case 'SWITCH_NETWORK':
       await walletService!.setNetwork(payload.network);
       const chainHex = '0x' + walletService!.config.networks[payload.network].chainId.toString(16);
