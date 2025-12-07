@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ethers } from 'ethers';
 import { MnemonicDisplay } from './ui';
+import logoIcon from '../../assets/img/logo.svg';
 
 interface Props {
   onWalletCreated: () => void;
@@ -167,8 +168,8 @@ function WelcomeScreen({ onWalletCreated }: Props) {
           <h1>🔒 Set Your Password</h1>
         </div>
         <div className="content">
-          <div className="info-box bg-primary-50 border border-primary-100 rounded-wallet-sm p-3 mb-5">
-            <p className="m-0 text-sm text-primary-700">
+          <div className="info-box">
+            <p>
               This password encrypts your wallet on this device. You'll need it to unlock your wallet.
             </p>
           </div>
@@ -229,6 +230,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     return (
       <div className="container">
         <div className="header">
+          <img src={logoIcon} alt="Simple Wallet" className="welcome-logo" />
           <h1>Simple Crypto Wallet</h1>
         </div>
         <div className="content">

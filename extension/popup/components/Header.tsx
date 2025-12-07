@@ -9,6 +9,7 @@
 import React from 'react';
 import lockSlashIcon from '../../assets/icons/lock-slash.svg';
 import settingIcon from '../../assets/icons/setting.svg';
+import logoIcon from '../../assets/img/logo.svg';
 
 interface Props {
   network: string;
@@ -40,6 +41,7 @@ function Header({
       {/* Top row: Logo + Actions */}
       <div className="header-top">
         <div className="logo">
+          <img src={logoIcon} alt="Simple Wallet" className="logo-icon" />
           <span className="logo-text">Simple Wallet</span>
         </div>
         <div className="header-actions">
