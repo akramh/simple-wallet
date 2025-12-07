@@ -107,6 +107,11 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [currentWalletName, setCurrentWalletName] = useState('default');
   const [currentAccountIndex, setCurrentAccountIndex] = useState(0);
 
+  // Price state
+  const [totalBalance, setTotalBalance] = useState<string>('$0.00');
+  const [tokenPrices, setTokenPrices] = useState<Record<string, number | null>>({});
+  const [pricesLoading, setPricesLoading] = useState(false);
+
   // Send form state
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
   const [recipient, setRecipient] = useState('');
@@ -167,10 +172,28 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       // Trigger async balance refresh (non-blocking)
       chrome.runtime.sendMessage({ type: 'REFRESH_BALANCES' }).catch(() => {});
       
+      // Fetch prices after a short delay to let balances update
+      setTimeout(() => fetchTokenPrices(), 1000);
+      
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTokenPrices = async () => {
+    setPricesLoading(true);
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_TOKEN_PRICES' });
+      if (response && !response.error) {
+        setTotalBalance(response.formattedTotal || '$0.00');
+        setTokenPrices(response.prices || {});
+      }
+    } catch (error) {
+      console.warn('Failed to fetch prices:', error);
+    } finally {
+      setPricesLoading(false);
     }
   };
 
@@ -180,6 +203,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     await chrome.runtime.sendMessage({ type: 'REFRESH_BALANCES' });
     // Also reload the full token list in case tokens changed
     await loadTokensAndData();
+    // Fetch updated prices
+    await fetchTokenPrices();
     setRefreshing(false);
   };
 
@@ -248,6 +273,21 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     if (num < 0.0001) return num.toFixed(8).replace(/\.?0+$/, '');
     if (num < 1) return num.toFixed(6).replace(/\.?0+$/, '');
     return num.toFixed(4).replace(/\.?0+$/, '');
+  };
+
+  const getTokenUsdValue = (token: Token, balance: string): string | null => {
+    const priceKey = token.type === 'native' ? 'native' : token.address?.toLowerCase();
+    if (!priceKey) return null;
+    
+    const price = tokenPrices[priceKey];
+    if (price === null || price === undefined) return null;
+    
+    const balanceNum = parseFloat(balance);
+    if (isNaN(balanceNum) || balanceNum === 0) return '$0.00';
+    
+    const value = balanceNum * price;
+    if (value < 0.01) return '<$0.01';
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const getTokenIcon = (token: Token) => {
@@ -319,12 +359,12 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
               <button
                 className="refresh-link"
                 onClick={handleRefresh}
-                disabled={refreshing}
+                disabled={refreshing || pricesLoading}
               >
-                {refreshing ? 'Refreshing...' : 'Refresh'}
+                {refreshing || pricesLoading ? 'Refreshing...' : 'Refresh'}
               </button>
             </div>
-            <div className="balance-amount-display">$0.00</div>
+            <div className="balance-amount-display">{totalBalance}</div>
             <div className="action-row">
               <button
                 className="action-tile"
@@ -391,6 +431,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
               <div className="token-list">
                 {portfolio.map((item, index) => {
                   const iconSrc = getTokenIcon(item.token);
+                  const usdValue = getTokenUsdValue(item.token, item.balance);
                   return (
                     <div key={index} className="token-item">
                       <div className="token-info">
@@ -410,7 +451,12 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                         <div className="token-amount">
                           {item.error ? 'Error' : formatBalance(item.balance)}
                         </div>
-                        <div className="token-symbol">{item.token.symbol}</div>
+                        {usdValue && !item.error && (
+                          <div className="token-usd-value">{usdValue}</div>
+                        )}
+                        {!usdValue && (
+                          <div className="token-symbol">{item.token.symbol}</div>
+                        )}
                       </div>
                     </div>
                   );

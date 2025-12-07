@@ -29,12 +29,12 @@ function SettingsView({ onClose }: Props) {
     <div className="container">
       {/* Header */}
       <div className="settings-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
-        <h2 className="settings-title">Settings</h2>
         {onClose && (
-          <button className="btn  btn-inline" onClick={onClose}>
-            ← Back
+          <button className="btn btn-secondary btn-inline settings-back-btn" onClick={onClose}>
+            ←
           </button>
         )}
+        <h2 className="settings-title">Settings</h2>
       </div>
 
       {/* Content */}

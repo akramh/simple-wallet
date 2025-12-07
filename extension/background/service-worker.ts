@@ -45,6 +45,7 @@ import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
+import { getTokenPrices, calculateTotalValue, formatUSDValue, type TokenInfo } from '../../src/price-service.js';
 import type { Config } from '../../src/types/index.js';
 import { ethers } from 'ethers';
 
@@ -908,6 +909,71 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         balances: balanceCache[cacheNetwork] || {},
         network: cacheNetwork
       };
+
+    case 'GET_TOKEN_PRICES': {
+      // Fetch prices for tokens and calculate total portfolio value
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      
+      const priceNetwork = walletService!.config.network;
+      const networkConfig = walletService!.config.networks[priceNetwork];
+      const chainId = networkConfig?.chainId || 1;
+      
+      // Get tokens with balances
+      const priceTokens = walletService!.getTokensForNetwork(priceNetwork);
+      const tokenInfos: TokenInfo[] = priceTokens.map(t => ({
+        type: t.type,
+        symbol: t.symbol,
+        address: t.address,
+        decimals: t.decimals
+      }));
+      
+      // Build balances array from cache
+      const balancesForCalc = priceTokens.map(token => {
+        const cached = getCachedBalance(priceNetwork, token);
+        return {
+          token: {
+            type: token.type as 'native' | 'erc20',
+            symbol: token.symbol,
+            address: token.address,
+            decimals: token.decimals
+          },
+          balance: cached?.balance || '0'
+        };
+      });
+      
+      try {
+        // Fetch prices from CoinGecko
+        const prices = await getTokenPrices(chainId, tokenInfos);
+        
+        // Calculate total value
+        const totalValue = calculateTotalValue(balancesForCalc, prices);
+        
+        // Convert prices map to object for response
+        const pricesObj: Record<string, number | null> = {};
+        prices.forEach((value, key) => {
+          pricesObj[key] = value;
+        });
+        
+        return {
+          prices: pricesObj,
+          totalValue,
+          formattedTotal: formatUSDValue(totalValue),
+          network: priceNetwork,
+          chainId
+        };
+      } catch (error) {
+        console.warn('[GET_TOKEN_PRICES] Error:', error);
+        return {
+          prices: {},
+          totalValue: 0,
+          formattedTotal: '$0.00',
+          network: priceNetwork,
+          chainId,
+          error: 'Failed to fetch prices'
+        };
+      }
+    }
 
     case 'SEND_TRANSACTION':
       if (!isUnlocked) throw new Error('Wallet is locked');
