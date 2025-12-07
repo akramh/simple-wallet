@@ -23,47 +23,35 @@ interface Props {
   network: string;
 }
 
-type DataSource = 'explorer' | 'local';
-
 function ActivityView({ currentAddress, network }: Props) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'failed'>('all');
-  const [dataSource, setDataSource] = useState<DataSource>('explorer');
   const [error, setError] = useState<string | null>(null);
-  const [explorerSupported, setExplorerSupported] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadTransactions = useCallback(async () => {
-    setLoading(true);
+  const loadTransactions = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     
     try {
-      if (dataSource === 'explorer') {
-        // Fetch from block explorer API
-        const response = await chrome.runtime.sendMessage({
-          type: 'GET_EXPLORER_TRANSACTIONS',
-          payload: { network, address: currentAddress }
-        });
-
-        setExplorerSupported(response.supported !== false);
-        
-        if (response.error || !response.supported) {
-          if (response.error) setError(response.error);
-          // Fall back to local transactions
-          const localResponse = await chrome.runtime.sendMessage({
-            type: 'GET_TRANSACTIONS_BY_NETWORK',
-            payload: { network }
-          });
-          setTransactions(localResponse.transactions || []);
-        } else {
-          setTransactions(response.transactions || []);
-        }
-      } else {
-        // Fetch from local storage (wallet-initiated txs only)
-        const response = await chrome.runtime.sendMessage({
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_EXPLORER_TRANSACTIONS',
+        payload: { network, address: currentAddress }
+      });
+      
+      if (response.error || !response.supported) {
+        if (response.error) setError(response.error);
+        // Fall back to local transactions
+        const localResponse = await chrome.runtime.sendMessage({
           type: 'GET_TRANSACTIONS_BY_NETWORK',
           payload: { network }
         });
+        setTransactions(localResponse.transactions || []);
+      } else {
         setTransactions(response.transactions || []);
       }
     } catch (err: any) {
@@ -72,8 +60,9 @@ function ActivityView({ currentAddress, network }: Props) {
       setTransactions([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [network, dataSource, currentAddress]);
+  }, [network, currentAddress]);
 
   useEffect(() => {
     loadTransactions();
@@ -94,15 +83,6 @@ function ActivityView({ currentAddress, network }: Props) {
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
     if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
     return date.toLocaleDateString();
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'pending': return '⏳';
-      case 'confirmed': return '✅';
-      case 'failed': return '❌';
-      default: return '';
-    }
   };
 
   const getTransactionType = (tx: Transaction) => {
@@ -132,10 +112,7 @@ function ActivityView({ currentAddress, network }: Props) {
     chrome.tabs.create({ url });
   };
 
-  const filteredTransactions = transactions.filter(tx => {
-    if (filter === 'all') return true;
-    return tx.status === filter;
-  });
+
 
   if (loading) {
     return (
@@ -147,35 +124,15 @@ function ActivityView({ currentAddress, network }: Props) {
 
   return (
     <div className="activity-view">
-      {/* Header */}
-      <div className="activity-header">
-        <h2>Activity</h2>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {explorerSupported && (
-            <select
-              value={dataSource}
-              onChange={(e) => setDataSource(e.target.value as DataSource)}
-              style={{
-                padding: '4px 8px',
-                borderRadius: '6px',
-                border: '1px solid var(--border)',
-                background: 'var(--bg-secondary)',
-                fontSize: '12px',
-                cursor: 'pointer'
-              }}
-            >
-              <option value="explorer">Explorer</option>
-              <option value="local">Local</option>
-            </select>
-          )}
-          <button
-            className="btn-refresh"
-            onClick={loadTransactions}
-            title="Refresh"
-          >
-            🔄
-          </button>
-        </div>
+      {/* Header - just refresh button */}
+      <div className="activity-header-simple">
+        <button
+          className="refresh-link"
+          onClick={() => loadTransactions(true)}
+          disabled={refreshing}
+        >
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
       </div>
 
       {/* Error Banner */}
@@ -193,27 +150,9 @@ function ActivityView({ currentAddress, network }: Props) {
         </div>
       )}
 
-      {/* Filter Tabs */}
-      <div className="activity-filters">
-        {(['all', 'pending', 'confirmed', 'failed'] as const).map((filterType) => {
-          const count = filterType === 'all'
-            ? transactions.length
-            : transactions.filter(tx => tx.status === filterType).length;
-          return (
-            <button
-              key={filterType}
-              className={`filter-btn ${filter === filterType ? 'active' : ''}`}
-              onClick={() => setFilter(filterType)}
-            >
-              {filterType.charAt(0).toUpperCase() + filterType.slice(1)} ({count})
-            </button>
-          );
-        })}
-      </div>
-
       {/* Transaction List */}
       <div className="transaction-list">
-        {filteredTransactions.length === 0 ? (
+        {transactions.length === 0 ? (
           <div className="loading" style={{ flexDirection: 'column', textAlign: 'center' }}>
             <div style={{ fontSize: '48px', marginBottom: '16px' }}>📋</div>
             <p style={{ fontWeight: 600, marginBottom: '8px' }}>No transactions yet</p>
@@ -221,50 +160,49 @@ function ActivityView({ currentAddress, network }: Props) {
           </div>
         ) : (
           <div>
-            {filteredTransactions.map((tx) => (
+            {transactions.map((tx) => (
               <div key={tx.hash} className="transaction-item">
-                {/* Icon */}
-                <div className="tx-icon">
-                  <div className={`tx-type-badge ${tx.type}`}>
-                    {tx.type === 'send' ? '📤' : '📥'}
-                  </div>
-                </div>
-
+                {/* Status Indicator Bar */}
+                <div className={`tx-status-bar ${tx.status}`} title={tx.status.charAt(0).toUpperCase() + tx.status.slice(1)} />
+                
                 {/* Details */}
-                <div className="tx-details">
-                  <div className="tx-main">
+                <div className="tx-content">
+                  <div className="tx-row-primary">
                     <span className="tx-type">{getTransactionType(tx)}</span>
-                    <span className={`tx-status tx-status-${tx.status}`}>
-                      {getStatusIcon(tx.status)} {tx.status}
+                    <span className="tx-amount-value">
+                      {tx.type === 'send' ? '-' : '+'}{formatValue(tx.value, tx.tokenSymbol)}
                     </span>
                   </div>
-
-                  <div className="tx-meta">
+                  <div className="tx-row-secondary">
                     <span className="tx-address">
-                      {tx.type === 'send' ? `To: ${formatAddress(tx.to)}` : `From: ${formatAddress(tx.from)}`}
+                      {tx.type === 'send' ? `To ${formatAddress(tx.to)}` : `From ${formatAddress(tx.from)}`}
                     </span>
                     <span className="tx-time">{formatDate(tx.timestamp)}</span>
                   </div>
-
-                  <div className="tx-amount">
-                    {tx.type === 'send' ? '-' : '+'}{formatValue(tx.value, tx.tokenSymbol)}
-                  </div>
-
                   {tx.error && (
-                    <div className="tx-error">
-                      <span>⚠️</span> {tx.error}
-                    </div>
+                    <div className="tx-error-inline">{tx.error}</div>
                   )}
                 </div>
 
-                {/* Explorer Link */}
+                {/* View Link */}
                 <button
-                  className="btn-refresh"
+                  className="tx-view-link"
                   onClick={() => openInExplorer(tx.hash)}
-                  title="View on Explorer"
+                  title="View on explorer"
                 >
-                  🔗
+                  View
                 </button>
+
+                {/* Hover Tooltip */}
+                <div className="tx-tooltip">
+                  <div className="tx-tooltip-row"><strong>Status:</strong> {tx.status.charAt(0).toUpperCase() + tx.status.slice(1)}</div>
+                  <div className="tx-tooltip-row"><strong>Hash:</strong> {tx.hash.substring(0, 10)}...{tx.hash.substring(tx.hash.length - 8)}</div>
+                  <div className="tx-tooltip-row"><strong>From:</strong> {formatAddress(tx.from)}</div>
+                  <div className="tx-tooltip-row"><strong>To:</strong> {formatAddress(tx.to)}</div>
+                  {tx.blockNumber && <div className="tx-tooltip-row"><strong>Block:</strong> {tx.blockNumber}</div>}
+                  {tx.gasUsed && <div className="tx-tooltip-row"><strong>Gas Used:</strong> {tx.gasUsed}</div>}
+                  <div className="tx-tooltip-row"><strong>Time:</strong> {new Date(tx.timestamp).toLocaleString()}</div>
+                </div>
               </div>
             ))}
           </div>
