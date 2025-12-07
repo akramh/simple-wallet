@@ -277,7 +277,7 @@ function AccountMenu({
             <div className="section-title">Wallets</div>
             <div className="section-actions-inline">
               <button
-                className="section-cta"
+                className="btn btn-secondary btn-inline"
                 onClick={async () => {
                   setPendingImportName(await getNextWalletName());
                   setShowImportModal(true);

@@ -282,6 +282,11 @@
   color: var(--text-secondary);
 }
 
+.token-balance .token-usd-value {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .tab {
   padding: 10px 16px;
   background: none;
@@ -708,9 +713,8 @@
 .settings-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 12px;
   margin-bottom: 12px;
 }
 
@@ -729,6 +733,17 @@
 .btn-inline {
   width: auto;
   padding: 10px 14px;
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg-secondary);
+  border-color: var(--primary);
 }
 
 .settings-back-btn {
