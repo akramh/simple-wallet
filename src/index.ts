@@ -184,19 +184,26 @@ async function promptMasterPasswordSetup(): Promise<string> {
  * Prompts user to enter their existing master password.
  * Used for wallet decryption and secret reveal.
  * 
- * @returns The entered password (not validated)
+ * @returns The entered password (validated for minimum length)
  */
 async function promptMasterPassword(): Promise<string> {
-  const { password } = await inquirer.prompt<{ password: string }>([
-    {
-      type: 'password',
-      name: 'password',
-      message: 'Enter master password:',
-      mask: '*'
-    }
-  ]);
+  while (true) {
+    const { password } = await inquirer.prompt<{ password: string }>([
+      {
+        type: 'password',
+        name: 'password',
+        message: 'Enter master password:',
+        mask: '*'
+      }
+    ]);
 
-  return password;
+    if (!password || password.length < 8) {
+      console.log('\n❌ Password must be at least 8 characters\n');
+      continue;
+    }
+
+    return password;
+  }
 }
 
 /**
@@ -440,18 +447,19 @@ async function createWallet(): Promise<void> {
   ui.showHeader();
   ui.showLoading('Creating new wallet...');
 
-  // Check if first-time setup
-  const isFirstWallet = !hasExistingWallets();
+  try {
+    // Check if first-time setup
+    const isFirstWallet = !hasExistingWallets();
 
-  // Get password (setup or use cached)
-  let password: string;
-  if (isFirstWallet) {
-    password = await promptMasterPasswordSetup();
-  } else {
-    password = await ensureMasterPassword();
-  }
+    // Get password (setup or use cached)
+    let password: string;
+    if (isFirstWallet) {
+      password = await promptMasterPasswordSetup();
+    } else {
+      password = await ensureMasterPassword();
+    }
 
-  const walletData = wallet.createNewWallet(password);
+    const walletData = wallet.createNewWallet(password);
 
   ui.clearScreen();
   ui.showHeader();
@@ -495,6 +503,21 @@ async function createWallet(): Promise<void> {
   }
 
   await mainMenu(savedWalletName);
+  } catch (error) {
+    const err = error as Error;
+    ui.showError(`Failed to create wallet: ${err.message}`, [
+      'Please try again',
+      'If the problem persists, check your system for issues'
+    ]);
+    
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+    
+    await initialMenu();
+  }
 }
 
 /**
