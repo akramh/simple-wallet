@@ -5,6 +5,8 @@
  */
 import React, { useState } from 'react';
 import RevealSecretModal from './RevealSecretModal';
+import mnemonicIcon from '../../assets/icons/mnemonic.svg';
+import keyIcon from '../../assets/icons/key.svg';
 
 interface Props {
   currentAddress?: string;
@@ -29,7 +31,7 @@ function SettingsView({ onClose }: Props) {
       <div className="settings-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
         <h2 className="settings-title">Settings</h2>
         {onClose && (
-          <button className="btn btn-secondary btn-inline settings-back-btn" onClick={onClose}>
+          <button className="btn  btn-inline" onClick={onClose}>
             ← Back
           </button>
         )}
@@ -60,7 +62,7 @@ function SettingsView({ onClose }: Props) {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '20px' }}>🔑</span>
+                <img src={mnemonicIcon} alt="" className="settings-icon" />
                 <div>
                   <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
                     Secret Recovery Phrase
@@ -88,7 +90,7 @@ function SettingsView({ onClose }: Props) {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '20px' }}>🔐</span>
+                <img src={keyIcon} alt="" className="settings-icon" />
                 <div>
                   <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
                     Private Key

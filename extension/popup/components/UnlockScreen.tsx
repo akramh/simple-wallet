@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import lockIcon from '../../assets/icons/lock.svg';
 
 interface Props {
   onUnlocked: () => void;
@@ -65,7 +66,9 @@ function UnlockScreen({ onUnlocked }: Props) {
       </div>
       <div className="content">
         <div className="text-center mb-8">
-          <div className="text-6xl mb-4">🔐</div>
+          <div className="unlock-icon-container">
+            <img src={lockIcon} alt="Locked" className="unlock-icon" />
+          </div>
           <p className="text-text-secondary text-base">Enter your password to unlock</p>
         </div>
 
