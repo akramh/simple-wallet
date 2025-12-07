@@ -7,6 +7,8 @@
  * - Settings and lock buttons
  */
 import React from 'react';
+import lockSlashIcon from '../../assets/icons/lock-slash.svg';
+import settingIcon from '../../assets/icons/setting.svg';
 
 interface Props {
   network: string;
@@ -38,7 +40,6 @@ function Header({
       {/* Top row: Logo + Actions */}
       <div className="header-top">
         <div className="logo">
-          <span className="logo-icon">🔐</span>
           <span className="logo-text">Simple Wallet</span>
         </div>
         <div className="header-actions">
@@ -48,7 +49,7 @@ function Header({
               onClick={onOpenSettings} 
               title="Settings"
             >
-              ⚙️
+              <img src={settingIcon} alt="Settings" className="header-icon" />
             </button>
           )}
           <button 
@@ -56,7 +57,7 @@ function Header({
             onClick={onLock} 
             title="Lock Wallet"
           >
-            🔒
+            <img src={lockSlashIcon} alt="Lock" className="header-icon" />
           </button>
         </div>
       </div>
