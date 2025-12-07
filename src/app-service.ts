@@ -223,6 +223,14 @@ export class WalletAppService {
   }
 
   /**
+   * Get the current JSON-RPC provider.
+   * @returns Active ethers JsonRpcProvider instance
+   */
+  getProvider(): ethers.JsonRpcProvider | null {
+    return this.wallet.provider;
+  }
+
+  /**
    * Get native currency balance.
    * @returns Balance in ETH
    */
