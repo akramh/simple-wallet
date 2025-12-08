@@ -38,6 +38,7 @@
  * ```
  */
 
+import 'dotenv/config';
 import inquirer from 'inquirer';
 import { Wallet } from './wallet.js';
 import fs from 'fs';
@@ -50,6 +51,7 @@ import { WalletAppService } from './app-service.js';
 import { FileStorage } from './storage.js';
 import { createProviderFactory } from './providers.js';
 import { ExplorerAPI } from './explorer-api.js';
+import { applyExplorerApiKeys } from './config-utils.js';
 import type { Config, Token, TokenMetadata } from './types/index.js';
 
 // ============================================================================
@@ -58,7 +60,7 @@ import type { Config, Token, TokenMetadata } from './types/index.js';
 
 /** Load and parse config.json with network definitions */
 const configData = JSON.parse(fs.readFileSync('config.json', 'utf8')) as Config & { network: string };
-const config: Config & { network: string } = configData;
+const { config, globalApiKey } = applyExplorerApiKeys(configData);
 
 /** File-based storage adapter for persistent wallet data */
 const storage = new FileStorage();
@@ -82,7 +84,7 @@ const walletService = new WalletAppService(wallet, config, {
 
 /** Explorer API for fetching on-chain transaction history */
 const explorerAPI = new ExplorerAPI();
-explorerAPI.registerNetworks(config.networks);
+explorerAPI.registerNetworks(config.networks, globalApiKey);
 
 // ============================================================================
 // Session State (In-Memory Only)

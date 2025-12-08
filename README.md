@@ -101,6 +101,16 @@ Edit `config.json` to change the default network or add custom RPC endpoints:
 }
 ```
 
+### Explorer API keys (Etherscan/BaseScan/etc.)
+
+Explorer API keys are no longer stored in `config.json`. Provide them through environment variables instead:
+
+1. Copy `.env.example` to `.env`.
+2. Set a global fallback key via `EXPLORER_API_KEY` or network-specific keys like `EXPLORER_API_KEY_MAINNET` and `EXPLORER_API_KEY_SEPOLIA` (uppercase the network key from `config.json`, e.g., `BASE`, `ARBITRUM`, `OPTIMISM`, `POLYGON`, `AVALANCHE`, `BSC`, `LINEA`).
+3. For the Chrome extension build, Vite uses `VITE_`-prefixed variables (e.g., `VITE_EXPLORER_API_KEY_MAINNET` or `VITE_EXPLORER_API_KEY_BASE`).
+
+The CLI automatically loads `.env` via `dotenv`, and the extension build injects values from `import.meta.env`.
+
 ## Security Notes
 
 ⚠️ **IMPORTANT SECURITY WARNINGS:**
