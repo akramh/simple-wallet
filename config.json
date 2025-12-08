@@ -13,8 +13,7 @@
       "nativeSymbol": "ETH",
       "nativeName": "Sepolia Ether",
       "blockExplorer": "https://sepolia.etherscan.io",
-      "explorerApiUrl": "https://api-sepolia.etherscan.io/api",
-      "explorerApiKey": "VS8PXST9YN4W2XFSP49V76NW18TS32CI6I"
+      "explorerApiUrl": "https://api-sepolia.etherscan.io/api"
     },
     "mainnet": {
       "name": "Ethereum Mainnet",
@@ -23,8 +22,7 @@
       "nativeSymbol": "ETH",
       "nativeName": "Ether",
       "blockExplorer": "https://etherscan.io",
-      "explorerApiUrl": "https://api.etherscan.io/api",
-      "explorerApiKey": "VS8PXST9YN4W2XFSP49V76NW18TS32CI6I"
+      "explorerApiUrl": "https://api.etherscan.io/api"
     },
     "base": {
       "name": "Base Mainnet",

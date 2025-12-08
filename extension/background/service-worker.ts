@@ -46,6 +46,7 @@ import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
 import { getTokenPrices, calculateTotalValue, formatUSDValue, type TokenInfo } from '../../src/price-service.js';
+import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
 import { ethers } from 'ethers';
 
@@ -594,10 +595,10 @@ async function initializeWalletService(): Promise<void> {
   
   // User overrides from storage (e.g., selected network) merged with bundled config
   const storedConfig = storage.readJSON<Partial<Config & { network: string; explorerApiKey?: string }>>('config.json', {});
-  const config = { ...bundledConfig, ...storedConfig, networks: { ...bundledConfig.networks, ...storedConfig.networks } };
+  const mergedConfig = { ...bundledConfig, ...storedConfig, networks: { ...bundledConfig.networks, ...storedConfig.networks } };
+  const { config, globalApiKey } = applyExplorerApiKeys(mergedConfig, import.meta.env as Record<string, string | undefined>);
 
   // Register explorer API URLs from network config (pass global API key)
-  const globalApiKey = (config as any).explorerApiKey;
   explorerAPI.registerNetworks(config.networks, globalApiKey);
   console.log('[Explorer] Registered networks:', explorerAPI.getRegisteredNetworks(), 'API key:', globalApiKey ? 'set' : 'not set');
 
