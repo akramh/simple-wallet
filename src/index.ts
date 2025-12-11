@@ -52,6 +52,13 @@ import { FileStorage } from './storage.js';
 import { createProviderFactory } from './providers.js';
 import { ExplorerAPI } from './explorer-api.js';
 import { applyExplorerApiKeys } from './config-utils.js';
+import {
+  getTokenPrices,
+  getNativeTokenPrice,
+  getERC20TokenPrice,
+  calculateTotalValue,
+  type TokenInfo
+} from './price-service.js';
 import type { Config, Token, TokenMetadata } from './types/index.js';
 
 // ============================================================================
@@ -797,8 +804,8 @@ async function mainMenu(walletName: string | null): Promise<void> {
 
 /**
  * Displays the current balance for all tokens on the active network.
- * Fetches balances from the blockchain via RPC.
- * 
+ * Fetches balances from the blockchain via RPC and USD prices from CoinGecko.
+ *
  * @param currentWalletName - Name of the current wallet for header display
  */
 async function checkBalance(currentWalletName: string | null): Promise<void> {
@@ -812,20 +819,51 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
     const tokens = walletService.getTokensForNetwork(config.network);
     const portfolio = await wallet.getPortfolio(tokens);
 
+    // Fetch USD prices
+    ui.showLoading('Fetching USD prices...');
+    const chainId = config.networks[config.network].chainId;
+    const tokenInfos: TokenInfo[] = tokens.map(t => ({
+      type: t.type as 'native' | 'erc20',
+      symbol: t.symbol,
+      address: t.address,
+      decimals: t.decimals
+    }));
+    const prices = await getTokenPrices(chainId, tokenInfos);
+
+    console.log('');
     ui.showSuccess('Balances retrieved successfully!');
     ui.showSection('Portfolio');
     ui.showSeparator();
+
+    let totalUsd = 0;
 
     portfolio.forEach(({ token, balance, error }) => {
       const label = `${token.symbol}${token.type === 'native' ? ' (native)' : ''}`.padEnd(18);
       if (error) {
         console.log(`${label} ${chalk.red('Error')} ${chalk.gray(`(${error})`)}`);
       } else {
-        console.log(`${label} ${ui.formatAmount(balance, token.symbol)}`);
+        // Get price for this token
+        const priceKey = token.type === 'native' ? 'native' : token.address?.toLowerCase();
+        const price = priceKey ? prices.get(priceKey) : null;
+        const balanceNum = parseFloat(balance);
+        const usdValue = price !== null && price !== undefined && !isNaN(balanceNum)
+          ? balanceNum * price
+          : null;
+
+        if (usdValue !== null) {
+          totalUsd += usdValue;
+        }
+
+        console.log(ui.formatBalanceWithUsd(balance, token.symbol, usdValue, token.type === 'native'));
       }
     });
 
     ui.showSeparator();
+
+    // Show total portfolio value
+    if (totalUsd > 0) {
+      ui.showPortfolioTotal(totalUsd);
+    }
 
   } catch (error) {
     const err = error as Error;
@@ -851,8 +889,9 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
 /**
  * Displays portfolio balances across all configured networks.
  * Temporarily switches network context to fetch each network's balances.
+ * Fetches USD prices for each network's tokens.
  * Restores original network after completion.
- * 
+ *
  * @param currentWalletName - Name of the current wallet for header display
  */
 async function checkPortfolioAllNetworks(currentWalletName: string | null): Promise<void> {
@@ -861,11 +900,15 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, 'All Networks', address);
 
+  ui.showLoading('Fetching balances and prices across all networks...');
+  console.log('');
+
   const networks = Object.keys(config.networks);
   const results: Array<{
     network: string;
     success: boolean;
     portfolio?: Array<{ token: Token; balance: string; error?: string }>;
+    prices?: Map<string, number | null>;
     error?: string;
   }> = [];
 
@@ -875,7 +918,23 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
       await walletService.setNetwork(net, { persist: false });
       const tokens = walletService.getTokensForNetwork(net);
       const portfolio = await wallet.getPortfolio(tokens);
-      results.push({ network: net, success: true, portfolio });
+
+      // Fetch prices for this network
+      const chainId = config.networks[net].chainId;
+      const tokenInfos: TokenInfo[] = tokens.map(t => ({
+        type: t.type as 'native' | 'erc20',
+        symbol: t.symbol,
+        address: t.address,
+        decimals: t.decimals
+      }));
+      let prices: Map<string, number | null>;
+      try {
+        prices = await getTokenPrices(chainId, tokenInfos);
+      } catch {
+        prices = new Map();
+      }
+
+      results.push({ network: net, success: true, portfolio, prices });
     } catch (error) {
       const err = error as Error;
       results.push({ network: net, success: false, error: err.message });
@@ -885,7 +944,9 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
   // restore original network context
   await walletService.setNetwork(originalNetwork, { persist: false });
 
-  results.forEach(({ network, success, portfolio, error }) => {
+  let grandTotalUsd = 0;
+
+  results.forEach(({ network, success, portfolio, prices, error }) => {
     ui.showSection(config.networks[network]?.name || network);
     if (!success) {
       ui.showWarning(`Failed: ${error}`);
@@ -893,17 +954,46 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
       return;
     }
     ui.showSeparator();
+
+    let networkTotalUsd = 0;
+
     portfolio?.forEach(({ token, balance, error: tokenError }) => {
-      const label = `${token.symbol}${token.type === 'native' ? ' (native)' : ''}`.padEnd(18);
       if (tokenError) {
+        const label = `${token.symbol}${token.type === 'native' ? ' (native)' : ''}`.padEnd(18);
         console.log(`${label} ${chalk.red('Error')} ${chalk.gray(`(${tokenError})`)}`);
       } else {
-        console.log(`${label} ${ui.formatAmount(balance, token.symbol)}`);
+        // Get price for this token
+        const priceKey = token.type === 'native' ? 'native' : token.address?.toLowerCase();
+        const price = priceKey && prices ? prices.get(priceKey) : null;
+        const balanceNum = parseFloat(balance);
+        const usdValue = price !== null && price !== undefined && !isNaN(balanceNum)
+          ? balanceNum * price
+          : null;
+
+        if (usdValue !== null) {
+          networkTotalUsd += usdValue;
+        }
+
+        console.log(ui.formatBalanceWithUsd(balance, token.symbol, usdValue, token.type === 'native'));
       }
     });
+
+    if (networkTotalUsd > 0) {
+      console.log(chalk.gray('─'.repeat(40)));
+      console.log(chalk.white('Network Total: ') + ui.formatUsdPrice(networkTotalUsd));
+      grandTotalUsd += networkTotalUsd;
+    }
+
     ui.showSeparator();
     console.log('');
   });
+
+  // Show grand total across all networks
+  if (grandTotalUsd > 0) {
+    console.log(chalk.cyan('═'.repeat(60)));
+    console.log(chalk.white.bold('Grand Total (All Networks): ') + ui.formatUsdPrice(grandTotalUsd));
+    console.log(chalk.cyan('═'.repeat(60)));
+  }
 
   await inquirer.prompt<{ continue: string }>([{
     type: 'input',
@@ -1017,8 +1107,9 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
 /**
  * Handles sending crypto (native or ERC-20 tokens).
  * Prompts for token selection, recipient, and amount with validation.
+ * Shows gas estimation and USD costs before confirmation.
  * Shows transaction receipt with block explorer link on success.
- * 
+ *
  * @param currentWalletName - Name of the current wallet for header display
  */
 async function sendCrypto(currentWalletName: string | null): Promise<void> {
@@ -1050,12 +1141,10 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     await mainMenu(currentWalletName);
     return;
   }
-  const tokenLabel = `${selectedToken.symbol}${selectedToken.type === 'native' ? ' (native)' : ''}`;
 
   const answers = await inquirer.prompt<{
     toAddress?: string;
     amount?: string;
-    confirm?: boolean;
   }>([
     {
       type: 'input',
@@ -1086,20 +1175,85 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
         }
         return true;
       }
-    },
-    {
-      type: 'confirm',
-      name: 'confirm',
-      message: (answers) => `Send ${answers.amount} ${selectedToken.symbol} to ${answers.toAddress}?`,
-      when: (answers) => answers.toAddress && answers.toAddress.trim() !== '' && answers.amount && answers.amount.trim() !== '',
-      default: false
     }
   ]);
 
   // Check if user cancelled
   if (!answers.toAddress || answers.toAddress.trim() === '' ||
-      !answers.amount || answers.amount.trim() === '' ||
-      !answers.confirm) {
+      !answers.amount || answers.amount.trim() === '') {
+    ui.showWarning('Transaction cancelled');
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  // Fetch gas estimate and prices for confirmation screen
+  ui.showLoading('Estimating transaction costs...');
+
+  const chainId = config.networks[config.network].chainId;
+  const networkName = config.networks[config.network].name || config.network;
+
+  // Get gas estimate (we've already validated toAddress and amount are non-empty)
+  const gasEstimate = await walletService.getGasEstimate(selectedToken, answers.toAddress!, answers.amount!);
+
+  // Fetch token prices
+  let tokenPrice: number | null = null;
+  let nativePrice: number | null = null;
+
+  try {
+    nativePrice = await getNativeTokenPrice(chainId);
+    if (selectedToken.type === 'native') {
+      tokenPrice = nativePrice;
+    } else if (selectedToken.address) {
+      tokenPrice = await getERC20TokenPrice(chainId, selectedToken.address);
+    }
+  } catch {
+    // Prices are optional - continue without them
+  }
+
+  // Calculate USD values
+  const amountNum = parseFloat(answers.amount);
+  const amountUsd = tokenPrice !== null && !isNaN(amountNum) ? amountNum * tokenPrice : null;
+
+  const gasCostNum = parseFloat(gasEstimate.estimatedCostNative);
+  const gasCostUsd = nativePrice !== null && !isNaN(gasCostNum) ? gasCostNum * nativePrice : null;
+
+  let totalUsd: number | null = null;
+  if (amountUsd !== null && gasCostUsd !== null) {
+    // If sending native token, total = amount + gas
+    // If sending ERC-20, total = amountUsd + gasCostUsd
+    totalUsd = amountUsd + gasCostUsd;
+  } else if (amountUsd !== null) {
+    totalUsd = amountUsd;
+  }
+
+  // Display transaction confirmation screen
+  ui.clearScreen();
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, networkName, address);
+
+  ui.showTransactionConfirmation({
+    tokenSymbol: selectedToken.symbol,
+    amount: answers.amount!,
+    recipient: answers.toAddress!,
+    networkName,
+    amountUsd,
+    gasCostNative: gasEstimate.estimatedCostNative,
+    nativeSymbol: gasEstimate.nativeSymbol,
+    gasCostUsd,
+    totalUsd,
+    gasEstimateFailed: !!gasEstimate.error
+  });
+
+  // Ask for final confirmation
+  const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: 'Confirm and send transaction?',
+      default: false
+    }
+  ]);
+
+  if (!confirm) {
     ui.showWarning('Transaction cancelled');
     await mainMenu(currentWalletName);
     return;
