@@ -267,11 +267,11 @@ export function formatAddress(address: string): string {
 /**
  * Formats a currency amount with the symbol.
  * Amount is displayed in bold green, symbol in gray.
- * 
+ *
  * @param amount - Amount to display
  * @param currency - Currency symbol (default: 'ETH')
  * @returns Formatted amount string with ANSI color codes
- * 
+ *
  * @example
  * ```typescript
  * formatAmount('1.5', 'ETH');  // "1.5 ETH" (styled)
@@ -280,6 +280,57 @@ export function formatAddress(address: string): string {
  */
 export function formatAmount(amount: string, currency: string = 'ETH'): string {
   return chalk.green.bold(amount) + ' ' + chalk.gray(currency);
+}
+
+/**
+ * Formats a USD price value for display.
+ * Handles various value ranges with appropriate formatting.
+ *
+ * @param value - USD value to format (null if unavailable)
+ * @returns Formatted USD string or '--' if unavailable
+ *
+ * @example
+ * ```typescript
+ * formatUsdPrice(1234.56);   // "$1,234.56"
+ * formatUsdPrice(0.005);     // "<$0.01"
+ * formatUsdPrice(1500000);   // "$1.50M"
+ * formatUsdPrice(null);      // "--"
+ * ```
+ */
+export function formatUsdPrice(value: number | null): string {
+  if (value === null || value === undefined) return chalk.gray('--');
+  if (value === 0) return chalk.gray('$0.00');
+  if (value < 0.01) return chalk.gray('<$0.01');
+  if (value < 1000) {
+    return chalk.yellow(`$${value.toFixed(2)}`);
+  }
+  if (value < 1000000) {
+    return chalk.yellow(`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  }
+  // Millions
+  return chalk.yellow(`$${(value / 1000000).toFixed(2)}M`);
+}
+
+/**
+ * Formats a balance line with optional USD value.
+ * Displays token balance followed by USD equivalent in parentheses.
+ *
+ * @param balance - Token balance amount
+ * @param symbol - Token symbol
+ * @param usdValue - Optional USD value
+ * @param isNative - Whether this is the native token
+ * @returns Formatted balance line
+ */
+export function formatBalanceWithUsd(
+  balance: string,
+  symbol: string,
+  usdValue: number | null = null,
+  isNative: boolean = false
+): string {
+  const label = `${symbol}${isNative ? ' (native)' : ''}`.padEnd(18);
+  const balanceStr = chalk.green.bold(balance.padStart(14));
+  const usdStr = usdValue !== null ? ` ${formatUsdPrice(usdValue)}` : '';
+  return `${label} ${balanceStr}${usdStr}`;
 }
 
 /**
@@ -468,10 +519,10 @@ export function getBlockExplorerUrl(txHash: string, networkKey: string): string 
 /**
  * Displays transaction receipt details with block explorer link.
  * Shows hash, block number, gas used, and explorer URL.
- * 
+ *
  * @param receipt - Transaction receipt with hash, blockNumber, gasUsed
  * @param networkKey - Network identifier for explorer URL lookup
- * 
+ *
  * @example
  * ```typescript
  * showTransactionDetails(
@@ -491,6 +542,122 @@ export function showTransactionDetails(receipt: TransactionReceipt, networkKey: 
     console.log(chalk.gray('Explorer:  ') + chalk.blue.underline(explorerUrl));
   }
 
+  showSeparator();
+}
+
+/**
+ * Transaction confirmation display parameters.
+ */
+interface TransactionConfirmationParams {
+  /** Token symbol being sent */
+  tokenSymbol: string;
+  /** Amount being sent */
+  amount: string;
+  /** Recipient address */
+  recipient: string;
+  /** Network name */
+  networkName: string;
+  /** USD value of the amount (null if unavailable) */
+  amountUsd: number | null;
+  /** Gas cost in native token */
+  gasCostNative: string;
+  /** Native token symbol */
+  nativeSymbol: string;
+  /** USD value of gas cost (null if unavailable) */
+  gasCostUsd: number | null;
+  /** Total USD cost (null if unavailable) */
+  totalUsd: number | null;
+  /** Whether gas estimation failed */
+  gasEstimateFailed?: boolean;
+}
+
+/**
+ * Displays a transaction confirmation screen with detailed cost breakdown.
+ * Shows amount, recipient, network, gas fees, and total cost in USD.
+ *
+ * @param params - Transaction confirmation parameters
+ *
+ * @example
+ * ```typescript
+ * showTransactionConfirmation({
+ *   tokenSymbol: 'ETH',
+ *   amount: '0.1',
+ *   recipient: '0x742d35Cc...',
+ *   networkName: 'Ethereum Mainnet',
+ *   amountUsd: 250,
+ *   gasCostNative: '0.002',
+ *   nativeSymbol: 'ETH',
+ *   gasCostUsd: 5,
+ *   totalUsd: 255
+ * });
+ * ```
+ */
+export function showTransactionConfirmation(params: TransactionConfirmationParams): void {
+  const {
+    tokenSymbol,
+    amount,
+    recipient,
+    networkName,
+    amountUsd,
+    gasCostNative,
+    nativeSymbol,
+    gasCostUsd,
+    totalUsd,
+    gasEstimateFailed
+  } = params;
+
+  console.log('\n' + chalk.cyan('═'.repeat(50)));
+  console.log(chalk.cyan.bold('        Confirm Transaction'));
+  console.log(chalk.cyan('═'.repeat(50)) + '\n');
+
+  // Amount
+  console.log(chalk.gray('Amount:              ') + chalk.green.bold(`${amount} ${tokenSymbol}`));
+  if (amountUsd !== null) {
+    console.log(chalk.gray('                     ') + formatUsdPrice(amountUsd));
+  }
+  console.log('');
+
+  // Recipient
+  const shortRecipient = `${recipient.substring(0, 10)}...${recipient.substring(recipient.length - 8)}`;
+  console.log(chalk.gray('To:                  ') + chalk.cyan(shortRecipient));
+  console.log('');
+
+  // Network
+  console.log(chalk.gray('Network:             ') + chalk.white(networkName));
+  console.log('');
+
+  // Gas Fee
+  console.log(chalk.gray('─'.repeat(50)));
+  if (gasEstimateFailed) {
+    console.log(chalk.gray('Estimated Network Fee:'));
+    console.log(chalk.gray('                     ') + chalk.yellow('Unable to estimate'));
+  } else {
+    console.log(chalk.gray('Estimated Network Fee:'));
+    const formattedGas = parseFloat(gasCostNative).toFixed(6);
+    console.log(chalk.gray('                     ') + chalk.white(`${formattedGas} ${nativeSymbol}`));
+    if (gasCostUsd !== null) {
+      console.log(chalk.gray('                     ') + formatUsdPrice(gasCostUsd));
+    }
+  }
+  console.log(chalk.gray('─'.repeat(50)));
+
+  // Total
+  if (totalUsd !== null) {
+    console.log(chalk.gray('Total Cost:          ') + chalk.yellow.bold(formatUsdPrice(totalUsd).replace(/\x1b\[[0-9;]*m/g, '')));
+  }
+
+  console.log(chalk.cyan('═'.repeat(50)) + '\n');
+}
+
+/**
+ * Displays the total portfolio value.
+ *
+ * @param totalUsd - Total portfolio value in USD
+ */
+export function showPortfolioTotal(totalUsd: number): void {
+  console.log('');
+  showSeparator();
+  console.log(chalk.white.bold('Total Portfolio Value: ') + formatUsdPrice(totalUsd));
   showSeparator();
 }
 
@@ -522,6 +689,8 @@ export default {
   showLoading,
   formatAddress,
   formatAmount,
+  formatUsdPrice,
+  formatBalanceWithUsd,
   formatTxHash,
   showAccountInfo,
   menuSeparator,
@@ -529,5 +698,7 @@ export default {
   clearScreen,
   showMnemonic,
   getBlockExplorerUrl,
-  showTransactionDetails
+  showTransactionDetails,
+  showTransactionConfirmation,
+  showPortfolioTotal
 };
