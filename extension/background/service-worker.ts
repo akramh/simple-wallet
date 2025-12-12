@@ -511,25 +511,8 @@ const configureSidePanel = async (tabId?: number) => {
 chrome.runtime.onInstalled.addListener(() => configureSidePanel());
 chrome.runtime.onStartup.addListener(() => configureSidePanel());
 
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!chrome.sidePanel?.open || !tab) return;
-  try {
-    if (chrome.sidePanel.setOptions) {
-      await chrome.sidePanel.setOptions({ tabId: tab.id, path: SIDE_PANEL_PATH });
-    }
-    // Try tab-scoped open first
-    if (tab.id) {
-      await chrome.sidePanel.open({ tabId: tab.id });
-      return;
-    }
-    // Fallback to window-scoped open
-    if (tab.windowId) {
-      await chrome.sidePanel.open({ windowId: tab.windowId });
-    }
-  } catch (error) {
-    console.error('Failed to open side panel:', error);
-  }
-});
+// Note: openPanelOnActionClick: true in configureSidePanel() automatically opens
+// the side panel when the extension icon is clicked - no manual listener needed.
 
 // ============================================================================
 // Configuration Loading
