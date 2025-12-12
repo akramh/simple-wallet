@@ -57,6 +57,7 @@ import {
   getNativeTokenPrice,
   getERC20TokenPrice,
   calculateTotalValue,
+  calculateTransactionCosts,
   type TokenInfo
 } from './price-service.js';
 import type { Config, Token, TokenMetadata } from './types/index.js';
@@ -1210,21 +1211,13 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     // Prices are optional - continue without them
   }
 
-  // Calculate USD values
-  const amountNum = parseFloat(answers.amount);
-  const amountUsd = tokenPrice !== null && !isNaN(amountNum) ? amountNum * tokenPrice : null;
-
-  const gasCostNum = parseFloat(gasEstimate.estimatedCostNative);
-  const gasCostUsd = nativePrice !== null && !isNaN(gasCostNum) ? gasCostNum * nativePrice : null;
-
-  let totalUsd: number | null = null;
-  if (amountUsd !== null && gasCostUsd !== null) {
-    // If sending native token, total = amount + gas
-    // If sending ERC-20, total = amountUsd + gasCostUsd
-    totalUsd = amountUsd + gasCostUsd;
-  } else if (amountUsd !== null) {
-    totalUsd = amountUsd;
-  }
+  // Calculate USD values using shared function
+  const { amountUsd, gasCostUsd, totalUsd } = calculateTransactionCosts(
+    answers.amount!,
+    tokenPrice,
+    gasEstimate.estimatedCostNative,
+    nativePrice
+  );
 
   // Display transaction confirmation screen
   ui.clearScreen();
