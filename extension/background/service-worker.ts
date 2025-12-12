@@ -49,6 +49,7 @@ import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, i
 import { isBitcoinNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
+import { getBitcoinProvider, satoshisToBtc } from '../../src/bitcoin/index.js';
 import { ethers } from 'ethers';
 
 // ============================================================================
@@ -1137,6 +1138,35 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       try {
         const explorerAddress = payload.address || walletService!.getAddress();
         const explorerNetwork = payload.network || walletService!.config.network;
+        const explorerNetworkConfig = walletService!.config.networks[explorerNetwork];
+
+        // Bitcoin networks use Mempool.space API via the Bitcoin module
+        if (isBitcoinNetworkConfig(explorerNetworkConfig)) {
+          const provider = getBitcoinProvider(explorerNetwork);
+          const limit = payload.pageSize || 25;
+          const btcTxs = await provider.getTransactionHistory(explorerAddress, limit);
+
+          const nativeSymbol = explorerNetworkConfig.nativeSymbol || (explorerNetwork === 'bitcoin-testnet' ? 'tBTC' : 'BTC');
+
+          const transactions = btcTxs.map((tx) => ({
+            hash: tx.hash,
+            from: tx.from,
+            to: tx.to || null,
+            // Convert sats → BTC string so ActivityView doesn't treat it as wei
+            value: satoshisToBtc(Number(tx.value) || 0),
+            network: explorerNetwork,
+            status: tx.status,
+            type: tx.type,
+            timestamp: tx.timestamp,
+            blockNumber: tx.blockNumber || undefined,
+            tokenSymbol: nativeSymbol,
+            // Optional enhancement: include fee in BTC for tooltip display
+            fee: satoshisToBtc(Number(tx.fee) || 0)
+          }));
+
+          return { transactions, supported: true };
+        }
+
         const isSupported = explorerAPI.isSupported(explorerNetwork);
         
         console.log('[Explorer] Request:', { network: explorerNetwork, address: explorerAddress, isSupported });
