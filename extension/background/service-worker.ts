@@ -487,8 +487,8 @@ function enqueueApproval(request: PendingRequest): Promise<void> {
 // Chrome Side Panel Configuration
 // ============================================================================
 
-/** Path to the side panel HTML file */
-const SIDE_PANEL_PATH = 'extension/sidepanel/sidepanel.html';
+/** Path to the side panel HTML file (at root after build) */
+const SIDE_PANEL_PATH = 'sidepanel.html';
 
 /**
  * Configures Chrome Side Panel API to open on extension icon click.
