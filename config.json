@@ -1,5 +1,5 @@
 {
-  "network": "mainnet",
+  "network": "bitcoin-mainnet",
   "networks": {
     "bitcoin-mainnet": {
       "type": "bitcoin",

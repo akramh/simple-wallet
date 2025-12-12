@@ -207,22 +207,7 @@ function startBalancePolling(): void {
     if (!isUnlocked || !walletService) return;
     
     try {
-      const network = walletService.config.network;
-      const tokens = walletService.getTokensForNetwork(network);
-      const balances = await walletService.fetchBalances(tokens);
-      
-      // Update cache
-      for (const item of balances) {
-        if (!item.error) {
-          setCachedBalance(network, item.token, item.balance);
-        }
-      }
-      
-      // Persist cache
-      await saveBalanceCache();
-      
-      // Broadcast to UI
-      broadcastBalanceUpdate(network, balances);
+      await refreshBalancesForCurrentNetwork();
     } catch (err) {
       console.warn('[BalancePolling] Error:', err);
     }
@@ -240,6 +225,43 @@ function stopBalancePolling(): void {
     balancePollingTimer = null;
     console.log('[BalancePolling] Stopped');
   }
+}
+
+// ============================================================================
+// Balance Refresh (Network-Aware)
+// ============================================================================
+
+async function refreshBalancesForCurrentNetwork(): Promise<void> {
+  if (!isUnlocked || !walletService) return;
+
+  const network = walletService.config.network;
+  const networkConfig = walletService.config.networks[network];
+
+  if (isBitcoinNetworkConfig(networkConfig)) {
+    const portfolio = await walletService.getPortfolioForNetwork(network);
+
+    for (const item of portfolio) {
+      if (!item.error) {
+        setCachedBalance(network, item.token, item.balance);
+      }
+    }
+
+    await saveBalanceCache();
+    broadcastBalanceUpdate(network, portfolio);
+    return;
+  }
+
+  const tokens = walletService.getTokensForNetwork(network);
+  const balances = await walletService.fetchBalances(tokens);
+
+  for (const item of balances) {
+    if (!item.error) {
+      setCachedBalance(network, item.token, item.balance);
+    }
+  }
+
+  await saveBalanceCache();
+  broadcastBalanceUpdate(network, balances);
 }
 
 // ============================================================================
@@ -758,7 +780,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       return {
         success: true,
-        address: newWallet.address,
+        address: walletService!.getAddress(),
         mnemonic: newWallet.mnemonic
       };
 
@@ -787,7 +809,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       return {
         success: true,
-        address: importedWallet.address
+        address: walletService!.getAddress()
       };
 
     case 'UNLOCK_WALLET':
@@ -809,12 +831,16 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
       // Load balance cache and start polling
       await loadBalanceCache();
+      // Immediately refresh balances for the active network to avoid stale cache
+      refreshBalancesForCurrentNetwork().catch(err => {
+        console.warn('[BalanceRefresh] Error:', err);
+      });
       startBalancePolling();
 
       resetAutoLockTimer();
       return {
         success: true,
-        address: loaded.address,
+        address: walletService!.getAddress(),
         walletName: currentWalletName
       };
 
@@ -845,7 +871,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       return {
         success: true,
-        address: switchedWallet.address,
+        address: walletService!.getAddress(),
         walletName: currentWalletName
       };
 
@@ -886,22 +912,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       // Trigger async balance refresh for current network
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      const refreshNetwork = walletService!.config.network;
-      const tokensToRefresh = walletService!.getTokensForNetwork(refreshNetwork);
-      
-      // Fetch balances async and update cache
-      walletService!.fetchBalances(tokensToRefresh).then(async (balances) => {
-        for (const item of balances) {
-          if (!item.error) {
-            setCachedBalance(refreshNetwork, item.token, item.balance);
-          }
-        }
-        await saveBalanceCache();
-        broadcastBalanceUpdate(refreshNetwork, balances);
-      }).catch(err => {
+      refreshBalancesForCurrentNetwork().catch(err => {
         console.warn('[REFRESH_BALANCES] Error:', err);
       });
-      
       return { success: true, message: 'Balance refresh started' };
 
     case 'GET_CACHED_BALANCES':
@@ -931,7 +944,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
           const totalValue = btcPrice ? btcAmount * btcPrice : 0;
 
           return {
-            prices: { 'native:BTC': btcPrice },
+            prices: { native: btcPrice },
             totalValue,
             formattedTotal: formatUSDValue(totalValue),
             network: priceNetwork,
@@ -1093,6 +1106,11 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'SWITCH_NETWORK':
       await walletService!.setNetwork(payload.network);
       const switchNetworkConfig = walletService!.config.networks[payload.network];
+      // Clear cached balances for the target network to avoid stale data bleed
+      clearBalanceCache(payload.network);
+      saveBalanceCache().catch(() => {});
+      // Kick off a refresh for the new network (non-blocking)
+      refreshBalancesForCurrentNetwork().catch(() => {});
       // Only broadcast chainChanged for EVM networks (Bitcoin doesn't have chainId)
       if (!isBitcoinNetworkConfig(switchNetworkConfig)) {
         const chainHex = '0x' + switchNetworkConfig.chainId.toString(16);
@@ -1193,7 +1211,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const nextIndex = Object.keys(currentAccounts).length;
       const newAccount = walletService!.switchAccount(nextIndex);
       walletService!.saveWallet(currentWalletName);
-      return { success: true, address: newAccount.address, index: newAccount.accountIndex };
+      return { success: true, address: walletService!.getAddress(), index: newAccount.accountIndex };
 
     case 'SWITCH_ACCOUNT':
       if (!isUnlocked) throw new Error('Wallet is locked');
@@ -1201,7 +1219,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const switchedAccount = walletService!.switchAccount(payload.index);
       walletService!.saveWallet(currentWalletName); // Save the wallet with new active account
       broadcastAccountsChanged([switchedAccount.address]);
-      return { success: true, address: switchedAccount.address, index: switchedAccount.accountIndex };
+      return { success: true, address: walletService!.getAddress(), index: switchedAccount.accountIndex };
 
     case 'GET_ALL_WALLETS':
       // Allow getting wallet list even when locked (needed for unlock screen)

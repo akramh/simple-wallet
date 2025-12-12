@@ -566,10 +566,11 @@ export class WalletAppService {
     const networkConfig = this.config.networks[networkKey] || {};
     const symbol = networkConfig.nativeSymbol || 'ETH';
     const name = networkConfig.nativeName || networkConfig.name || 'Ether';
+    const decimals = this.isNetworkBitcoin(networkKey) ? 8 : 18;
     return {
       symbol,
       type: 'native',
-      decimals: 18,
+      decimals,
       name,
       address: ''
     };
