@@ -45,7 +45,8 @@ import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
-import { getTokenPrices, calculateTotalValue, formatUSDValue, type TokenInfo } from '../../src/price-service.js';
+import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, isBitcoinNetworkKey, type TokenInfo } from '../../src/price-service.js';
+import { isBitcoinNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
 import { ethers } from 'ethers';
@@ -915,11 +916,42 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       // Fetch prices for tokens and calculate total portfolio value
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      
+
       const priceNetwork = walletService!.config.network;
       const networkConfig = walletService!.config.networks[priceNetwork];
-      const chainId = networkConfig?.chainId || 1;
-      
+
+      // Handle Bitcoin networks differently
+      if (isBitcoinNetworkKey(priceNetwork)) {
+        try {
+          const btcPrice = await getBitcoinPrice();
+          const cached = getCachedBalance(priceNetwork, { type: 'native' });
+          const balance = cached?.balance || '0';
+          const btcAmount = parseFloat(balance);
+          const totalValue = btcPrice ? btcAmount * btcPrice : 0;
+
+          return {
+            prices: { 'native:BTC': btcPrice },
+            totalValue,
+            formattedTotal: formatUSDValue(totalValue),
+            network: priceNetwork,
+            isBitcoin: true
+          };
+        } catch (error) {
+          console.warn('[GET_TOKEN_PRICES] Bitcoin price error:', error);
+          return {
+            prices: {},
+            totalValue: 0,
+            formattedTotal: '$0.00',
+            network: priceNetwork,
+            isBitcoin: true,
+            error: 'Failed to fetch Bitcoin price'
+          };
+        }
+      }
+
+      // EVM networks
+      const chainId = 'chainId' in networkConfig ? networkConfig.chainId : 1;
+
       // Get tokens with balances
       const priceTokens = walletService!.getTokensForNetwork(priceNetwork);
       const tokenInfos: TokenInfo[] = priceTokens.map(t => ({
@@ -928,7 +960,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         address: t.address,
         decimals: t.decimals
       }));
-      
+
       // Build balances array from cache
       const balancesForCalc = priceTokens.map(token => {
         const cached = getCachedBalance(priceNetwork, token);
@@ -942,20 +974,20 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
           balance: cached?.balance || '0'
         };
       });
-      
+
       try {
         // Fetch prices from CoinGecko
         const prices = await getTokenPrices(chainId, tokenInfos);
-        
+
         // Calculate total value
         const totalValue = calculateTotalValue(balancesForCalc, prices);
-        
+
         // Convert prices map to object for response
         const pricesObj: Record<string, number | null> = {};
         prices.forEach((value, key) => {
           pricesObj[key] = value;
         });
-        
+
         return {
           prices: pricesObj,
           totalValue,
@@ -1037,10 +1069,13 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!walletService) throw new Error('Wallet not initialized');
       const netConfigNetwork = walletService.config.network;
       const netConfigData = walletService.config.networks[netConfigNetwork];
+      const isBitcoin = isBitcoinNetworkConfig(netConfigData);
       return {
         network: netConfigNetwork,
         blockExplorer: netConfigData?.blockExplorer || null,
-        chainId: netConfigData?.chainId
+        chainId: isBitcoin ? undefined : (netConfigData as any).chainId,
+        isBitcoin,
+        bitcoinNetwork: isBitcoin ? (netConfigData as any).bitcoinNetwork : undefined
       };
     }
 
@@ -1056,8 +1091,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'SWITCH_NETWORK':
       await walletService!.setNetwork(payload.network);
-      const chainHex = '0x' + walletService!.config.networks[payload.network].chainId.toString(16);
-      broadcastChainChanged(chainHex);
+      const switchNetworkConfig = walletService!.config.networks[payload.network];
+      // Only broadcast chainChanged for EVM networks (Bitcoin doesn't have chainId)
+      if (!isBitcoinNetworkConfig(switchNetworkConfig)) {
+        const chainHex = '0x' + switchNetworkConfig.chainId.toString(16);
+        broadcastChainChanged(chainHex);
+      }
       return { success: true, network: payload.network };
 
     case 'GET_NETWORKS':
@@ -1179,9 +1218,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       return { accounts: [walletService!.getAddress()] };
 
-    case 'ETH_REQUEST_ACCOUNTS':
+    case 'ETH_REQUEST_ACCOUNTS': {
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
+      // Bitcoin networks don't support EIP-1193
+      const ethReqNetworkConfig = walletService!.config.networks[walletService!.config.network];
+      if (isBitcoinNetworkConfig(ethReqNetworkConfig)) {
+        throw new Error('eth_requestAccounts not supported on Bitcoin networks');
+      }
       if (pendingRequests.some(r => r.type === 'connect')) {
         throw new Error('Connection request already pending');
       }
@@ -1196,13 +1240,17 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         approvedDappOrigins.add(origin);
         saveApprovedOrigins();
       }
-      emitProviderEvent('connect', { chainId: '0x' + walletService!.config.networks[walletService!.config.network].chainId.toString(16) });
+      emitProviderEvent('connect', { chainId: '0x' + ethReqNetworkConfig.chainId.toString(16) });
       broadcastAccountsChanged([addr]);
       return { accounts: [addr] };
+    }
 
     case 'ETH_NET_VERSION': {
-      const chainId = walletService!.config.networks[walletService!.config.network].chainId;
-      return chainId.toString(10);
+      const netVersionConfig = walletService!.config.networks[walletService!.config.network];
+      if (isBitcoinNetworkConfig(netVersionConfig)) {
+        throw new Error('eth_net_version not supported on Bitcoin networks');
+      }
+      return netVersionConfig.chainId.toString(10);
     }
 
     case 'GENERIC_RPC': {
@@ -1230,6 +1278,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'ETH_CHAIN_ID': {
       const chainIdConfig = walletService!.config.networks[walletService!.config.network];
+      if (isBitcoinNetworkConfig(chainIdConfig)) {
+        throw new Error('eth_chainId not supported on Bitcoin networks');
+      }
       return { chainId: '0x' + chainIdConfig.chainId.toString(16) };
     }
 

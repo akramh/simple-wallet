@@ -197,12 +197,14 @@ export class ExplorerAPI {
    * }, 'GLOBAL_API_KEY');
    * ```
    */
-  registerNetworks(networks: Record<string, { explorerApiUrl?: string; chainId: number; explorerApiKey?: string }>, globalApiKey?: string): void {
+  registerNetworks(networks: Record<string, { explorerApiUrl?: string; chainId?: number; explorerApiKey?: string; type?: string }>, globalApiKey?: string): void {
     if (globalApiKey) {
       this.globalApiKey = globalApiKey;
     }
     for (const [network, config] of Object.entries(networks)) {
-      if (config.explorerApiUrl) {
+      // Only register EVM networks (those with chainId and explorerApiUrl)
+      // Bitcoin networks use Mempool.space API instead
+      if (config.explorerApiUrl && config.chainId !== undefined && config.type !== 'bitcoin') {
         this.networkConfigs.set(network, {
           apiUrl: config.explorerApiUrl,
           chainId: config.chainId,

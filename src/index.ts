@@ -56,11 +56,14 @@ import {
   getTokenPrices,
   getNativeTokenPrice,
   getERC20TokenPrice,
+  getBitcoinPrice,
+  isBitcoinNetworkKey,
   calculateTotalValue,
   calculateTransactionCosts,
   type TokenInfo
 } from './price-service.js';
 import type { Config, Token, TokenMetadata } from './types/index.js';
+import { isBitcoinNetwork, satoshisToBtc } from './bitcoin/index.js';
 
 // ============================================================================
 // Configuration and Global State
@@ -810,26 +813,39 @@ async function mainMenu(walletName: string | null): Promise<void> {
  * @param currentWalletName - Name of the current wallet for header display
  */
 async function checkBalance(currentWalletName: string | null): Promise<void> {
-  const address = wallet.getAddress();
+  // Use walletService.getAddress() which handles both EVM and Bitcoin
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
   try {
     ui.showLoading('Fetching balance from blockchain...');
     console.log('');
-    const tokens = walletService.getTokensForNetwork(config.network);
-    const portfolio = await wallet.getPortfolio(tokens);
 
-    // Fetch USD prices
+    // Use walletService which handles both EVM and Bitcoin networks
+    const portfolio = await walletService.getPortfolioForNetwork(config.network);
+
+    // Fetch USD prices based on network type
     ui.showLoading('Fetching USD prices...');
-    const chainId = config.networks[config.network].chainId;
-    const tokenInfos: TokenInfo[] = tokens.map(t => ({
-      type: t.type as 'native' | 'erc20',
-      symbol: t.symbol,
-      address: t.address,
-      decimals: t.decimals
-    }));
-    const prices = await getTokenPrices(chainId, tokenInfos);
+    let prices: Map<string, number | null>;
+
+    if (isBitcoinNetwork(config.network)) {
+      // Bitcoin network - get Bitcoin price
+      const btcPrice = await getBitcoinPrice(config.network);
+      prices = new Map([['native', btcPrice]]);
+    } else {
+      // EVM network - get token prices
+      const networkConfig = config.networks[config.network];
+      const chainId = 'chainId' in networkConfig ? networkConfig.chainId : 1;
+      const tokens = walletService.getTokensForNetwork(config.network);
+      const tokenInfos: TokenInfo[] = tokens.map(t => ({
+        type: t.type as 'native' | 'erc20',
+        symbol: t.symbol,
+        address: t.address,
+        decimals: t.decimals
+      }));
+      prices = await getTokenPrices(chainId, tokenInfos);
+    }
 
     console.log('');
     ui.showSuccess('Balances retrieved successfully!');
@@ -872,7 +888,9 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
       err.message,
       [
         'Check your internet connection',
-        'Verify the network RPC endpoint in config.json',
+        isBitcoinNetwork(config.network)
+          ? 'Verify the Mempool.space API is accessible'
+          : 'Verify the network RPC endpoint in config.json',
         'Try switching to a different network'
       ]
     );
@@ -917,20 +935,30 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
     try {
       // Swap provider context per network to reuse the same wallet/account.
       await walletService.setNetwork(net, { persist: false });
-      const tokens = walletService.getTokensForNetwork(net);
-      const portfolio = await wallet.getPortfolio(tokens);
 
-      // Fetch prices for this network
-      const chainId = config.networks[net].chainId;
-      const tokenInfos: TokenInfo[] = tokens.map(t => ({
-        type: t.type as 'native' | 'erc20',
-        symbol: t.symbol,
-        address: t.address,
-        decimals: t.decimals
-      }));
+      // Use walletService which handles both EVM and Bitcoin
+      const portfolio = await walletService.getPortfolioForNetwork(net);
+
+      // Fetch prices based on network type
       let prices: Map<string, number | null>;
       try {
-        prices = await getTokenPrices(chainId, tokenInfos);
+        if (isBitcoinNetwork(net)) {
+          // Bitcoin network - get Bitcoin price
+          const btcPrice = await getBitcoinPrice(net);
+          prices = new Map([['native', btcPrice]]);
+        } else {
+          // EVM network - get token prices
+          const netConfig = config.networks[net];
+          const chainId = 'chainId' in netConfig ? netConfig.chainId : 1;
+          const tokens = walletService.getTokensForNetwork(net);
+          const tokenInfos: TokenInfo[] = tokens.map(t => ({
+            type: t.type as 'native' | 'erc20',
+            symbol: t.symbol,
+            address: t.address,
+            decimals: t.decimals
+          }));
+          prices = await getTokenPrices(chainId, tokenInfos);
+        }
       } catch {
         prices = new Map();
       }
@@ -1114,9 +1142,24 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
  * @param currentWalletName - Name of the current wallet for header display
  */
 async function sendCrypto(currentWalletName: string | null): Promise<void> {
-  const address = wallet.getAddress();
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
+
+  // Bitcoin sending is not yet implemented (Phase 3)
+  if (isBitcoinNetwork(config.network)) {
+    ui.showSection('Send Transaction');
+    ui.showWarning('Bitcoin sending is not yet supported');
+    ui.showInfo('This feature is planned for a future update');
+    console.log('');
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+    await mainMenu(currentWalletName);
+    return;
+  }
 
   ui.showSection('Send Transaction');
   ui.showInfo('Press Ctrl+C to cancel at any time');
@@ -1190,8 +1233,10 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
   // Fetch gas estimate and prices for confirmation screen
   ui.showLoading('Estimating transaction costs...');
 
-  const chainId = config.networks[config.network].chainId;
-  const networkName = config.networks[config.network].name || config.network;
+  // TypeScript guard: Bitcoin networks return early above, so this is an EVM network
+  const networkConfig = config.networks[config.network];
+  const chainId = 'chainId' in networkConfig ? networkConfig.chainId : 1;
+  const networkName = networkConfig.name || config.network;
 
   // Get gas estimate (we've already validated toAddress and amount are non-empty)
   const gasEstimate = await walletService.getGasEstimate(selectedToken, answers.toAddress!, answers.amount!);
@@ -1291,15 +1336,24 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
  * @param currentWalletName - Name of the current wallet for header display
  */
 async function showReceiveAddress(currentWalletName: string | null): Promise<void> {
-  const address = wallet.getAddress();
+  // Use walletService.getAddress() which handles both EVM and Bitcoin
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
   ui.showSection('Receive Crypto');
-  const tokens = walletService.getTokensForNetwork(config.network);
-  const tokenSymbols = tokens.map(t => t.symbol).join(', ');
 
-  ui.showInfo(`Share this address to receive: ${tokenSymbols}`);
+  // Show appropriate message based on network type
+  if (isBitcoinNetwork(config.network)) {
+    const symbol = config.networks[config.network].nativeSymbol;
+    ui.showInfo(`Share this address to receive: ${symbol}`);
+    console.log('');
+    console.log(chalk.gray('  This is a Native SegWit (bech32) address'));
+  } else {
+    const tokens = walletService.getTokensForNetwork(config.network);
+    const tokenSymbols = tokens.map(t => t.symbol).join(', ');
+    ui.showInfo(`Share this address to receive: ${tokenSymbols}`);
+  }
   console.log('');
 
   ui.showSeparator();

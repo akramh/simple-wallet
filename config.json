@@ -1,6 +1,24 @@
 {
   "network": "mainnet",
   "networks": {
+    "bitcoin-mainnet": {
+      "type": "bitcoin",
+      "name": "Bitcoin Mainnet",
+      "bitcoinNetwork": "mainnet",
+      "nativeSymbol": "BTC",
+      "nativeName": "Bitcoin",
+      "blockExplorer": "https://mempool.space",
+      "explorerApiUrl": "https://mempool.space/api"
+    },
+    "bitcoin-testnet": {
+      "type": "bitcoin",
+      "name": "Bitcoin Testnet",
+      "bitcoinNetwork": "testnet",
+      "nativeSymbol": "tBTC",
+      "nativeName": "Bitcoin Testnet",
+      "blockExplorer": "https://mempool.space/testnet",
+      "explorerApiUrl": "https://mempool.space/testnet/api"
+    },
     "sepolia": {
       "name": "Sepolia Testnet",
       "rpcUrl": [

@@ -56,8 +56,17 @@ const SYMBOL_ICON_FALLBACK: Record<string, string> = {
   usdc: 'icon-usdc.png',
   usdt: 'usdt.svg',
   pol: 'pol-token.svg',
-  matic: 'pol-token.svg'
+  matic: 'pol-token.svg',
+  btc: 'btc.svg',
+  tbtc: 'btc.svg'
 };
+
+/**
+ * Helper to check if network key is a Bitcoin network
+ */
+function isBitcoinNetwork(networkKey: string): boolean {
+  return networkKey.startsWith('bitcoin-');
+}
 
 interface Props {
   address: string;
@@ -420,14 +429,20 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
               onClick={() => setShowAccountMenu(true)}
             >
               <div className="account-avatar">
-                {address.substring(2, 4).toUpperCase()}
+                {/* Bitcoin addresses start with bc1/tb1, Ethereum with 0x */}
+                {isBitcoinNetwork(network)
+                  ? address.substring(0, 2).toUpperCase()
+                  : address.substring(2, 4).toUpperCase()}
               </div>
               <div className="account-info">
                 <div className="account-name">
                   {currentWalletName} : Account {currentAccountIndex + 1}
                 </div>
                 <div className="account-address">
-                  {address.substring(0, 6)}...{address.substring(address.length - 4)}
+                  {/* Bitcoin addresses are longer, show more characters */}
+                  {isBitcoinNetwork(network)
+                    ? `${address.substring(0, 8)}...${address.substring(address.length - 6)}`
+                    : `${address.substring(0, 6)}...${address.substring(address.length - 4)}`}
                 </div>
               </div>
               <span className="dropdown-arrow">▼</span>
@@ -459,6 +474,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
               <button
                 className="action-tile"
                 onClick={() => setView('send')}
+                disabled={isBitcoinNetwork(network)}
+                title={isBitcoinNetwork(network) ? 'Bitcoin sending coming soon' : undefined}
               >
                 <img src={sendIcon} alt="Send" className="action-icon" />
                 <span>Send</span>
