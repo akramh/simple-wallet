@@ -492,27 +492,45 @@ const SIDE_PANEL_PATH = 'sidepanel.html';
 
 /**
  * Configures Chrome Side Panel API to open on extension icon click.
- * Sets up the side panel behavior and path.
- * 
- * @param tabId - Optional tab ID for tab-specific panel configuration
  */
-const configureSidePanel = async (tabId?: number) => {
-  if (!chrome.sidePanel?.setPanelBehavior) return;
+const configureSidePanel = async () => {
+  console.log('[SidePanel] Configuring side panel...');
+
+  if (!chrome.sidePanel) {
+    console.error('[SidePanel] chrome.sidePanel API not available');
+    return;
+  }
+
   try {
-    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-    if (tabId && chrome.sidePanel.setOptions) {
-      await chrome.sidePanel.setOptions({ tabId, path: SIDE_PANEL_PATH });
+    // Set the default panel path globally
+    if (chrome.sidePanel.setOptions) {
+      await chrome.sidePanel.setOptions({ path: SIDE_PANEL_PATH });
+      console.log('[SidePanel] Set options with path:', SIDE_PANEL_PATH);
+    }
+
+    // Enable opening panel on action click
+    if (chrome.sidePanel.setPanelBehavior) {
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+      console.log('[SidePanel] Set openPanelOnActionClick: true');
     }
   } catch (error) {
-    console.error('Failed to configure side panel:', error);
+    console.error('[SidePanel] Failed to configure:', error);
   }
 };
 
-chrome.runtime.onInstalled.addListener(() => configureSidePanel());
-chrome.runtime.onStartup.addListener(() => configureSidePanel());
+// Configure side panel on various lifecycle events
+chrome.runtime.onInstalled.addListener(() => {
+  console.log('[SidePanel] onInstalled event');
+  configureSidePanel();
+});
 
-// Note: openPanelOnActionClick: true in configureSidePanel() automatically opens
-// the side panel when the extension icon is clicked - no manual listener needed.
+chrome.runtime.onStartup.addListener(() => {
+  console.log('[SidePanel] onStartup event');
+  configureSidePanel();
+});
+
+// IMPORTANT: Also configure immediately when service worker loads
+configureSidePanel();
 
 // ============================================================================
 // Configuration Loading
