@@ -319,3 +319,60 @@ export function clearPriceCache(): void {
     delete priceCache[Number(key)];
   }
 }
+
+// ============================================================================
+// Transaction Cost Calculations
+// ============================================================================
+
+/**
+ * Transaction cost breakdown in USD
+ */
+export interface TransactionCosts {
+  /** USD value of the amount being sent (null if price unavailable) */
+  amountUsd: number | null;
+  /** USD value of gas cost (null if price unavailable) */
+  gasCostUsd: number | null;
+  /** Total USD cost: amount + gas (null if either unavailable) */
+  totalUsd: number | null;
+}
+
+/**
+ * Calculate USD costs for a transaction.
+ * Shared by CLI and extension to avoid code duplication.
+ *
+ * @param amount - Amount being sent (as string)
+ * @param tokenPrice - USD price of the token being sent (null if unavailable)
+ * @param gasCostNative - Gas cost in native token units (as string)
+ * @param nativePrice - USD price of the native token (null if unavailable)
+ * @returns Transaction costs breakdown
+ *
+ * @example
+ * ```typescript
+ * const costs = calculateTransactionCosts('0.5', 2500, '0.002', 2500);
+ * // { amountUsd: 1250, gasCostUsd: 5, totalUsd: 1255 }
+ * ```
+ */
+export function calculateTransactionCosts(
+  amount: string,
+  tokenPrice: number | null,
+  gasCostNative: string,
+  nativePrice: number | null
+): TransactionCosts {
+  // Calculate amount USD
+  const amountNum = parseFloat(amount);
+  const amountUsd = tokenPrice !== null && !isNaN(amountNum) ? amountNum * tokenPrice : null;
+
+  // Calculate gas USD
+  const gasCostNum = parseFloat(gasCostNative);
+  const gasCostUsd = nativePrice !== null && !isNaN(gasCostNum) ? gasCostNum * nativePrice : null;
+
+  // Calculate total USD
+  let totalUsd: number | null = null;
+  if (amountUsd !== null && gasCostUsd !== null) {
+    totalUsd = amountUsd + gasCostUsd;
+  } else if (amountUsd !== null) {
+    totalUsd = amountUsd;
+  }
+
+  return { amountUsd, gasCostUsd, totalUsd };
+}

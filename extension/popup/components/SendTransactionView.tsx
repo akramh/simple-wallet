@@ -8,8 +8,9 @@
  * - Explorer link integration
  * - Hash display on confirmation
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Token } from '../../../src/types';
+import { calculateTransactionCosts, formatUSDValue } from '../../../src/price-service';
 
 interface SendTransactionViewProps {
   token: Token;
@@ -106,46 +107,31 @@ export function SendTransactionView({
       .catch(console.error);
   }, [token, recipient, amount]);
 
-  // Calculate USD values
-  const getAmountUsd = (): string | null => {
+  // Calculate USD values using shared function
+  const transactionCosts = useMemo(() => {
     if (!priceData) return null;
+
     const priceKey = token.type === 'native' ? 'native' : token.address?.toLowerCase();
-    if (!priceKey) return null;
-    const price = priceData.prices[priceKey];
-    if (price === null || price === undefined) return null;
-    const value = parseFloat(amount) * price;
-    if (isNaN(value)) return null;
-    if (value < 0.01) return '<$0.01';
-    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const tokenPrice = priceKey ? priceData.prices[priceKey] ?? null : null;
+    const nativePrice = priceData.nativePrice ?? null;
+    const gasCostNative = gasEstimate?.estimatedCostNative || '0';
+
+    return calculateTransactionCosts(amount, tokenPrice, gasCostNative, nativePrice);
+  }, [priceData, token, amount, gasEstimate]);
+
+  const getAmountUsd = (): string | null => {
+    if (!transactionCosts?.amountUsd) return null;
+    return formatUSDValue(transactionCosts.amountUsd);
   };
 
   const getGasUsd = (): string | null => {
-    if (!gasEstimate || !priceData?.nativePrice) return null;
-    const gasCost = parseFloat(gasEstimate.estimatedCostNative);
-    if (isNaN(gasCost)) return null;
-    const value = gasCost * priceData.nativePrice;
-    if (value < 0.01) return '<$0.01';
-    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (!transactionCosts?.gasCostUsd) return null;
+    return formatUSDValue(transactionCosts.gasCostUsd);
   };
 
   const getTotalUsd = (): string | null => {
-    if (!priceData) return null;
-    let total = 0;
-    
-    // Amount value
-    const priceKey = token.type === 'native' ? 'native' : token.address?.toLowerCase();
-    if (priceKey && priceData.prices[priceKey]) {
-      total += parseFloat(amount) * (priceData.prices[priceKey] || 0);
-    }
-    
-    // Gas value (always in native token)
-    if (gasEstimate && priceData.nativePrice) {
-      total += parseFloat(gasEstimate.estimatedCostNative) * priceData.nativePrice;
-    }
-    
-    if (isNaN(total) || total === 0) return null;
-    if (total < 0.01) return '<$0.01';
-    return `$${total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (!transactionCosts?.totalUsd) return null;
+    return formatUSDValue(transactionCosts.totalUsd);
   };
 
   // Submit transaction when user confirms
