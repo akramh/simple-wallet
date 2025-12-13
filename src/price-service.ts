@@ -82,6 +82,17 @@ const BITCOIN_NETWORK_TO_ID: Record<string, string> = {
 /** Bitcoin price cache (separate from EVM chain cache) */
 let bitcoinPriceCache: { price: number; lastUpdated: number } | null = null;
 
+/**
+ * Maps Solana network keys to CoinGecko IDs
+ */
+const SOLANA_NETWORK_TO_ID: Record<string, string> = {
+  'solana-mainnet': 'solana',
+  'solana-devnet': 'solana', // Use mainnet price for devnet display
+};
+
+/** Solana price cache (separate from EVM chain cache) */
+let solanaPriceCache: { price: number; lastUpdated: number } | null = null;
+
 // ============================================================================
 // Price Cache (per network)
 // ============================================================================
@@ -221,6 +232,52 @@ export async function getBitcoinPrice(networkKey?: string): Promise<number | nul
  */
 export function isBitcoinNetworkKey(networkKey: string): boolean {
   return networkKey in BITCOIN_NETWORK_TO_ID;
+}
+
+/**
+ * Check if a network key is a Solana network.
+ */
+export function isSolanaNetworkKey(networkKey: string): boolean {
+  return networkKey in SOLANA_NETWORK_TO_ID;
+}
+
+/**
+ * Fetches the Solana price.
+ * Works for both solana-mainnet and solana-devnet (uses mainnet price).
+ *
+ * @param networkKey - Solana network key (e.g., 'solana-mainnet')
+ * @returns Solana price in USD, or null if unavailable
+ */
+export async function getSolanaPrice(networkKey?: string): Promise<number | null> {
+  // Check cache first
+  if (solanaPriceCache && Date.now() - solanaPriceCache.lastUpdated < CACHE_TTL) {
+    return solanaPriceCache.price;
+  }
+
+  const coinId = 'solana';
+
+  try {
+    const url = `${COINGECKO_BASE}/simple/price?ids=${coinId}&vs_currencies=usd`;
+    const response = await fetchWithTimeout(url);
+
+    if (!response.ok) {
+      console.warn(`[PriceService] Solana API error: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json() as Record<string, { usd?: number } | undefined>;
+    const price = data[coinId]?.usd;
+
+    if (typeof price === 'number') {
+      solanaPriceCache = { price, lastUpdated: Date.now() };
+      return price;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('[PriceService] Failed to fetch Solana price:', error);
+    return null;
+  }
 }
 
 /**
@@ -377,6 +434,7 @@ export function clearPriceCache(): void {
   }
   // Also clear Bitcoin cache
   bitcoinPriceCache = null;
+  solanaPriceCache = null;
 }
 
 // ============================================================================

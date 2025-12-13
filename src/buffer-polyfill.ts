@@ -71,6 +71,87 @@ export class BufferPolyfill extends Uint8Array {
   }
 
   /**
+   * Node.js-compatible Buffer.alloc().
+   */
+  static alloc(size: number, fill?: string | number | Uint8Array, encoding?: string): BufferPolyfill {
+    const buf = new BufferPolyfill(size);
+
+    if (fill === undefined) {
+      buf.fill(0);
+      return buf;
+    }
+
+    if (typeof fill === 'number') {
+      buf.fill(fill & 0xff);
+      return buf;
+    }
+
+    const fillBytes =
+      typeof fill === 'string'
+        ? BufferPolyfill.fromBuffer(fill, encoding)
+        : fill instanceof Uint8Array
+          ? fill
+          : new Uint8Array(0);
+
+    if (fillBytes.length === 0) {
+      buf.fill(0);
+      return buf;
+    }
+
+    for (let i = 0; i < buf.length; i++) {
+      buf[i] = fillBytes[i % fillBytes.length];
+    }
+
+    return buf;
+  }
+
+  /**
+   * Node.js-compatible Buffer.allocUnsafe().
+   * In browsers this is the same as alloc().
+   */
+  static allocUnsafe(size: number): BufferPolyfill {
+    return BufferPolyfill.alloc(size);
+  }
+
+  /**
+   * Node.js-compatible Buffer.concat().
+   */
+  static concat(list: Array<Uint8Array>, totalLength?: number): BufferPolyfill {
+    const length =
+      typeof totalLength === 'number'
+        ? totalLength
+        : list.reduce((sum, item) => sum + (item?.byteLength || 0), 0);
+
+    const out = new BufferPolyfill(length);
+    let offset = 0;
+    for (const item of list) {
+      if (!item) continue;
+      out.set(item, offset);
+      offset += item.byteLength;
+      if (offset >= length) break;
+    }
+    return out;
+  }
+
+  /**
+   * Node.js-compatible Buffer.byteLength().
+   */
+  static byteLength(str: string, encoding?: string): number {
+    if (encoding === 'hex') {
+      const cleaned = str.replace(/[^0-9a-fA-F]/g, '');
+      return Math.floor(cleaned.length / 2);
+    }
+    if (encoding === 'base64') {
+      try {
+        return atob(str).length;
+      } catch {
+        return 0;
+      }
+    }
+    return new TextEncoder().encode(str).length;
+  }
+
+  /**
    * Creates a BufferPolyfill from a hexadecimal string.
    * Ignores non-hex characters in the input.
    * 
@@ -181,6 +262,22 @@ if (typeof globalThis.Buffer === 'undefined') {
       }
       // Default: try to use parent Uint8Array.from
       return new BufferPolyfill(Uint8Array.from(data, encodingOrOffset, length));
+    }
+
+    static alloc(size: number, fill?: string | number | Uint8Array, encoding?: string): BufferPolyfill {
+      return BufferPolyfill.alloc(size, fill as any, encoding);
+    }
+
+    static allocUnsafe(size: number): BufferPolyfill {
+      return BufferPolyfill.allocUnsafe(size);
+    }
+
+    static concat(list: Array<Uint8Array>, totalLength?: number): BufferPolyfill {
+      return BufferPolyfill.concat(list, totalLength);
+    }
+
+    static byteLength(str: string, encoding?: string): number {
+      return BufferPolyfill.byteLength(str, encoding);
     }
 
     /**

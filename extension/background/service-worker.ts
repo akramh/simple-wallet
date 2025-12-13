@@ -36,6 +36,7 @@
  * - ethers for signing and transaction handling
  */
 
+import '../../src/process-polyfill.js'; // Install process shim early (readable-stream expects it)
 import '../../src/buffer-polyfill.js'; // Install Buffer polyfill
 import { Wallet } from '../../src/wallet.js';
 import { WalletAppService } from '../../src/app-service.js';
@@ -45,8 +46,8 @@ import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
-import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, isBitcoinNetworkKey, type TokenInfo } from '../../src/price-service.js';
-import { isBitcoinNetworkConfig } from '../../src/types/config.js';
+import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, isBitcoinNetworkKey, isSolanaNetworkKey, type TokenInfo } from '../../src/price-service.js';
+import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
 import { getBitcoinExplorer, getBitcoinProvider, satoshisToBtc } from '../../src/bitcoin/index.js';
@@ -238,7 +239,7 @@ async function refreshBalancesForCurrentNetwork(): Promise<void> {
   const network = walletService.config.network;
   const networkConfig = walletService.config.networks[network];
 
-  if (isBitcoinNetworkConfig(networkConfig)) {
+  if (isBitcoinNetworkConfig(networkConfig) || isSolanaNetworkConfig(networkConfig)) {
     const portfolio = await walletService.getPortfolioForNetwork(network);
 
     for (const item of portfolio) {
@@ -620,7 +621,22 @@ async function initializeWalletService(): Promise<void> {
   
   // User overrides from storage (e.g., selected network) merged with bundled config
   const storedConfig = storage.readJSON<Partial<Config & { network: string; explorerApiKey?: string }>>('config.json', {});
-  const mergedConfig = { ...bundledConfig, ...storedConfig, networks: { ...bundledConfig.networks, ...storedConfig.networks } };
+
+  // IMPORTANT: deep-merge network configs so older stored configs don't wipe new bundled fields.
+  // - bundledConfig.networks is the source of truth
+  // - storedConfig.network is a user preference (selected network)
+  // - storedConfig.networks can override specific fields or add custom networks
+  const mergedNetworks: Record<string, any> = { ...bundledConfig.networks };
+  if (storedConfig.networks) {
+    for (const [networkKey, storedNetwork] of Object.entries(storedConfig.networks)) {
+      const bundledNetwork = (bundledConfig.networks as any)[networkKey];
+      mergedNetworks[networkKey] = bundledNetwork
+        ? { ...bundledNetwork, ...storedNetwork }
+        : storedNetwork;
+    }
+  }
+
+  const mergedConfig = { ...bundledConfig, ...storedConfig, networks: mergedNetworks };
   const { config, globalApiKey } = applyExplorerApiKeys(mergedConfig, import.meta.env as Record<string, string | undefined>);
 
   // Register explorer API URLs from network config (pass global API key)
@@ -1008,6 +1024,35 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         }
       }
 
+      // Handle Solana networks (native SOL only in Phase 1)
+      if (isSolanaNetworkKey(priceNetwork)) {
+        try {
+          const solPrice = await getSolanaPrice();
+          const cached = getCachedBalance(priceNetwork, { type: 'native' });
+          const balance = cached?.balance || '0';
+          const solAmount = parseFloat(balance);
+          const totalValue = solPrice ? solAmount * solPrice : 0;
+
+          return {
+            prices: { native: solPrice },
+            totalValue,
+            formattedTotal: formatUSDValue(totalValue),
+            network: priceNetwork,
+            isSolana: true
+          };
+        } catch (error) {
+          console.warn('[GET_TOKEN_PRICES] Solana price error:', error);
+          return {
+            prices: {},
+            totalValue: 0,
+            formattedTotal: '$0.00',
+            network: priceNetwork,
+            isSolana: true,
+            error: 'Failed to fetch Solana price'
+          };
+        }
+      }
+
       // EVM networks
       const chainId = 'chainId' in networkConfig ? networkConfig.chainId : 1;
 
@@ -1076,6 +1121,10 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const sendNetworkConfig = walletService!.config.networks[network];
 
       try {
+        if (isSolanaNetworkConfig(sendNetworkConfig)) {
+          throw new Error('Sending SOL is not supported yet');
+        }
+
         // Bitcoin send path (broadcast + pending)
         if (isBitcoinNetworkConfig(sendNetworkConfig)) {
           if (!sessionPassword) {
@@ -1168,12 +1217,15 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const netConfigNetwork = walletService.config.network;
       const netConfigData = walletService.config.networks[netConfigNetwork];
       const isBitcoin = isBitcoinNetworkConfig(netConfigData);
+      const isSolana = isSolanaNetworkConfig(netConfigData);
       return {
         network: netConfigNetwork,
         blockExplorer: netConfigData?.blockExplorer || null,
-        chainId: isBitcoin ? undefined : (netConfigData as any).chainId,
+        chainId: isEVMNetworkConfig(netConfigData) ? netConfigData.chainId : undefined,
         isBitcoin,
-        bitcoinNetwork: isBitcoin ? (netConfigData as any).bitcoinNetwork : undefined
+        isSolana,
+        bitcoinNetwork: isBitcoin ? (netConfigData as any).bitcoinNetwork : undefined,
+        solanaCluster: isSolana ? (netConfigData as any).solanaCluster : undefined
       };
     }
 
@@ -1196,7 +1248,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       // Kick off a refresh for the new network (non-blocking)
       refreshBalancesForCurrentNetwork().catch(() => {});
       // Only broadcast chainChanged for EVM networks (Bitcoin doesn't have chainId)
-      if (!isBitcoinNetworkConfig(switchNetworkConfig)) {
+      if (isEVMNetworkConfig(switchNetworkConfig)) {
         const chainHex = '0x' + switchNetworkConfig.chainId.toString(16);
         broadcastChainChanged(chainHex);
       }
@@ -1248,6 +1300,11 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
           }));
 
           return { transactions, supported: true };
+        }
+
+        // Solana explorer fetching not supported yet (Phase 2+)
+        if (isSolanaNetworkConfig(explorerNetworkConfig)) {
+          return { transactions: [], supported: false };
         }
 
         const isSupported = explorerAPI.isSupported(explorerNetwork);
@@ -1348,15 +1405,20 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'ETH_ACCOUNTS':
       if (!isUnlocked) return { accounts: [] };
       resetAutoLockTimer();
-      return { accounts: [walletService!.getAddress()] };
+      {
+        const evmConfig = walletService!.config.networks[walletService!.config.network];
+        if (!isEVMNetworkConfig(evmConfig)) {
+          return { accounts: [] };
+        }
+        return { accounts: [walletService!.getAddress()] };
+      }
 
     case 'ETH_REQUEST_ACCOUNTS': {
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      // Bitcoin networks don't support EIP-1193
       const ethReqNetworkConfig = walletService!.config.networks[walletService!.config.network];
-      if (isBitcoinNetworkConfig(ethReqNetworkConfig)) {
-        throw new Error('eth_requestAccounts not supported on Bitcoin networks');
+      if (!isEVMNetworkConfig(ethReqNetworkConfig)) {
+        throw new Error('eth_requestAccounts is only supported on EVM networks');
       }
       if (pendingRequests.some(r => r.type === 'connect')) {
         throw new Error('Connection request already pending');
@@ -1379,8 +1441,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'ETH_NET_VERSION': {
       const netVersionConfig = walletService!.config.networks[walletService!.config.network];
-      if (isBitcoinNetworkConfig(netVersionConfig)) {
-        throw new Error('eth_net_version not supported on Bitcoin networks');
+      if (!isEVMNetworkConfig(netVersionConfig)) {
+        throw new Error('eth_net_version is only supported on EVM networks');
       }
       return netVersionConfig.chainId.toString(10);
     }
@@ -1388,6 +1450,10 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'GENERIC_RPC': {
       const { method, params } = payload || {};
       if (!method) throw new Error('Missing RPC method');
+      const rpcNetworkConfig = walletService!.config.networks[walletService!.config.network];
+      if (!isEVMNetworkConfig(rpcNetworkConfig)) {
+        throw new Error('RPC passthrough is only supported on EVM networks');
+      }
       // Block signing/transaction methods from generic passthrough
       const blocked = new Set([
         'eth_sendTransaction',
@@ -1410,8 +1476,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'ETH_CHAIN_ID': {
       const chainIdConfig = walletService!.config.networks[walletService!.config.network];
-      if (isBitcoinNetworkConfig(chainIdConfig)) {
-        throw new Error('eth_chainId not supported on Bitcoin networks');
+      if (!isEVMNetworkConfig(chainIdConfig)) {
+        throw new Error('eth_chainId is only supported on EVM networks');
       }
       return { chainId: '0x' + chainIdConfig.chainId.toString(16) };
     }
@@ -1419,6 +1485,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'ETH_SEND_TRANSACTION':
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
+      {
+        const evmSendConfig = walletService!.config.networks[walletService!.config.network];
+        if (!isEVMNetworkConfig(evmSendConfig)) {
+          throw new Error('eth_sendTransaction is only supported on EVM networks');
+        }
+      }
       if (!payload?.params || !Array.isArray(payload.params) || payload.params.length === 0) {
         throw new Error('Invalid transaction params');
       }
@@ -1450,6 +1522,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'ETH_SIGN_TYPED_DATA_V4': {
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
+      {
+        const evmSignConfig = walletService!.config.networks[walletService!.config.network];
+        if (!isEVMNetworkConfig(evmSignConfig)) {
+          throw new Error('Signing is only supported on EVM networks');
+        }
+      }
       const params = payload?.params || [];
       const addr = walletService!.getAddress();
       const pendingId = createRequestId();

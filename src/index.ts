@@ -57,6 +57,7 @@ import {
   getNativeTokenPrice,
   getERC20TokenPrice,
   getBitcoinPrice,
+  getSolanaPrice,
   isBitcoinNetworkKey,
   calculateTotalValue,
   calculateTransactionCosts,
@@ -829,14 +830,20 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
     ui.showLoading('Fetching USD prices...');
     let prices: Map<string, number | null>;
 
+    const currentNetConfig = config.networks[config.network];
+    const isSolana = currentNetConfig?.type === 'solana';
+
     if (isBitcoinNetwork(config.network)) {
       // Bitcoin network - get Bitcoin price
       const btcPrice = await getBitcoinPrice(config.network);
       prices = new Map([['native', btcPrice]]);
+    } else if (isSolana) {
+      // Solana network - get SOL price
+      const solPrice = await getSolanaPrice(config.network);
+      prices = new Map([['native', solPrice]]);
     } else {
       // EVM network - get token prices
-      const networkConfig = config.networks[config.network];
-      const chainId = 'chainId' in networkConfig ? networkConfig.chainId : 1;
+      const chainId = currentNetConfig && 'chainId' in currentNetConfig ? currentNetConfig.chainId : 1;
       const tokens = walletService.getTokensForNetwork(config.network);
       const tokenInfos: TokenInfo[] = tokens.map(t => ({
         type: t.type as 'native' | 'erc20',
@@ -946,6 +953,9 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
           // Bitcoin network - get Bitcoin price
           const btcPrice = await getBitcoinPrice(net);
           prices = new Map([['native', btcPrice]]);
+        } else if (config.networks[net]?.type === 'solana') {
+          const solPrice = await getSolanaPrice(net);
+          prices = new Map([['native', solPrice]]);
         } else {
           // EVM network - get token prices
           const netConfig = config.networks[net];
@@ -1098,6 +1108,22 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
       const err = error as Error;
       ui.showError('Failed to fetch transactions', [err.message]);
     }
+
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  // Solana explorer history is not supported yet (Phase 2+).
+  if (config.networks[config.network]?.type === 'solana') {
+    ui.showWarning('Transaction history is not supported for Solana yet.');
+    console.log(chalk.gray('Coming in a later phase (transaction history support).'));
+    console.log('');
 
     await inquirer.prompt<{ continue: string }>([{
       type: 'input',
@@ -1327,6 +1353,20 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
       message: 'Press Enter to continue...'
     }]);
 
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  // Solana send flow is not implemented in Phase 1.
+  if (config.networks[config.network]?.type === 'solana') {
+    ui.showWarning('Sending SOL is not supported yet.');
+    console.log(chalk.gray('Coming in a later phase (send functionality).'));
+    console.log('');
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
     await mainMenu(currentWalletName);
     return;
   }

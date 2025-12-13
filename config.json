@@ -1,5 +1,5 @@
 {
-  "network": "bitcoin-mainnet",
+  "network": "solana-mainnet",
   "networks": {
     "bitcoin-mainnet": {
       "type": "bitcoin",
@@ -8,7 +8,8 @@
       "nativeSymbol": "BTC",
       "nativeName": "Bitcoin",
       "blockExplorer": "https://mempool.space",
-      "explorerApiUrl": "https://mempool.space/api"
+      "explorerApiUrl": "https://mempool.space/api",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "bitcoin-testnet": {
       "type": "bitcoin",
@@ -17,7 +18,33 @@
       "nativeSymbol": "tBTC",
       "nativeName": "Bitcoin Testnet",
       "blockExplorer": "https://mempool.space/testnet",
-      "explorerApiUrl": "https://mempool.space/testnet/api"
+      "explorerApiUrl": "https://mempool.space/testnet/api",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
+    },
+    "solana-mainnet": {
+      "type": "solana",
+      "name": "Solana Mainnet",
+      "solanaCluster": "mainnet-beta",
+      "rpcUrl": [
+        "https://solana.publicnode.com",
+        "https://api.mainnet-beta.solana.com"
+      ],
+      "nativeSymbol": "SOL",
+      "nativeName": "Solana",
+      "blockExplorer": "https://solscan.io",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
+    },
+    "solana-devnet": {
+      "type": "solana",
+      "name": "Solana Devnet",
+      "solanaCluster": "devnet",
+      "rpcUrl": [
+        "https://api.devnet.solana.com"
+      ],
+      "nativeSymbol": "SOL",
+      "nativeName": "Solana",
+      "blockExplorer": "https://solscan.io",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "sepolia": {
       "name": "Sepolia Testnet",
@@ -31,7 +58,8 @@
       "nativeSymbol": "ETH",
       "nativeName": "Sepolia Ether",
       "blockExplorer": "https://sepolia.etherscan.io",
-      "explorerApiUrl": "https://api-sepolia.etherscan.io/api"
+      "explorerApiUrl": "https://api-sepolia.etherscan.io/api",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "mainnet": {
       "name": "Ethereum Mainnet",
@@ -40,7 +68,8 @@
       "nativeSymbol": "ETH",
       "nativeName": "Ether",
       "blockExplorer": "https://etherscan.io",
-      "explorerApiUrl": "https://api.etherscan.io/api"
+      "explorerApiUrl": "https://api.etherscan.io/api",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "base": {
       "name": "Base Mainnet",
@@ -48,7 +77,8 @@
       "chainId": 8453,
       "nativeSymbol": "ETH",
       "nativeName": "Base ETH",
-      "blockExplorer": "https://basescan.org"
+      "blockExplorer": "https://basescan.org",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "arbitrum": {
       "name": "Arbitrum One",
@@ -56,7 +86,8 @@
       "chainId": 42161,
       "nativeSymbol": "ETH",
       "nativeName": "Arbitrum ETH",
-      "blockExplorer": "https://arbiscan.io"
+      "blockExplorer": "https://arbiscan.io",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "optimism": {
       "name": "Optimism",
@@ -64,7 +95,8 @@
       "chainId": 10,
       "nativeSymbol": "ETH",
       "nativeName": "Optimism ETH",
-      "blockExplorer": "https://optimistic.etherscan.io"
+      "blockExplorer": "https://optimistic.etherscan.io",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "polygon": {
       "name": "Polygon PoS",
@@ -72,7 +104,8 @@
       "chainId": 137,
       "nativeSymbol": "POL",
       "nativeName": "Polygon (MATIC/POL)",
-      "blockExplorer": "https://polygonscan.com"
+      "blockExplorer": "https://polygonscan.com",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "avalanche": {
       "name": "Avalanche C-Chain",
@@ -80,7 +113,8 @@
       "chainId": 43114,
       "nativeSymbol": "AVAX",
       "nativeName": "Avalanche",
-      "blockExplorer": "https://snowtrace.io"
+      "blockExplorer": "https://snowtrace.io",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "bsc": {
       "name": "BNB Smart Chain",
@@ -88,7 +122,8 @@
       "chainId": 56,
       "nativeSymbol": "BNB",
       "nativeName": "BNB",
-      "blockExplorer": "https://bscscan.com"
+      "blockExplorer": "https://bscscan.com",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "linea": {
       "name": "Linea",
@@ -96,7 +131,8 @@
       "chainId": 59144,
       "nativeSymbol": "ETH",
       "nativeName": "Linea ETH",
-      "blockExplorer": "https://lineascan.build"
+      "blockExplorer": "https://lineascan.build",
+      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     }
   }
 }

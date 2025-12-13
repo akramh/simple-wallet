@@ -18,11 +18,12 @@
  */
 
 import type { Config, Token, TokenRegistry, TokenMetadata } from './types/index.js';
-import { isBitcoinNetworkConfig } from './types/config.js';
+import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig } from './types/config.js';
 import { Wallet } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 import { ethers } from 'ethers';
+import { SolanaProvider, type SolanaAddressInfo } from './solana/index.js';
 import {
   BitcoinProvider,
   getBitcoinProvider,
@@ -113,6 +114,12 @@ export class WalletAppService {
   private bitcoinProvider: BitcoinProvider | null = null;
   /** Cached Bitcoin address for current account */
   private cachedBitcoinAddress: BitcoinAddressInfo | null = null;
+  /** Solana provider for Solana network operations */
+  private solanaProvider: SolanaProvider | null = null;
+  /** Cached Solana address for current account */
+  private cachedSolanaAddress: SolanaAddressInfo | null = null;
+  /** Account index for cached Solana address */
+  private cachedSolanaAccountIndex: number | null = null;
 
   /**
    * Create a new WalletAppService instance.
@@ -160,14 +167,14 @@ export class WalletAppService {
    * Must be called before any blockchain operations.
    */
   async initialize(): Promise<void> {
-    // Only initialize EVM provider if current network is EVM
-    if (!this.isCurrentNetworkBitcoin()) {
+    const netConfig = this.config.networks[this.config.network];
+    if (netConfig && isEVMNetworkConfig(netConfig)) {
       await this.wallet.initialize();
     }
   }
 
   // ============================================================================
-  // Bitcoin Support Helpers
+  // Non-EVM Support Helpers
   // ============================================================================
 
   /**
@@ -178,10 +185,26 @@ export class WalletAppService {
   }
 
   /**
+   * Check if the current network is a Solana network.
+   */
+  isCurrentNetworkSolana(): boolean {
+    const netConfig = this.config.networks[this.config.network];
+    return !!netConfig && isSolanaNetworkConfig(netConfig);
+  }
+
+  /**
    * Check if a specific network is a Bitcoin network.
    */
   isNetworkBitcoin(networkKey: string): boolean {
     return isBitcoinNetwork(networkKey);
+  }
+
+  /**
+   * Check if a specific network is a Solana network.
+   */
+  isNetworkSolana(networkKey: string): boolean {
+    const netConfig = this.config.networks[networkKey];
+    return !!netConfig && isSolanaNetworkConfig(netConfig);
   }
 
   /**
@@ -193,6 +216,32 @@ export class WalletAppService {
       this.bitcoinProvider = getBitcoinProvider(networkKey);
     }
     return this.bitcoinProvider;
+  }
+
+  /**
+   * Get or create the Solana provider for a network.
+   * @private
+   */
+  private getSolanaProviderForNetwork(networkKey: string): SolanaProvider {
+    const netConfig = this.config.networks[networkKey];
+    if (!netConfig || !isSolanaNetworkConfig(netConfig)) {
+      throw new Error('Not a Solana network');
+    }
+
+    const rpcUrls = Array.isArray(netConfig.rpcUrl) ? netConfig.rpcUrl : [netConfig.rpcUrl];
+    const cleaned = rpcUrls.filter((u): u is string => typeof u === 'string' && u.trim() !== '').map(u => u.trim());
+    if (!cleaned.length) {
+      throw new Error('No Solana RPC URLs configured for network');
+    }
+
+    if (!this.solanaProvider || this.solanaProvider.getNetworkKey() !== networkKey) {
+      this.solanaProvider = new SolanaProvider({
+        networkKey,
+        rpcUrls: cleaned
+      });
+    }
+
+    return this.solanaProvider;
   }
 
   /**
@@ -214,6 +263,31 @@ export class WalletAppService {
       return this.wallet.getBitcoinAddress(btcNetwork, accountIndex);
     } catch (error) {
       console.warn('[WalletAppService] Failed to get Bitcoin address:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get the Solana address for the current account.
+   * Caches the result for performance.
+   */
+  getSolanaAddress(): SolanaAddressInfo | null {
+    if (!this.isCurrentNetworkSolana()) {
+      return null;
+    }
+
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+    if (this.cachedSolanaAddress && this.cachedSolanaAccountIndex === accountIndex) {
+      return this.cachedSolanaAddress;
+    }
+
+    try {
+      const info = this.wallet.getSolanaAddress(accountIndex);
+      this.cachedSolanaAddress = info;
+      this.cachedSolanaAccountIndex = accountIndex;
+      return info;
+    } catch (error) {
+      console.warn('[WalletAppService] Failed to get Solana address:', error);
       return null;
     }
   }
@@ -320,6 +394,10 @@ export class WalletAppService {
       const btcInfo = this.getBitcoinAddress();
       return btcInfo?.address || '';
     }
+    if (this.isCurrentNetworkSolana()) {
+      const solInfo = this.getSolanaAddress();
+      return solInfo?.address || '';
+    }
     return this.wallet.getAddress();
   }
 
@@ -343,6 +421,14 @@ export class WalletAppService {
       }
       const provider = this.getBitcoinProviderForNetwork(this.config.network);
       return provider.getBalanceFormatted(btcInfo.address);
+    }
+    if (this.isCurrentNetworkSolana()) {
+      const solInfo = this.getSolanaAddress();
+      if (!solInfo) {
+        return '0';
+      }
+      const provider = this.getSolanaProviderForNetwork(this.config.network);
+      return provider.getBalanceFormatted(solInfo.address);
     }
     return this.wallet.getBalance();
   }
@@ -372,6 +458,25 @@ export class WalletAppService {
           balance: p.balance,
           error: p.error,
         }));
+      } catch (error) {
+        return [{
+          token: this.getNativeToken(networkKey),
+          balance: 'Error',
+          error: (error as Error).message,
+        }];
+      }
+    }
+
+    // Handle Solana networks
+    if (this.isNetworkSolana(networkKey)) {
+      try {
+        const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
+        const provider = this.getSolanaProviderForNetwork(networkKey);
+        const balance = await provider.getBalanceFormatted(solInfo.address);
+        return [{
+          token: this.getNativeToken(networkKey),
+          balance,
+        }];
       } catch (error) {
         return [{
           token: this.getNativeToken(networkKey),
@@ -635,7 +740,7 @@ export class WalletAppService {
     const networkConfig = this.config.networks[networkKey] || {};
     const symbol = networkConfig.nativeSymbol || 'ETH';
     const name = networkConfig.nativeName || networkConfig.name || 'Ether';
-    const decimals = this.isNetworkBitcoin(networkKey) ? 8 : 18;
+    const decimals = this.isNetworkBitcoin(networkKey) ? 8 : this.isNetworkSolana(networkKey) ? 9 : 18;
     return {
       symbol,
       type: 'native',
@@ -653,6 +758,11 @@ export class WalletAppService {
    * @returns Array of tokens with native first
    */
   getTokensForNetwork(networkKey: string): Token[] {
+    // Phase 1: Bitcoin/Solana only support native balances (no ERC-20 / SPL).
+    if (this.isNetworkBitcoin(networkKey) || this.isNetworkSolana(networkKey)) {
+      return [this.getNativeToken(networkKey)];
+    }
+
     const tokens: Token[] = [];
     const nativeToken = this.getNativeToken(networkKey);
 
@@ -712,6 +822,11 @@ export class WalletAppService {
    * @param token - Token definition to add
    */
   addCustomToken(networkKey: string, token: Token): void {
+    const netConfig = this.config.networks[networkKey];
+    if (netConfig && !isEVMNetworkConfig(netConfig)) {
+      throw new Error('Custom tokens are only supported on EVM networks');
+    }
+
     if (!this.customTokens[networkKey]) {
       this.customTokens[networkKey] = [];
     }
@@ -763,15 +878,19 @@ export class WalletAppService {
     const persist = options.persist ?? true;
     this.config.network = networkKey;
 
-    // Only initialize EVM provider for EVM networks
-    if (!this.isNetworkBitcoin(networkKey)) {
+    const netConfig = this.config.networks[networkKey];
+    if (netConfig && isEVMNetworkConfig(netConfig)) {
       await this.wallet.setNetwork(networkKey);
-    } else {
-      // For Bitcoin, just update the provider cache
+    } else if (this.isNetworkBitcoin(networkKey)) {
       this.bitcoinProvider = getBitcoinProvider(networkKey);
+      this.solanaProvider = null;
+    } else if (this.isNetworkSolana(networkKey)) {
+      this.solanaProvider = this.getSolanaProviderForNetwork(networkKey);
+      this.bitcoinProvider = null;
     }
 
-    if (persist && process.env.NODE_ENV !== 'test') {
+    const nodeEnv = typeof process !== 'undefined' ? process.env?.NODE_ENV : undefined;
+    if (persist && nodeEnv !== 'test') {
       this.storage.writeJSON(this.configPath, this.config);
     }
   }
