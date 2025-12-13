@@ -87,8 +87,8 @@ function ActivityView({ currentAddress, network }: Props) {
   };
 
   const getTransactionType = (tx: Transaction) => {
-    if (tx.from?.toLowerCase() === currentAddress.toLowerCase()) return 'Sent';
-    if (tx.to?.toLowerCase() === currentAddress.toLowerCase()) return 'Received';
+    if (tx.type === 'send') return 'Sent';
+    if (tx.type === 'receive') return 'Received';
     return 'Contract';
   };
 

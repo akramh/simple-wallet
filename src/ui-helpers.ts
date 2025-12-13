@@ -81,7 +81,7 @@ interface TransactionReceipt {
  * @param walletName - Name of the current wallet (optional)
  * @param accountIndex - Zero-based account index (displayed as 1-based)
  * @param networkName - Human-readable network name (optional)
- * @param address - Ethereum address to display (optional)
+ * @param address - Address to display (optional)
  * 
  * @example
  * ```typescript
@@ -253,15 +253,16 @@ export function showLoading(message: string): void {
 // ============================================================================
 
 /**
- * Formats an Ethereum address with cyan coloring.
- * Lowercases the address for consistency.
+ * Formats a wallet address with cyan coloring.
+ * Note: some address formats (e.g. Solana base58) are case-sensitive, so we
+ * must not change casing.
  * 
- * @param address - Ethereum address to format
+ * @param address - Address to format
  * @returns Formatted address string with ANSI color codes
  */
 export function formatAddress(address: string): string {
   if (!address) return '';
-  return chalk.cyan(address.toLowerCase());
+  return chalk.cyan(address);
 }
 
 /**

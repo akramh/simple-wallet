@@ -319,8 +319,6 @@ async function migrateExistingWallets(): Promise<void> {
 async function selectWalletMenu(existingWallets: Record<string, any>): Promise<void> {
   ui.clearScreen();
   ui.showHeader();
-
-  ui.showSection('Select Wallet');
   console.log('');
 
   const walletChoices = Object.keys(existingWallets).map(name => {
@@ -717,7 +715,7 @@ async function importWalletFromBackup(): Promise<void> {
  */
 async function mainMenu(walletName: string | null): Promise<void> {
   currentWalletName = walletName;
-  const currentAddress = wallet.getAddress();
+  const currentAddress = walletService.getAddress();
   const accountIndex = wallet.currentAccountIndex;
 
   ui.clearScreen();
@@ -922,7 +920,7 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
  */
 async function checkPortfolioAllNetworks(currentWalletName: string | null): Promise<void> {
   const originalNetwork = config.network;
-  const address = wallet.getAddress();
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, 'All Networks', address);
 
@@ -1119,11 +1117,53 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
     return;
   }
 
-  // Solana explorer history is not supported yet (Phase 2+).
+  // Solana history via RPC
   if (config.networks[config.network]?.type === 'solana') {
-    ui.showWarning('Transaction history is not supported for Solana yet.');
-    console.log(chalk.gray('Coming in a later phase (transaction history support).'));
-    console.log('');
+    ui.showLoading('Fetching transactions from Solana RPC...');
+    try {
+      const txs = await walletService.getSolanaTransactionHistory(15);
+      console.log('');
+
+      if (txs.length === 0) {
+        ui.showInfo('No transactions found for this address.');
+      } else {
+        ui.showSuccess(`Found ${txs.length} recent transactions`);
+        console.log('');
+        ui.showSeparator();
+
+        const symbol = config.networks[config.network].nativeSymbol || 'SOL';
+        for (const tx of txs) {
+          const isSent = tx.type === 'send';
+          const direction = isSent ? chalk.red('↑ SENT') : tx.type === 'receive' ? chalk.green('↓ RECEIVED') : chalk.gray('• OTHER');
+          const otherAddress = isSent ? tx.to : tx.from;
+          const shortAddr = otherAddress ? `${otherAddress.slice(0, 10)}...${otherAddress.slice(-8)}` : 'Unknown';
+
+          const solValue = tx.valueSol;
+          const valueStr = `${parseFloat(solValue).toFixed(9)} ${symbol}`;
+
+          const date = new Date(tx.timestamp);
+          const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          const statusIcon = tx.status === 'confirmed' ? '✓' : tx.status === 'failed' ? '✗' : '○';
+          const statusColor = tx.status === 'confirmed' ? chalk.green : tx.status === 'failed' ? chalk.red : chalk.yellow;
+
+          console.log(`${statusColor(statusIcon)} ${direction}  ${chalk.white(valueStr.padEnd(20))} ${chalk.gray(dateStr)}`);
+          if (tx.type !== 'contract_interaction') {
+            console.log(`  ${chalk.gray(isSent ? 'To:' : 'From:')} ${chalk.cyan(shortAddr)}`);
+          }
+          console.log(`  ${chalk.gray('Sig:')} ${chalk.gray(tx.signature.slice(0, 18))}...`);
+          if (tx.feeLamports > 0) {
+            console.log(`  ${chalk.gray('Fee:')} ${chalk.gray(`${tx.feeSol} ${symbol}`)}`);
+          }
+          console.log('');
+        }
+
+        ui.showSeparator();
+      }
+    } catch (error) {
+      const err = error as Error;
+      ui.showError('Failed to fetch transactions', [err.message]);
+    }
 
     await inquirer.prompt<{ continue: string }>([{
       type: 'input',
@@ -1137,7 +1177,7 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
 
   if (!explorerAPI.isSupported(config.network)) {
     ui.showWarning(`Explorer API not configured for ${config.networks[config.network].name}`);
-    console.log(chalk.gray('Add explorerApiUrl and explorerApiKey to config.json to enable transaction history.'));
+    console.log(chalk.gray('Ensure explorerApiUrl is set in config.json and set EXPLORER_API_KEY (or EXPLORER_API_KEY_<NETWORK>) in .env.'));
     console.log('');
     
     await inquirer.prompt<{ continue: string }>([{
@@ -1595,7 +1635,7 @@ async function showReceiveAddress(currentWalletName: string | null): Promise<voi
  * @param currentWalletName - Name of the current wallet for header display
  */
 async function showWalletSecrets(currentWalletName: string | null): Promise<void> {
-  const address = wallet.getAddress();
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
@@ -1671,7 +1711,7 @@ async function showWalletSecrets(currentWalletName: string | null): Promise<void
  * @param currentWalletName - Name of the wallet to export
  */
 async function exportWallet(currentWalletName: string | null): Promise<void> {
-  const address = wallet.getAddress();
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
@@ -1737,7 +1777,7 @@ async function manageTokens(currentWalletName: string | null): Promise<void> {
   const tokens = walletService.getTokensForNetwork(networkKey);
 
   ui.clearScreen();
-  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[networkKey].name, wallet.getAddress());
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[networkKey].name, walletService.getAddress());
 
   ui.showSection('Manage Tokens');
   ui.showInfo(`Network: ${config.networks[networkKey].name}`);

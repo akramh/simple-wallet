@@ -36,8 +36,10 @@
  * - ethers for signing and transaction handling
  */
 
-import '../../src/process-polyfill.js'; // Install process shim early (readable-stream expects it)
-import '../../src/buffer-polyfill.js'; // Install Buffer polyfill
+// Polyfills must be imported first (before any code using Buffer/process runs).
+// These are lightweight shims that only set globals if missing - no startup delay.
+import '../../src/process-polyfill.js'; // process + window shims for @solana/web3.js, readable-stream
+import '../../src/buffer-polyfill.js'; // Buffer for crypto-utils, bitcoin module
 import { Wallet } from '../../src/wallet.js';
 import { WalletAppService } from '../../src/app-service.js';
 import { ChromeStorageAdapter } from '../../src/chrome-storage.js';
@@ -1302,9 +1304,28 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
           return { transactions, supported: true };
         }
 
-        // Solana explorer fetching not supported yet (Phase 2+)
+        // Solana explorer fetching (Phase 2)
         if (isSolanaNetworkConfig(explorerNetworkConfig)) {
-          return { transactions: [], supported: false };
+          const limit = payload.pageSize || 25;
+          const solTxs = await walletService!.getSolanaTransactionHistoryForAddress(explorerAddress, limit);
+          const nativeSymbol = explorerNetworkConfig.nativeSymbol || 'SOL';
+
+          const transactions = solTxs.map((tx) => ({
+            hash: tx.signature,
+            from: tx.from,
+            to: tx.to || null,
+            // valueSol is already formatted (avoid wei assumptions in ActivityView)
+            value: tx.valueSol,
+            network: explorerNetwork,
+            status: tx.status,
+            type: tx.type,
+            timestamp: tx.timestamp,
+            blockNumber: tx.slot || undefined,
+            tokenSymbol: nativeSymbol,
+            fee: tx.feeSol
+          }));
+
+          return { transactions, supported: true };
         }
 
         const isSupported = explorerAPI.isSupported(explorerNetwork);

@@ -23,7 +23,7 @@ import { Wallet } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 import { ethers } from 'ethers';
-import { SolanaProvider, type SolanaAddressInfo } from './solana/index.js';
+import { SolanaProvider, getSolanaExplorer, type SolanaAddressInfo, type NormalizedSolanaTransaction, type SolanaExplorer } from './solana/index.js';
 import {
   BitcoinProvider,
   getBitcoinProvider,
@@ -116,10 +116,8 @@ export class WalletAppService {
   private cachedBitcoinAddress: BitcoinAddressInfo | null = null;
   /** Solana provider for Solana network operations */
   private solanaProvider: SolanaProvider | null = null;
-  /** Cached Solana address for current account */
-  private cachedSolanaAddress: SolanaAddressInfo | null = null;
-  /** Account index for cached Solana address */
-  private cachedSolanaAccountIndex: number | null = null;
+  /** Solana explorer for Solana transaction history */
+  private solanaExplorer: SolanaExplorer | null = null;
 
   /**
    * Create a new WalletAppService instance.
@@ -245,6 +243,30 @@ export class WalletAppService {
   }
 
   /**
+   * Get or create the Solana explorer for a network.
+   * Uses RPC for transaction history.
+   * @private
+   */
+  private getSolanaExplorerForNetwork(networkKey: string): SolanaExplorer {
+    const netConfig = this.config.networks[networkKey];
+    if (!netConfig || !isSolanaNetworkConfig(netConfig)) {
+      throw new Error('Not a Solana network');
+    }
+
+    const rpcUrls = Array.isArray(netConfig.rpcUrl) ? netConfig.rpcUrl : [netConfig.rpcUrl];
+    const cleanedRpcUrls = rpcUrls.filter((u): u is string => typeof u === 'string' && u.trim() !== '').map(u => u.trim());
+    if (!cleanedRpcUrls.length) {
+      throw new Error('No Solana RPC URLs configured for network');
+    }
+
+    if (!this.solanaExplorer || this.solanaExplorer.getNetworkKey() !== networkKey) {
+      this.solanaExplorer = getSolanaExplorer(networkKey, cleanedRpcUrls);
+    }
+
+    return this.solanaExplorer;
+  }
+
+  /**
    * Get the Bitcoin address for the current account.
    * Caches the result for performance.
    */
@@ -269,7 +291,6 @@ export class WalletAppService {
 
   /**
    * Get the Solana address for the current account.
-   * Caches the result for performance.
    */
   getSolanaAddress(): SolanaAddressInfo | null {
     if (!this.isCurrentNetworkSolana()) {
@@ -277,15 +298,9 @@ export class WalletAppService {
     }
 
     const accountIndex = this.wallet.getCurrentAccountIndex();
-    if (this.cachedSolanaAddress && this.cachedSolanaAccountIndex === accountIndex) {
-      return this.cachedSolanaAddress;
-    }
 
     try {
-      const info = this.wallet.getSolanaAddress(accountIndex);
-      this.cachedSolanaAddress = info;
-      this.cachedSolanaAccountIndex = accountIndex;
-      return info;
+      return this.wallet.getSolanaAddress(accountIndex);
     } catch (error) {
       console.warn('[WalletAppService] Failed to get Solana address:', error);
       return null;
@@ -886,6 +901,7 @@ export class WalletAppService {
       this.solanaProvider = null;
     } else if (this.isNetworkSolana(networkKey)) {
       this.solanaProvider = this.getSolanaProviderForNetwork(networkKey);
+      this.solanaExplorer = this.getSolanaExplorerForNetwork(networkKey);
       this.bitcoinProvider = null;
     }
 
@@ -893,6 +909,42 @@ export class WalletAppService {
     if (persist && nodeEnv !== 'test') {
       this.storage.writeJSON(this.configPath, this.config);
     }
+  }
+
+  // ============================================================================
+  // Solana-Specific Methods (Phase 2: History)
+  // ============================================================================
+
+  /**
+   * Get Solana transaction history for the current address.
+   * Only works when current network is Solana.
+   *
+   * @param limit - Maximum number of transactions to return
+   * @returns Array of normalized Solana transactions
+   */
+  async getSolanaTransactionHistory(limit: number = 25): Promise<NormalizedSolanaTransaction[]> {
+    if (!this.isCurrentNetworkSolana()) {
+      return [];
+    }
+
+    const solInfo = this.getSolanaAddress();
+    if (!solInfo) {
+      return [];
+    }
+
+    return this.getSolanaTransactionHistoryForAddress(solInfo.address, limit);
+  }
+
+  /**
+   * Get Solana transaction history for a given address on the current Solana network.
+   * Only works when current network is Solana.
+   */
+  async getSolanaTransactionHistoryForAddress(address: string, limit: number = 25): Promise<NormalizedSolanaTransaction[]> {
+    if (!this.isCurrentNetworkSolana()) {
+      return [];
+    }
+    const explorer = this.getSolanaExplorerForNetwork(this.config.network);
+    return explorer.getTransactionHistory(address, limit);
   }
 
   // ============================================================================

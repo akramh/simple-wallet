@@ -1,5 +1,5 @@
 {
-  "network": "solana-mainnet",
+  "network": "bitcoin-mainnet",
   "networks": {
     "bitcoin-mainnet": {
       "type": "bitcoin",
@@ -26,25 +26,24 @@
       "name": "Solana Mainnet",
       "solanaCluster": "mainnet-beta",
       "rpcUrl": [
-        "https://solana.publicnode.com",
-        "https://api.mainnet-beta.solana.com"
+        "https://mainnet.helius-rpc.com/?api-key=fdb9849d-88cf-4fe6-91f5-057a82d724b7",
+        "https://solana-mainnet.rpc.extrnode.com",
+        "https://rpc.ankr.com/solana"
       ],
       "nativeSymbol": "SOL",
       "nativeName": "Solana",
       "blockExplorer": "https://solscan.io",
-      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
+      "explorerApiKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3NjU2NTE0NjA5NDMsImVtYWlsIjoiYWtyYW1oQGdtYWlsLmNvbSIsImFjdGlvbiI6InRva2VuLWFwaSIsImFwaVZlcnNpb24iOiJ2MiIsImlhdCI6MTc2NTY1MTQ2MH0.1LeH9hM6x838txbuLEmhh3EJpHE_etLAplyaSBm_ZI8"
     },
     "solana-devnet": {
       "type": "solana",
       "name": "Solana Devnet",
       "solanaCluster": "devnet",
-      "rpcUrl": [
-        "https://api.devnet.solana.com"
-      ],
+      "rpcUrl": "https://api.devnet.solana.com",
       "nativeSymbol": "SOL",
       "nativeName": "Solana",
       "blockExplorer": "https://solscan.io",
-      "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
+      "explorerApiKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3NjU2NTE0NjA5NDMsImVtYWlsIjoiYWtyYW1oQGdtYWlsLmNvbSIsImFjdGlvbiI6InRva2VuLWFwaSIsImFwaVZlcnNpb24iOiJ2MiIsImlhdCI6MTc2NTY1MTQ2MH0.1LeH9hM6x838txbuLEmhh3EJpHE_etLAplyaSBm_ZI8"
     },
     "sepolia": {
       "name": "Sepolia Testnet",

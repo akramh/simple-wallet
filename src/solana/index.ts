@@ -14,3 +14,5 @@ export { getSolanaDerivationPath, deriveSolanaKeypair, deriveSolanaAddress } fro
 export type { SolanaProviderConfig } from './provider.js';
 export { SolanaProvider, getSolanaProvider } from './provider.js';
 
+export type { NormalizedSolanaTransaction, SolanaExplorerConfig } from './explorer.js';
+export { SolanaExplorer, getSolanaExplorer, clearSolanaExplorerCache } from './explorer.js';
