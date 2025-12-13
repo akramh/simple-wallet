@@ -21,6 +21,12 @@ import type {
   BitcoinFeeEstimate,
 } from './types.js';
 import { satoshisToBtc, formatBtcAmount } from './types.js';
+import {
+  buildAndSignP2wpkhTransaction,
+  parseBtcToSatoshisExact,
+  selectUtxosLargestFirst,
+  type PrevoutInfo,
+} from './transaction.js';
 
 /**
  * Portfolio result for Bitcoin (matches EVM pattern).
@@ -261,6 +267,103 @@ export class BitcoinProvider {
    */
   async getFeeEstimates(): Promise<BitcoinFeeEstimate> {
     return this.explorer.getFeeEstimates();
+  }
+
+  /**
+   * Estimate inputs and fee for sending BTC.
+   * Uses confirmed UTXOs only.
+   *
+   * @param fromAddress - Sender address
+   * @param toAddress - Recipient address
+   * @param amountBtc - Amount in BTC (string with up to 8 decimals)
+   * @param feeRateSatVb - Fee rate in sat/vB
+   */
+  async estimateSendTransaction(
+    fromAddress: string,
+    toAddress: string,
+    amountBtc: string,
+    feeRateSatVb: number
+  ): Promise<{
+    amountSats: number;
+    inputs: UTXO[];
+    totalInputSats: number;
+    changeSats: number;
+    fee: { feeRateSatVb: number; vbytes: number; feeSats: number; inputCount: number; outputCount: number; hasChange: boolean };
+  }> {
+    if (!isValidBitcoinAddress(toAddress, this.config.network)) {
+      throw new Error('Invalid Bitcoin recipient address');
+    }
+    if (!isValidBitcoinAddress(fromAddress, this.config.network)) {
+      throw new Error('Invalid Bitcoin sender address');
+    }
+
+    const amountSats = parseBtcToSatoshisExact(amountBtc);
+    const utxos = await this.getUTXOs(fromAddress);
+    const confirmedUtxos = utxos.filter(u => u.status.confirmed);
+    const selected = selectUtxosLargestFirst(confirmedUtxos, amountSats, feeRateSatVb);
+    return { amountSats, ...selected };
+  }
+
+  /**
+   * Build, sign, and broadcast a Bitcoin transaction (Native SegWit / P2WPKH).
+   *
+   * @param fromAddress - Sender address
+   * @param toAddress - Recipient address
+   * @param amountBtc - Amount in BTC string
+   * @param wif - Private key in WIF format
+   * @param feeRateSatVb - Optional fee rate in sat/vB (defaults to halfHourFee)
+   */
+  async sendTransaction(
+    fromAddress: string,
+    toAddress: string,
+    amountBtc: string,
+    wif: string,
+    feeRateSatVb?: number
+  ): Promise<{ txid: string; feeSats: number; feeBtc: string; vbytes: number }> {
+    const fees = await this.getFeeEstimates();
+    const rate = feeRateSatVb ?? fees.halfHourFee;
+
+    const estimate = await this.estimateSendTransaction(fromAddress, toAddress, amountBtc, rate);
+
+    const prevouts: PrevoutInfo[] = [];
+    for (const utxo of estimate.inputs) {
+      const prevTx = await this.explorer.getTransaction(utxo.txid);
+      if (!prevTx) {
+        throw new Error(`Failed to fetch input transaction ${utxo.txid}`);
+      }
+      const prevVout = prevTx.vout[utxo.vout];
+      if (!prevVout?.scriptpubkey) {
+        throw new Error(`Missing prevout script for ${utxo.txid}:${utxo.vout}`);
+      }
+      prevouts.push({
+        txid: utxo.txid,
+        vout: utxo.vout,
+        value: prevVout.value,
+        scriptPubKeyHex: prevVout.scriptpubkey
+      });
+    }
+
+    const { txHex, txid } = buildAndSignP2wpkhTransaction({
+      network: this.config.network,
+      wif,
+      toAddress,
+      amountSats: estimate.amountSats,
+      changeAddress: fromAddress,
+      changeSats: estimate.changeSats,
+      feeRateSatVb: rate,
+      feeSats: estimate.fee.feeSats,
+      prevouts
+    });
+
+    const broadcastTxid = await this.explorer.broadcastTransaction(txHex);
+    const finalTxid = broadcastTxid || txid;
+
+    return {
+      txid: finalTxid,
+      feeSats: estimate.fee.feeSats,
+      feeBtc: satoshisToBtc(estimate.fee.feeSats),
+      vbytes: estimate.fee.vbytes
+    };
   }
 
   /**

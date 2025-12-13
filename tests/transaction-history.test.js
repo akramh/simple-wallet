@@ -258,6 +258,8 @@ test('TransactionHistoryManager getExplorerUrl returns correct URLs', () => {
   assert.ok(TransactionHistoryManager.getExplorerUrl('mainnet', '0xabc').includes('etherscan.io'));
   assert.ok(TransactionHistoryManager.getExplorerUrl('polygon', '0xabc').includes('polygonscan.com'));
   assert.ok(TransactionHistoryManager.getExplorerUrl('base', '0xabc').includes('basescan.org'));
+  assert.ok(TransactionHistoryManager.getExplorerUrl('bitcoin-mainnet', 'abc').includes('mempool.space/tx/'));
+  assert.ok(TransactionHistoryManager.getExplorerUrl('bitcoin-testnet', 'abc').includes('mempool.space/testnet/tx/'));
   assert.ok(TransactionHistoryManager.getExplorerUrl('unknown', '0xabc').includes('etherscan.io')); // defaults to mainnet
 });
 

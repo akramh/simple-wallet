@@ -353,7 +353,9 @@ export class TransactionHistoryManager {
       optimism: 'https://optimistic.etherscan.io/tx/',
       base: 'https://basescan.org/tx/',
       avalanche: 'https://snowtrace.io/tx/',
-      linea: 'https://lineascan.build/tx/'
+      linea: 'https://lineascan.build/tx/',
+      'bitcoin-mainnet': 'https://mempool.space/tx/',
+      'bitcoin-testnet': 'https://mempool.space/testnet/tx/'
     };
 
     const baseUrl = explorers[network] || explorers.mainnet;

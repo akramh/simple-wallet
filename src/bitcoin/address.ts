@@ -18,6 +18,7 @@ import * as bitcoin from 'bitcoinjs-lib';
 import BIP32Factory from 'bip32';
 import * as ecc from 'tiny-secp256k1';
 import * as bip39 from 'bip39';
+import { ECPairFactory } from 'ecpair';
 import type { BitcoinAddressInfo } from './types.js';
 
 // Initialize BIP32 with secp256k1 implementation
@@ -198,8 +199,6 @@ export function getBitcoinPrivateKey(
     network: btcNetwork,
   };
 
-  // Use bitcoinjs-lib's ECPair for WIF encoding
-  const ECPairFactory = require('ecpair').ECPairFactory;
   const ECPair = ECPairFactory(ecc);
   const ecpair = ECPair.fromPrivateKey(child.privateKey, { network: btcNetwork });
 

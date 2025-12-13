@@ -6,6 +6,7 @@ interface Transaction {
   from: string;
   to: string | null;
   value: string;
+  fee?: string;
   network: string;
   status: 'pending' | 'confirmed' | 'failed';
   type: 'send' | 'receive' | 'contract_interaction';
@@ -198,13 +199,14 @@ function ActivityView({ currentAddress, network }: Props) {
                   <div className="tx-tooltip-row"><strong>Status:</strong> {tx.status.charAt(0).toUpperCase() + tx.status.slice(1)}</div>
                   <div className="tx-tooltip-row"><strong>Hash:</strong> {tx.hash.substring(0, 10)}...{tx.hash.substring(tx.hash.length - 8)}</div>
                   <div className="tx-tooltip-row"><strong>From:</strong> {formatAddress(tx.from)}</div>
-                  <div className="tx-tooltip-row"><strong>To:</strong> {formatAddress(tx.to)}</div>
-                  {tx.blockNumber && <div className="tx-tooltip-row"><strong>Block:</strong> {tx.blockNumber}</div>}
-                  {tx.gasUsed && <div className="tx-tooltip-row"><strong>Gas Used:</strong> {tx.gasUsed}</div>}
-                  <div className="tx-tooltip-row"><strong>Time:</strong> {new Date(tx.timestamp).toLocaleString()}</div>
-                </div>
+                <div className="tx-tooltip-row"><strong>To:</strong> {formatAddress(tx.to)}</div>
+                {tx.blockNumber && <div className="tx-tooltip-row"><strong>Block:</strong> {tx.blockNumber}</div>}
+                {tx.gasUsed && <div className="tx-tooltip-row"><strong>Gas Used:</strong> {tx.gasUsed}</div>}
+                {tx.fee && tx.tokenSymbol && <div className="tx-tooltip-row"><strong>Fee:</strong> {tx.fee} {tx.tokenSymbol}</div>}
+                <div className="tx-tooltip-row"><strong>Time:</strong> {new Date(tx.timestamp).toLocaleString()}</div>
               </div>
-            ))}
+            </div>
+          ))}
           </div>
         )}
       </div>

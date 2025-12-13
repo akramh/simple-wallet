@@ -49,6 +49,7 @@ import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, i
 import { isBitcoinNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
+import { getBitcoinExplorer, getBitcoinProvider, satoshisToBtc } from '../../src/bitcoin/index.js';
 import { ethers } from 'ethers';
 
 // ============================================================================
@@ -374,14 +375,14 @@ function broadcastChainChanged(chainIdHex: string): void {
 /**
  * Broadcasts transaction status update to the UI.
  * @param hash - Transaction hash
- * @param status - Current status: 'confirmed' | 'failed'
+ * @param status - Current status: 'pending' | 'confirmed' | 'failed'
  * @param network - Network identifier
  * @param blockNumber - Block number (for confirmed transactions)
  * @param error - Error message (for failed transactions)
  */
 function broadcastTransactionStatus(
   hash: string,
-  status: 'confirmed' | 'failed',
+  status: 'pending' | 'confirmed' | 'failed',
   network: string,
   blockNumber?: number,
   error?: string
@@ -692,6 +693,50 @@ function lockWallet(): void {
   chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }).catch(() => {
     // Ignore errors if no listeners
   });
+}
+
+// ============================================================================
+// Bitcoin Confirmation Polling (best-effort)
+// ============================================================================
+
+const bitcoinConfirmationPollers = new Map<string, NodeJS.Timeout>();
+
+function startBitcoinConfirmationPolling(txid: string, networkKey: string): void {
+  if (bitcoinConfirmationPollers.has(txid)) return;
+
+  const explorer = getBitcoinExplorer(networkKey);
+  const startedAt = Date.now();
+  const maxMs = 2 * 60 * 1000; // 2 minutes
+  const intervalMs = 10 * 1000; // 10 seconds
+
+  const timer = setInterval(async () => {
+    try {
+      if (Date.now() - startedAt > maxMs) {
+        clearInterval(timer);
+        bitcoinConfirmationPollers.delete(txid);
+        return;
+      }
+
+      const tx = await explorer.getTransaction(txid);
+      if (!tx) return;
+
+      if (tx.status?.confirmed) {
+        clearInterval(timer);
+        bitcoinConfirmationPollers.delete(txid);
+
+        const blockNumber = tx.status.block_height;
+        if (transactionHistory) {
+          transactionHistory.updateTransactionStatus(txid, TransactionStatus.CONFIRMED, blockNumber);
+        }
+        broadcastTransactionStatus(txid, 'confirmed', networkKey, blockNumber);
+        refreshBalancesForCurrentNetwork().catch(() => {});
+      }
+    } catch {
+      // Ignore transient errors; keep polling until timeout.
+    }
+  }, intervalMs);
+
+  bitcoinConfirmationPollers.set(txid, timer);
 }
 
 // ============================================================================
@@ -1028,14 +1073,53 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
       const fromAddress = walletService!.getAddress();
       const network = walletService!.config.network;
+      const sendNetworkConfig = walletService!.config.networks[network];
 
       try {
-        // Call sendToken - this waits for confirmation
-        const result = await walletService!.sendToken(
-          payload.token,
-          payload.toAddress,
-          payload.amount
-        );
+        // Bitcoin send path (broadcast + pending)
+        if (isBitcoinNetworkConfig(sendNetworkConfig)) {
+          if (!sessionPassword) {
+            throw new Error('Session password not available. Please unlock wallet again.');
+          }
+
+          const result = await walletService!.sendBitcoinTransaction(
+            payload.toAddress,
+            payload.amount,
+            sessionPassword
+          );
+
+          // Track transaction in history as pending
+          if (transactionHistory && result.hash) {
+            transactionHistory.addTransaction({
+              hash: result.hash,
+              from: fromAddress,
+              to: payload.toAddress,
+              value: payload.amount,
+              network: network,
+              status: TransactionStatus.PENDING,
+              type: TransactionType.SEND,
+              timestamp: Date.now(),
+              tokenSymbol: sendNetworkConfig.nativeSymbol || 'BTC',
+              tokenAddress: ''
+            });
+          }
+
+          broadcastTransactionStatus(result.hash, 'pending', network);
+          startBitcoinConfirmationPolling(result.hash, network);
+
+          return {
+            result: {
+              hash: result.hash,
+              status: 'pending',
+              feeBtc: result.feeBtc,
+              feeSats: result.feeSats,
+              vbytes: result.vbytes
+            }
+          };
+        }
+
+        // EVM path: call sendToken - this waits for confirmation
+        const result = await walletService!.sendToken(payload.token, payload.toAddress, payload.amount);
 
         // Track transaction in history as confirmed
         if (transactionHistory && result.hash) {
@@ -1137,6 +1221,35 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       try {
         const explorerAddress = payload.address || walletService!.getAddress();
         const explorerNetwork = payload.network || walletService!.config.network;
+        const explorerNetworkConfig = walletService!.config.networks[explorerNetwork];
+
+        // Bitcoin networks use Mempool.space API via the Bitcoin module
+        if (isBitcoinNetworkConfig(explorerNetworkConfig)) {
+          const provider = getBitcoinProvider(explorerNetwork);
+          const limit = payload.pageSize || 25;
+          const btcTxs = await provider.getTransactionHistory(explorerAddress, limit);
+
+          const nativeSymbol = explorerNetworkConfig.nativeSymbol || (explorerNetwork === 'bitcoin-testnet' ? 'tBTC' : 'BTC');
+
+          const transactions = btcTxs.map((tx) => ({
+            hash: tx.hash,
+            from: tx.from,
+            to: tx.to || null,
+            // Convert sats → BTC string so ActivityView doesn't treat it as wei
+            value: satoshisToBtc(Number(tx.value) || 0),
+            network: explorerNetwork,
+            status: tx.status,
+            type: tx.type,
+            timestamp: tx.timestamp,
+            blockNumber: tx.blockNumber || undefined,
+            tokenSymbol: nativeSymbol,
+            // Optional enhancement: include fee in BTC for tooltip display
+            fee: satoshisToBtc(Number(tx.fee) || 0)
+          }));
+
+          return { transactions, supported: true };
+        }
+
         const isSupported = explorerAPI.isSupported(explorerNetwork);
         
         console.log('[Explorer] Request:', { network: explorerNetwork, address: explorerAddress, isSupported });

@@ -47,6 +47,15 @@ export {
   getNetworkFromAddress,
 } from './address.js';
 
+// Transaction building/signing (Phase 3)
+export type { FeeEstimation, SelectedInputs, PrevoutInfo, BuildAndSignParams } from './transaction.js';
+export {
+  estimateVbytesP2wpkh,
+  parseBtcToSatoshisExact,
+  selectUtxosLargestFirst,
+  buildAndSignP2wpkhTransaction,
+} from './transaction.js';
+
 // Explorer API
 export {
   BitcoinExplorer,

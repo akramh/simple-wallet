@@ -63,7 +63,7 @@ import {
   type TokenInfo
 } from './price-service.js';
 import type { Config, Token, TokenMetadata } from './types/index.js';
-import { isBitcoinNetwork, satoshisToBtc } from './bitcoin/index.js';
+import { isBitcoinNetwork, isValidBitcoinAddress, satoshisToBtc } from './bitcoin/index.js';
 
 // ============================================================================
 // Configuration and Global State
@@ -1045,11 +1045,69 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
  * @param currentWalletName - Name of the current wallet for header display
  */
 async function viewTransactionHistory(currentWalletName: string | null): Promise<void> {
-  const address = wallet.getAddress();
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
   ui.showSection('Transaction History');
+
+  // Bitcoin history via Mempool.space
+  if (isBitcoinNetwork(config.network)) {
+    ui.showLoading('Fetching transactions from Mempool...');
+    try {
+      const txs = await walletService.getBitcoinTransactionHistory(15);
+      console.log('');
+
+      if (txs.length === 0) {
+        ui.showInfo('No transactions found for this address.');
+      } else {
+        ui.showSuccess(`Found ${txs.length} recent transactions`);
+        console.log('');
+        ui.showSeparator();
+
+        const symbol = config.networks[config.network].nativeSymbol || 'BTC';
+        for (const tx of txs) {
+          const isSent = tx.type === 'send';
+          const direction = isSent ? chalk.red('↑ SENT') : chalk.green('↓ RECEIVED');
+          const otherAddress = isSent ? tx.to : tx.from;
+          const shortAddr = otherAddress ? `${otherAddress.slice(0, 10)}...${otherAddress.slice(-8)}` : 'Unknown';
+
+          const btcValue = satoshisToBtc(parseInt(tx.value, 10) || 0);
+          const valueStr = `${parseFloat(btcValue).toFixed(8)} ${symbol}`;
+
+          const date = new Date(tx.timestamp);
+          const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          const statusIcon = tx.status === 'confirmed' ? '✓' : '○';
+          const statusColor = tx.status === 'confirmed' ? chalk.green : chalk.yellow;
+
+          console.log(`${statusColor(statusIcon)} ${direction}  ${chalk.white(valueStr.padEnd(20))} ${chalk.gray(dateStr)}`);
+          console.log(`  ${chalk.gray(isSent ? 'To:' : 'From:')} ${chalk.cyan(shortAddr)}`);
+          console.log(`  ${chalk.gray('Txid:')} ${chalk.gray(tx.hash.slice(0, 18))}...`);
+          console.log('');
+        }
+
+        ui.showSeparator();
+        const addrUrl = walletService.getBitcoinAddressUrl(address);
+        if (addrUrl) {
+          console.log(chalk.gray(`View all: ${addrUrl}`));
+          console.log('');
+        }
+      }
+    } catch (error) {
+      const err = error as Error;
+      ui.showError('Failed to fetch transactions', [err.message]);
+    }
+
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    await mainMenu(currentWalletName);
+    return;
+  }
 
   if (!explorerAPI.isSupported(config.network)) {
     ui.showWarning(`Explorer API not configured for ${config.networks[config.network].name}`);
@@ -1146,17 +1204,129 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
-  // Bitcoin sending is not yet implemented (Phase 3)
+  // Bitcoin send flow (Native SegWit / P2WPKH)
   if (isBitcoinNetwork(config.network)) {
-    ui.showSection('Send Transaction');
-    ui.showWarning('Bitcoin sending is not yet supported');
-    ui.showInfo('This feature is planned for a future update');
+    ui.showSection('Send BTC');
+    ui.showInfo('Native SegWit (bech32) addresses only');
     console.log('');
+
+    const btcNetwork = config.network === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
+    const nativeSymbol = config.networks[config.network].nativeSymbol || (btcNetwork === 'testnet' ? 'tBTC' : 'BTC');
+
+    const answers = await inquirer.prompt<{
+      toAddress?: string;
+      amount?: string;
+    }>([
+      {
+        type: 'input',
+        name: 'toAddress',
+        message: `Recipient address (${btcNetwork === 'testnet' ? 'tb1...' : 'bc1...'}), or leave empty to cancel:`,
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          if (!isValidBitcoinAddress(input.trim(), btcNetwork)) {
+            return 'Please enter a valid Bitcoin bech32 address';
+          }
+          return true;
+        }
+      },
+      {
+        type: 'input',
+        name: 'amount',
+        message: `Amount (in ${nativeSymbol}):`,
+        when: (a) => !!a.toAddress && a.toAddress.trim() !== '',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
+          const num = parseFloat(input);
+          if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
+          if (input.includes('.') && input.split('.')[1].length > 8) return 'Bitcoin supports up to 8 decimals';
+          return true;
+        }
+      }
+    ]);
+
+    if (!answers.toAddress || answers.toAddress.trim() === '' || !answers.amount || answers.amount.trim() === '') {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Estimating network fee...');
+    const btcToken = walletService.getNativeToken(config.network);
+    const gasEstimate = await walletService.getGasEstimate(btcToken, answers.toAddress.trim(), answers.amount.trim());
+
+    let btcPrice: number | null = null;
+    try {
+      btcPrice = await getBitcoinPrice(config.network);
+    } catch {
+      btcPrice = null;
+    }
+
+    const { amountUsd, gasCostUsd, totalUsd } = calculateTransactionCosts(
+      answers.amount.trim(),
+      btcPrice,
+      gasEstimate.estimatedCostNative,
+      btcPrice
+    );
+
+    ui.clearScreen();
+    ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
+
+    ui.showTransactionConfirmation({
+      tokenSymbol: nativeSymbol,
+      amount: answers.amount.trim(),
+      recipient: answers.toAddress.trim(),
+      networkName: config.networks[config.network].name || config.network,
+      amountUsd,
+      gasCostNative: gasEstimate.estimatedCostNative,
+      nativeSymbol: gasEstimate.nativeSymbol,
+      gasCostUsd,
+      totalUsd,
+      gasEstimateFailed: !!gasEstimate.error
+    });
+
+    if (!gasEstimate.error) {
+      console.log(chalk.gray('Fee rate:            ') + chalk.white(`${gasEstimate.gasPrice} sat/vB`));
+      console.log(chalk.gray('Estimated size:      ') + chalk.white(`${gasEstimate.gasLimit} vB`));
+      console.log('');
+    }
+
+    const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: 'Confirm & Send?',
+        default: false
+      }
+    ]);
+
+    if (!confirm) {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Broadcasting transaction...');
+    const password = await ensureMasterPassword();
+    const result = await walletService.sendBitcoinTransaction(answers.toAddress.trim(), answers.amount.trim(), password);
+
+    ui.showSuccess('Transaction broadcasted (pending confirmation)');
+    console.log('');
+    console.log(chalk.gray('Txid: ') + chalk.magenta(result.hash));
+    console.log(chalk.gray('Fee:  ') + chalk.white(`${result.feeBtc} ${nativeSymbol}`));
+
+    const txUrl = walletService.getBitcoinTransactionUrl(result.hash);
+    if (txUrl) {
+      console.log(chalk.gray('View: ') + chalk.cyan(txUrl));
+    }
+    console.log('');
+
     await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
     }]);
+
     await mainMenu(currentWalletName);
     return;
   }

@@ -20,7 +20,7 @@ interface SendTransactionViewProps {
   onSuccess: () => void;
 }
 
-type TxStatus = 'confirm' | 'sending' | 'confirmed' | 'failed';
+type TxStatus = 'confirm' | 'sending' | 'pending' | 'confirmed' | 'failed';
 
 interface TxState {
   status: TxStatus;
@@ -32,7 +32,9 @@ interface TxState {
 interface NetworkConfig {
   network: string;
   blockExplorer: string | null;
-  chainId: number;
+  chainId?: number;
+  isBitcoin?: boolean;
+  bitcoinNetwork?: string;
 }
 
 interface GasEstimate {
@@ -147,17 +149,21 @@ export function SendTransactionView({
       if (response.error) {
         setTxState({ status: 'failed', error: response.error });
       } else if (response.result) {
-        // Transaction confirmed - we have hash and blockNumber
-        setTxState({ 
-          status: 'confirmed', 
-          hash: response.result.hash,
-          blockNumber: response.result.blockNumber
+        // EVM: confirmed (waits for mining). Bitcoin: broadcasted (pending).
+        const hash = response.result.hash;
+        const blockNumber = response.result.blockNumber;
+        const isPending = response.result.status === 'pending' || (!blockNumber && networkConfig?.isBitcoin);
+
+        setTxState({
+          status: isPending ? 'pending' : 'confirmed',
+          hash,
+          blockNumber
         });
       }
     } catch (err: any) {
       setTxState({ status: 'failed', error: err.message || 'Transaction failed' });
     }
-  }, [token, recipient, amount]);
+  }, [token, recipient, amount, networkConfig]);
 
   const copyHash = useCallback(() => {
     if (txState.hash) {
@@ -183,7 +189,7 @@ export function SendTransactionView({
   };
 
   const handleClose = () => {
-    if (txState.status === 'confirmed') {
+    if (txState.status === 'confirmed' || txState.status === 'pending') {
       onSuccess();
     }
     onClose();
@@ -228,7 +234,7 @@ export function SendTransactionView({
                     {gasEstimateStatus === 'loading'
                       ? 'Estimating...'
                       : gasEstimate
-                        ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(6)} ${gasEstimate.nativeSymbol}`
+                        ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(networkConfig?.isBitcoin ? 8 : 6)} ${gasEstimate.nativeSymbol}`
                         : '--'}
                   </span>
                   {getGasUsd() && <span className="tx-detail-usd">{getGasUsd()}</span>}
@@ -283,9 +289,82 @@ export function SendTransactionView({
               </div>
 
               <p className="tx-sending-note">
-                Please wait while the transaction is being confirmed on the blockchain...
+                {networkConfig?.isBitcoin
+                  ? 'Broadcasting transaction to the Bitcoin network...'
+                  : 'Please wait while the transaction is being confirmed on the blockchain...'}
               </p>
             </div>
+          </div>
+        </>
+      )}
+
+      {/* Bitcoin pending state */}
+      {txState.status === 'pending' && (
+        <>
+          <div className="tx-details-card success">
+            <div className="tx-success-header">
+              <div className="tx-success-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M8 12h8" />
+                </svg>
+              </div>
+              <h3>Transaction Broadcasted</h3>
+              <p className="tx-error-message">Pending confirmation</p>
+            </div>
+
+            <div className="tx-detail-rows">
+              <div className="tx-detail-row">
+                <span className="tx-detail-label">Amount</span>
+                <span className="tx-detail-value">{amount} {token.symbol}</span>
+              </div>
+
+              <div className="tx-detail-row">
+                <span className="tx-detail-label">To</span>
+                <span className="tx-detail-value">{formatAddress(recipient)}</span>
+              </div>
+
+              {txState.hash && (
+                <div className="tx-detail-row">
+                  <span className="tx-detail-label">Hash</span>
+                  <div className="tx-detail-value tx-hash-value">
+                    <span>{formatHash(txState.hash)}</span>
+                    <button className="tx-copy-btn" onClick={copyHash} title="Copy hash">
+                      {copied ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                          <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                        </svg>
+                      )}
+                    </button>
+                    {networkConfig?.blockExplorer && (
+                      <button className="tx-explorer-btn" onClick={openExplorer} title="View on explorer">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="tx-actions">
+            {networkConfig?.blockExplorer && txState.hash && (
+              <button className="btn btn-secondary" onClick={openExplorer}>
+                View on Explorer
+              </button>
+            )}
+            <button className="btn btn-primary" onClick={handleClose}>
+              Close
+            </button>
           </div>
         </>
       )}

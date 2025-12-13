@@ -633,7 +633,8 @@ export function showTransactionConfirmation(params: TransactionConfirmationParam
     console.log(chalk.gray('                     ') + chalk.yellow('Unable to estimate'));
   } else {
     console.log(chalk.gray('Estimated Network Fee:'));
-    const formattedGas = parseFloat(gasCostNative).toFixed(6);
+    const decimals = nativeSymbol.toUpperCase() === 'BTC' || nativeSymbol.toUpperCase() === 'TBTC' ? 8 : 6;
+    const formattedGas = parseFloat(gasCostNative).toFixed(decimals);
     console.log(chalk.gray('                     ') + chalk.white(`${formattedGas} ${nativeSymbol}`));
     if (gasCostUsd !== null) {
       console.log(chalk.gray('                     ') + formatUsdPrice(gasCostUsd));

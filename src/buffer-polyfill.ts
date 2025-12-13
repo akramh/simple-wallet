@@ -131,6 +131,20 @@ export class BufferPolyfill extends Uint8Array {
     const decoder = new TextDecoder();
     return decoder.decode(this);
   }
+
+  /**
+   * Compare this buffer to another buffer/typed array for byte equality.
+   * Matches Node.js Buffer#equals() behavior.
+   */
+  equals(other: unknown): boolean {
+    if (other === this) return true;
+    if (!(other instanceof Uint8Array)) return false;
+    if (other.byteLength !== this.byteLength) return false;
+    for (let i = 0; i < this.byteLength; i++) {
+      if (this[i] !== other[i]) return false;
+    }
+    return true;
+  }
 }
 
 /**
@@ -167,6 +181,13 @@ if (typeof globalThis.Buffer === 'undefined') {
       }
       // Default: try to use parent Uint8Array.from
       return new BufferPolyfill(Uint8Array.from(data, encodingOrOffset, length));
+    }
+
+    /**
+     * Node.js-compatible Buffer.isBuffer().
+     */
+    static isBuffer(value: unknown): value is BufferPolyfill {
+      return value instanceof Uint8Array;
     }
   };
 

@@ -28,6 +28,7 @@ import polIcon from '../../assets/img/pol-token.svg';
 import sendIcon from '../../assets/icons/send.svg';
 import receiveIcon from '../../assets/icons/receive.svg';
 import backIcon from '../../assets/icons/arrow-left.svg';
+import { isValidBitcoinAddress } from '../../../src/bitcoin/index.js';
 
 const ICON_ASSETS: Record<string, string> = {
   'eth_logo.svg': ethIcon,
@@ -66,6 +67,14 @@ const SYMBOL_ICON_FALLBACK: Record<string, string> = {
  */
 function isBitcoinNetwork(networkKey: string): boolean {
   return networkKey.startsWith('bitcoin-');
+}
+
+function isValidRecipientAddress(networkKey: string, address: string): boolean {
+  if (isBitcoinNetwork(networkKey)) {
+    const btcNetwork = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
+    return isValidBitcoinAddress(address, btcNetwork);
+  }
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
 
 interface Props {
@@ -154,7 +163,12 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
   // Fetch gas estimate when token/recipient changes
   useEffect(() => {
-    if (!selectedToken || !recipient || !/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
+    if (!selectedToken || !recipient || !isValidRecipientAddress(network, recipient)) {
+      setGasEstimate(null);
+      return;
+    }
+    // For Bitcoin, only estimate once amount is present (UTXO selection depends on amount).
+    if (isBitcoinNetwork(network) && (!amount || amount.trim() === '')) {
       setGasEstimate(null);
       return;
     }
@@ -329,8 +343,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     }
 
     // Validate address format
-    if (!/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
-      setSendError('Invalid Ethereum address');
+    if (!isValidRecipientAddress(network, recipient)) {
+      setSendError(isBitcoinNetwork(network) ? 'Invalid Bitcoin address' : 'Invalid Ethereum address');
       return;
     }
 
@@ -474,8 +488,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
               <button
                 className="action-tile"
                 onClick={() => setView('send')}
-                disabled={isBitcoinNetwork(network)}
-                title={isBitcoinNetwork(network) ? 'Bitcoin sending coming soon' : undefined}
               >
                 <img src={sendIcon} alt="Send" className="action-icon" />
                 <span>Send</span>
@@ -639,7 +651,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                       type="text"
                       value={recipient}
                       onChange={(e) => setRecipient(e.target.value)}
-                      placeholder="0x..."
+                      placeholder={isBitcoinNetwork(network) ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...') : '0x...'}
                     />
                   </div>
 
@@ -668,7 +680,10 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                   </div>
 
                   {/* Network Fee Estimate Display */}
-                  {selectedToken && recipient && /^0x[a-fA-F0-9]{40}$/.test(recipient) && (
+                  {selectedToken &&
+                    recipient &&
+                    isValidRecipientAddress(network, recipient) &&
+                    (!isBitcoinNetwork(network) || (amount && amount.trim() !== '')) && (
                     <div className="gas-estimate-box">
                       <div className="gas-estimate-label">Estimated Network Fee</div>
                       <div className="gas-estimate-value">
@@ -677,7 +692,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                         ) : gasEstimate ? (
                           <>
                             <span className="gas-amount">
-                              ~{parseFloat(gasEstimate.estimatedCostNative).toFixed(6)} {gasEstimate.nativeSymbol}
+                              ~{parseFloat(gasEstimate.estimatedCostNative).toFixed(isBitcoinNetwork(network) ? 8 : 6)} {gasEstimate.nativeSymbol}
                             </span>
                             {getGasUsdValue() && (
                               <span className="gas-usd">≈ {getGasUsdValue()}</span>

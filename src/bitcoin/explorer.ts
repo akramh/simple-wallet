@@ -277,31 +277,30 @@ export class BitcoinExplorer {
     const lowerAddress = address.toLowerCase();
 
     return txs.slice(0, limit).map((tx) => {
-      // Determine if this is a send or receive
-      const isFromMe = tx.vin.some(
-        (input) =>
-          input.prevout?.scriptpubkey_address?.toLowerCase() === lowerAddress
-      );
-
-      // Calculate the net value change for this address
-      let valueSent = 0;
-      let valueReceived = 0;
+      // Determine if this is a send or receive relative to `address`.
+      // For sends, we want the amount sent to other parties (exclude change back to ourselves).
+      let inputsFromMe = 0;
+      let outputsToMe = 0;
+      let outputsToOthers = 0;
 
       for (const input of tx.vin) {
         if (input.prevout?.scriptpubkey_address?.toLowerCase() === lowerAddress) {
-          valueSent += input.prevout.value;
+          inputsFromMe += input.prevout.value;
         }
       }
 
       for (const output of tx.vout) {
-        if (output.scriptpubkey_address?.toLowerCase() === lowerAddress) {
-          valueReceived += output.value;
+        const outAddr = output.scriptpubkey_address?.toLowerCase();
+        if (outAddr === lowerAddress) {
+          outputsToMe += output.value;
+        } else {
+          // Treat outputs without our address (including missing addresses) as "to others".
+          outputsToOthers += output.value;
         }
       }
 
-      const netValue = valueReceived - valueSent;
-      const type = netValue >= 0 ? 'receive' : 'send';
-      const displayValue = Math.abs(netValue);
+      const type = inputsFromMe > 0 ? 'send' : 'receive';
+      const displayValue = type === 'send' ? outputsToOthers : outputsToMe;
 
       // Get the counterparty address
       let counterparty = '';
@@ -312,8 +311,10 @@ export class BitcoinExplorer {
         );
         counterparty = recipient?.scriptpubkey_address || '';
       } else {
-        // Find the first input address (the sender)
-        const sender = tx.vin[0]?.prevout?.scriptpubkey_address;
+        // Find the first input address that isn't ours (best-effort sender).
+        const sender = tx.vin.find(
+          (input) => input.prevout?.scriptpubkey_address?.toLowerCase() !== lowerAddress
+        )?.prevout?.scriptpubkey_address;
         counterparty = sender || '';
       }
 

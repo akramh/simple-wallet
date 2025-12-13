@@ -28,6 +28,7 @@ import {
   getBitcoinProvider,
   isBitcoinNetwork,
   satoshisToBtc,
+  isValidBitcoinAddress,
   type BitcoinAddressInfo,
   type NormalizedBitcoinTransaction,
 } from './bitcoin/index.js';
@@ -416,6 +417,74 @@ export class WalletAppService {
    * @returns Gas estimation with costs in wei and native token
    */
   async getGasEstimate(token: Token, toAddress: string, amount: string): Promise<GasEstimate> {
+    // Bitcoin networks: estimate fee using Mempool fee rates and UTXO selection.
+    if (this.isCurrentNetworkBitcoin()) {
+      const networkKey = this.config.network;
+      const netConfig = this.config.networks[networkKey];
+      const nativeSymbol = netConfig?.nativeSymbol || (networkKey === 'bitcoin-testnet' ? 'tBTC' : 'BTC');
+
+      try {
+        const fromAddress = this.getAddress();
+        const recipient = toAddress || fromAddress;
+        if (toAddress && !isValidBitcoinAddress(toAddress, networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet')) {
+          throw new Error('Invalid Bitcoin address');
+        }
+
+        // If amount is empty/zero, return a neutral estimate without throwing.
+        if (!amount || amount.trim() === '' || amount.trim() === '0' || amount.trim() === '0.0') {
+          return {
+            gasLimit: '0',
+            gasPrice: '0',
+            maxFeePerGas: null,
+            maxPriorityFeePerGas: null,
+            estimatedCostWei: '0',
+            estimatedCostNative: '0',
+            nativeSymbol,
+            supportsEIP1559: false,
+            network: networkKey
+          };
+        }
+
+        const provider = this.getBitcoinProviderForNetwork(networkKey);
+        const feeEstimates = await provider.getFeeEstimates();
+        const feeRateSatVb = feeEstimates.halfHourFee;
+
+        const estimation = await provider.estimateSendTransaction(
+          fromAddress,
+          recipient,
+          amount || '0',
+          feeRateSatVb
+        );
+
+        const feeBtc = satoshisToBtc(estimation.fee.feeSats);
+
+        return {
+          gasLimit: estimation.fee.vbytes.toString(),
+          gasPrice: feeRateSatVb.toString(), // sat/vB
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: estimation.fee.feeSats.toString(),
+          estimatedCostNative: feeBtc,
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey
+        };
+      } catch (error: any) {
+        return {
+          error: error.message || 'Failed to estimate Bitcoin fee',
+          gasLimit: '0',
+          gasPrice: '0',
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: '0',
+          estimatedCostNative: '0',
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey
+        };
+      }
+    }
+
     const gasNetwork = this.config.network;
     const gasNetworkConfig = this.config.networks[gasNetwork];
     const nativeSymbol = gasNetworkConfig?.nativeSymbol || 'ETH';
@@ -768,5 +837,41 @@ export class WalletAppService {
   getBitcoinPrivateKey(password: string): string {
     const btcNetwork = this.config.network === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
     return this.wallet.getBitcoinPrivateKey(password, btcNetwork);
+  }
+
+  /**
+   * Send a Bitcoin transaction (Native SegWit / P2WPKH).
+   *
+   * @param toAddress - Recipient bech32 address
+   * @param amountBtc - Amount in BTC string
+   * @param password - Master password for private key derivation
+   * @returns Broadcast transaction ID and fee info
+   */
+  async sendBitcoinTransaction(
+    toAddress: string,
+    amountBtc: string,
+    password: string
+  ): Promise<{ hash: string; feeSats: number; feeBtc: string; vbytes: number }> {
+    if (!this.isCurrentNetworkBitcoin()) {
+      throw new Error('Not on a Bitcoin network');
+    }
+
+    const networkKey = this.config.network;
+    const btcNetwork = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
+    if (!isValidBitcoinAddress(toAddress, btcNetwork)) {
+      throw new Error('Invalid Bitcoin recipient address');
+    }
+
+    const fromAddress = this.getAddress();
+    const wif = this.wallet.getBitcoinPrivateKey(password, btcNetwork);
+    const provider = this.getBitcoinProviderForNetwork(networkKey);
+
+    const result = await provider.sendTransaction(fromAddress, toAddress, amountBtc, wif);
+    return {
+      hash: result.txid,
+      feeSats: result.feeSats,
+      feeBtc: result.feeBtc,
+      vbytes: result.vbytes
+    };
   }
 }
