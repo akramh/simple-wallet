@@ -45,7 +45,8 @@ import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
-import { getTokenPrices, calculateTotalValue, formatUSDValue, type TokenInfo } from '../../src/price-service.js';
+import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, isBitcoinNetworkKey, type TokenInfo } from '../../src/price-service.js';
+import { isBitcoinNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
 import { ethers } from 'ethers';
@@ -206,22 +207,7 @@ function startBalancePolling(): void {
     if (!isUnlocked || !walletService) return;
     
     try {
-      const network = walletService.config.network;
-      const tokens = walletService.getTokensForNetwork(network);
-      const balances = await walletService.fetchBalances(tokens);
-      
-      // Update cache
-      for (const item of balances) {
-        if (!item.error) {
-          setCachedBalance(network, item.token, item.balance);
-        }
-      }
-      
-      // Persist cache
-      await saveBalanceCache();
-      
-      // Broadcast to UI
-      broadcastBalanceUpdate(network, balances);
+      await refreshBalancesForCurrentNetwork();
     } catch (err) {
       console.warn('[BalancePolling] Error:', err);
     }
@@ -239,6 +225,43 @@ function stopBalancePolling(): void {
     balancePollingTimer = null;
     console.log('[BalancePolling] Stopped');
   }
+}
+
+// ============================================================================
+// Balance Refresh (Network-Aware)
+// ============================================================================
+
+async function refreshBalancesForCurrentNetwork(): Promise<void> {
+  if (!isUnlocked || !walletService) return;
+
+  const network = walletService.config.network;
+  const networkConfig = walletService.config.networks[network];
+
+  if (isBitcoinNetworkConfig(networkConfig)) {
+    const portfolio = await walletService.getPortfolioForNetwork(network);
+
+    for (const item of portfolio) {
+      if (!item.error) {
+        setCachedBalance(network, item.token, item.balance);
+      }
+    }
+
+    await saveBalanceCache();
+    broadcastBalanceUpdate(network, portfolio);
+    return;
+  }
+
+  const tokens = walletService.getTokensForNetwork(network);
+  const balances = await walletService.fetchBalances(tokens);
+
+  for (const item of balances) {
+    if (!item.error) {
+      setCachedBalance(network, item.token, item.balance);
+    }
+  }
+
+  await saveBalanceCache();
+  broadcastBalanceUpdate(network, balances);
 }
 
 // ============================================================================
@@ -486,49 +509,50 @@ function enqueueApproval(request: PendingRequest): Promise<void> {
 // Chrome Side Panel Configuration
 // ============================================================================
 
-/** Path to the side panel HTML file */
-const SIDE_PANEL_PATH = 'extension/sidepanel/sidepanel.html';
+/** Path to the side panel HTML file (at root after build) */
+const SIDE_PANEL_PATH = 'sidepanel.html';
 
 /**
  * Configures Chrome Side Panel API to open on extension icon click.
- * Sets up the side panel behavior and path.
- * 
- * @param tabId - Optional tab ID for tab-specific panel configuration
  */
-const configureSidePanel = async (tabId?: number) => {
-  if (!chrome.sidePanel?.setPanelBehavior) return;
+const configureSidePanel = async () => {
+  console.log('[SidePanel] Configuring side panel...');
+
+  if (!chrome.sidePanel) {
+    console.error('[SidePanel] chrome.sidePanel API not available');
+    return;
+  }
+
   try {
-    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-    if (tabId && chrome.sidePanel.setOptions) {
-      await chrome.sidePanel.setOptions({ tabId, path: SIDE_PANEL_PATH });
+    // Set the default panel path globally
+    if (chrome.sidePanel.setOptions) {
+      await chrome.sidePanel.setOptions({ path: SIDE_PANEL_PATH });
+      console.log('[SidePanel] Set options with path:', SIDE_PANEL_PATH);
+    }
+
+    // Enable opening panel on action click
+    if (chrome.sidePanel.setPanelBehavior) {
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+      console.log('[SidePanel] Set openPanelOnActionClick: true');
     }
   } catch (error) {
-    console.error('Failed to configure side panel:', error);
+    console.error('[SidePanel] Failed to configure:', error);
   }
 };
 
-chrome.runtime.onInstalled.addListener(() => configureSidePanel());
-chrome.runtime.onStartup.addListener(() => configureSidePanel());
-
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!chrome.sidePanel?.open || !tab) return;
-  try {
-    if (chrome.sidePanel.setOptions) {
-      await chrome.sidePanel.setOptions({ tabId: tab.id, path: SIDE_PANEL_PATH });
-    }
-    // Try tab-scoped open first
-    if (tab.id) {
-      await chrome.sidePanel.open({ tabId: tab.id });
-      return;
-    }
-    // Fallback to window-scoped open
-    if (tab.windowId) {
-      await chrome.sidePanel.open({ windowId: tab.windowId });
-    }
-  } catch (error) {
-    console.error('Failed to open side panel:', error);
-  }
+// Configure side panel on various lifecycle events
+chrome.runtime.onInstalled.addListener(() => {
+  console.log('[SidePanel] onInstalled event');
+  configureSidePanel();
 });
+
+chrome.runtime.onStartup.addListener(() => {
+  console.log('[SidePanel] onStartup event');
+  configureSidePanel();
+});
+
+// IMPORTANT: Also configure immediately when service worker loads
+configureSidePanel();
 
 // ============================================================================
 // Configuration Loading
@@ -756,7 +780,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       return {
         success: true,
-        address: newWallet.address,
+        address: walletService!.getAddress(),
         mnemonic: newWallet.mnemonic
       };
 
@@ -785,7 +809,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       return {
         success: true,
-        address: importedWallet.address
+        address: walletService!.getAddress()
       };
 
     case 'UNLOCK_WALLET':
@@ -807,12 +831,16 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
       // Load balance cache and start polling
       await loadBalanceCache();
+      // Immediately refresh balances for the active network to avoid stale cache
+      refreshBalancesForCurrentNetwork().catch(err => {
+        console.warn('[BalanceRefresh] Error:', err);
+      });
       startBalancePolling();
 
       resetAutoLockTimer();
       return {
         success: true,
-        address: loaded.address,
+        address: walletService!.getAddress(),
         walletName: currentWalletName
       };
 
@@ -843,7 +871,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       return {
         success: true,
-        address: switchedWallet.address,
+        address: walletService!.getAddress(),
         walletName: currentWalletName
       };
 
@@ -884,22 +912,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       // Trigger async balance refresh for current network
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      const refreshNetwork = walletService!.config.network;
-      const tokensToRefresh = walletService!.getTokensForNetwork(refreshNetwork);
-      
-      // Fetch balances async and update cache
-      walletService!.fetchBalances(tokensToRefresh).then(async (balances) => {
-        for (const item of balances) {
-          if (!item.error) {
-            setCachedBalance(refreshNetwork, item.token, item.balance);
-          }
-        }
-        await saveBalanceCache();
-        broadcastBalanceUpdate(refreshNetwork, balances);
-      }).catch(err => {
+      refreshBalancesForCurrentNetwork().catch(err => {
         console.warn('[REFRESH_BALANCES] Error:', err);
       });
-      
       return { success: true, message: 'Balance refresh started' };
 
     case 'GET_CACHED_BALANCES':
@@ -915,11 +930,42 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       // Fetch prices for tokens and calculate total portfolio value
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      
+
       const priceNetwork = walletService!.config.network;
       const networkConfig = walletService!.config.networks[priceNetwork];
-      const chainId = networkConfig?.chainId || 1;
-      
+
+      // Handle Bitcoin networks differently
+      if (isBitcoinNetworkKey(priceNetwork)) {
+        try {
+          const btcPrice = await getBitcoinPrice();
+          const cached = getCachedBalance(priceNetwork, { type: 'native' });
+          const balance = cached?.balance || '0';
+          const btcAmount = parseFloat(balance);
+          const totalValue = btcPrice ? btcAmount * btcPrice : 0;
+
+          return {
+            prices: { native: btcPrice },
+            totalValue,
+            formattedTotal: formatUSDValue(totalValue),
+            network: priceNetwork,
+            isBitcoin: true
+          };
+        } catch (error) {
+          console.warn('[GET_TOKEN_PRICES] Bitcoin price error:', error);
+          return {
+            prices: {},
+            totalValue: 0,
+            formattedTotal: '$0.00',
+            network: priceNetwork,
+            isBitcoin: true,
+            error: 'Failed to fetch Bitcoin price'
+          };
+        }
+      }
+
+      // EVM networks
+      const chainId = 'chainId' in networkConfig ? networkConfig.chainId : 1;
+
       // Get tokens with balances
       const priceTokens = walletService!.getTokensForNetwork(priceNetwork);
       const tokenInfos: TokenInfo[] = priceTokens.map(t => ({
@@ -928,7 +974,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         address: t.address,
         decimals: t.decimals
       }));
-      
+
       // Build balances array from cache
       const balancesForCalc = priceTokens.map(token => {
         const cached = getCachedBalance(priceNetwork, token);
@@ -942,20 +988,20 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
           balance: cached?.balance || '0'
         };
       });
-      
+
       try {
         // Fetch prices from CoinGecko
         const prices = await getTokenPrices(chainId, tokenInfos);
-        
+
         // Calculate total value
         const totalValue = calculateTotalValue(balancesForCalc, prices);
-        
+
         // Convert prices map to object for response
         const pricesObj: Record<string, number | null> = {};
         prices.forEach((value, key) => {
           pricesObj[key] = value;
         });
-        
+
         return {
           prices: pricesObj,
           totalValue,
@@ -1037,10 +1083,13 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!walletService) throw new Error('Wallet not initialized');
       const netConfigNetwork = walletService.config.network;
       const netConfigData = walletService.config.networks[netConfigNetwork];
+      const isBitcoin = isBitcoinNetworkConfig(netConfigData);
       return {
         network: netConfigNetwork,
         blockExplorer: netConfigData?.blockExplorer || null,
-        chainId: netConfigData?.chainId
+        chainId: isBitcoin ? undefined : (netConfigData as any).chainId,
+        isBitcoin,
+        bitcoinNetwork: isBitcoin ? (netConfigData as any).bitcoinNetwork : undefined
       };
     }
 
@@ -1056,8 +1105,17 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'SWITCH_NETWORK':
       await walletService!.setNetwork(payload.network);
-      const chainHex = '0x' + walletService!.config.networks[payload.network].chainId.toString(16);
-      broadcastChainChanged(chainHex);
+      const switchNetworkConfig = walletService!.config.networks[payload.network];
+      // Clear cached balances for the target network to avoid stale data bleed
+      clearBalanceCache(payload.network);
+      saveBalanceCache().catch(() => {});
+      // Kick off a refresh for the new network (non-blocking)
+      refreshBalancesForCurrentNetwork().catch(() => {});
+      // Only broadcast chainChanged for EVM networks (Bitcoin doesn't have chainId)
+      if (!isBitcoinNetworkConfig(switchNetworkConfig)) {
+        const chainHex = '0x' + switchNetworkConfig.chainId.toString(16);
+        broadcastChainChanged(chainHex);
+      }
       return { success: true, network: payload.network };
 
     case 'GET_NETWORKS':
@@ -1153,7 +1211,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const nextIndex = Object.keys(currentAccounts).length;
       const newAccount = walletService!.switchAccount(nextIndex);
       walletService!.saveWallet(currentWalletName);
-      return { success: true, address: newAccount.address, index: newAccount.accountIndex };
+      return { success: true, address: walletService!.getAddress(), index: newAccount.accountIndex };
 
     case 'SWITCH_ACCOUNT':
       if (!isUnlocked) throw new Error('Wallet is locked');
@@ -1161,7 +1219,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const switchedAccount = walletService!.switchAccount(payload.index);
       walletService!.saveWallet(currentWalletName); // Save the wallet with new active account
       broadcastAccountsChanged([switchedAccount.address]);
-      return { success: true, address: switchedAccount.address, index: switchedAccount.accountIndex };
+      return { success: true, address: walletService!.getAddress(), index: switchedAccount.accountIndex };
 
     case 'GET_ALL_WALLETS':
       // Allow getting wallet list even when locked (needed for unlock screen)
@@ -1179,9 +1237,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       return { accounts: [walletService!.getAddress()] };
 
-    case 'ETH_REQUEST_ACCOUNTS':
+    case 'ETH_REQUEST_ACCOUNTS': {
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
+      // Bitcoin networks don't support EIP-1193
+      const ethReqNetworkConfig = walletService!.config.networks[walletService!.config.network];
+      if (isBitcoinNetworkConfig(ethReqNetworkConfig)) {
+        throw new Error('eth_requestAccounts not supported on Bitcoin networks');
+      }
       if (pendingRequests.some(r => r.type === 'connect')) {
         throw new Error('Connection request already pending');
       }
@@ -1196,13 +1259,17 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         approvedDappOrigins.add(origin);
         saveApprovedOrigins();
       }
-      emitProviderEvent('connect', { chainId: '0x' + walletService!.config.networks[walletService!.config.network].chainId.toString(16) });
+      emitProviderEvent('connect', { chainId: '0x' + ethReqNetworkConfig.chainId.toString(16) });
       broadcastAccountsChanged([addr]);
       return { accounts: [addr] };
+    }
 
     case 'ETH_NET_VERSION': {
-      const chainId = walletService!.config.networks[walletService!.config.network].chainId;
-      return chainId.toString(10);
+      const netVersionConfig = walletService!.config.networks[walletService!.config.network];
+      if (isBitcoinNetworkConfig(netVersionConfig)) {
+        throw new Error('eth_net_version not supported on Bitcoin networks');
+      }
+      return netVersionConfig.chainId.toString(10);
     }
 
     case 'GENERIC_RPC': {
@@ -1230,6 +1297,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'ETH_CHAIN_ID': {
       const chainIdConfig = walletService!.config.networks[walletService!.config.network];
+      if (isBitcoinNetworkConfig(chainIdConfig)) {
+        throw new Error('eth_chainId not supported on Bitcoin networks');
+      }
       return { chainId: '0x' + chainIdConfig.chainId.toString(16) };
     }
 

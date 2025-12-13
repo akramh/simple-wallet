@@ -18,10 +18,19 @@
  */
 
 import type { Config, Token, TokenRegistry, TokenMetadata } from './types/index.js';
+import { isBitcoinNetworkConfig } from './types/config.js';
 import { Wallet } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 import { ethers } from 'ethers';
+import {
+  BitcoinProvider,
+  getBitcoinProvider,
+  isBitcoinNetwork,
+  satoshisToBtc,
+  type BitcoinAddressInfo,
+  type NormalizedBitcoinTransaction,
+} from './bitcoin/index.js';
 
 /**
  * Gas estimation result for transaction cost display.
@@ -99,6 +108,10 @@ export class WalletAppService {
   customTokens: TokenRegistry;
   /** Storage adapter for persistence */
   storage: StorageAdapter;
+  /** Bitcoin provider for Bitcoin network operations */
+  private bitcoinProvider: BitcoinProvider | null = null;
+  /** Cached Bitcoin address for current account */
+  private cachedBitcoinAddress: BitcoinAddressInfo | null = null;
 
   /**
    * Create a new WalletAppService instance.
@@ -146,7 +159,62 @@ export class WalletAppService {
    * Must be called before any blockchain operations.
    */
   async initialize(): Promise<void> {
-    await this.wallet.initialize();
+    // Only initialize EVM provider if current network is EVM
+    if (!this.isCurrentNetworkBitcoin()) {
+      await this.wallet.initialize();
+    }
+  }
+
+  // ============================================================================
+  // Bitcoin Support Helpers
+  // ============================================================================
+
+  /**
+   * Check if the current network is a Bitcoin network.
+   */
+  isCurrentNetworkBitcoin(): boolean {
+    return isBitcoinNetwork(this.config.network);
+  }
+
+  /**
+   * Check if a specific network is a Bitcoin network.
+   */
+  isNetworkBitcoin(networkKey: string): boolean {
+    return isBitcoinNetwork(networkKey);
+  }
+
+  /**
+   * Get or create the Bitcoin provider for the current network.
+   * @private
+   */
+  private getBitcoinProviderForNetwork(networkKey: string): BitcoinProvider {
+    if (!this.bitcoinProvider || this.bitcoinProvider.getNetworkKey() !== networkKey) {
+      this.bitcoinProvider = getBitcoinProvider(networkKey);
+    }
+    return this.bitcoinProvider;
+  }
+
+  /**
+   * Get the Bitcoin address for the current account.
+   * Caches the result for performance.
+   */
+  getBitcoinAddress(): BitcoinAddressInfo | null {
+    if (!this.isCurrentNetworkBitcoin()) {
+      return null;
+    }
+
+    // Check if we have a cached address for the current account
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+    const networkKey = this.config.network;
+    const btcNetwork = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
+
+    try {
+      // Get Bitcoin address from the wallet's mnemonic
+      return this.wallet.getBitcoinAddress(btcNetwork, accountIndex);
+    } catch (error) {
+      console.warn('[WalletAppService] Failed to get Bitcoin address:', error);
+      return null;
+    }
   }
 
   /**
@@ -243,9 +311,14 @@ export class WalletAppService {
 
   /**
    * Get the current wallet address.
-   * @returns Checksummed address
+   * Returns the appropriate address for the current network (EVM or Bitcoin).
+   * @returns Address string
    */
   getAddress(): string {
+    if (this.isCurrentNetworkBitcoin()) {
+      const btcInfo = this.getBitcoinAddress();
+      return btcInfo?.address || '';
+    }
     return this.wallet.getAddress();
   }
 
@@ -259,9 +332,17 @@ export class WalletAppService {
 
   /**
    * Get native currency balance.
-   * @returns Balance in ETH
+   * @returns Balance in native currency (ETH for EVM, BTC for Bitcoin)
    */
-  getBalance(): Promise<string> {
+  async getBalance(): Promise<string> {
+    if (this.isCurrentNetworkBitcoin()) {
+      const btcInfo = this.getBitcoinAddress();
+      if (!btcInfo) {
+        return '0';
+      }
+      const provider = this.getBitcoinProviderForNetwork(this.config.network);
+      return provider.getBalanceFormatted(btcInfo.address);
+    }
     return this.wallet.getBalance();
   }
 
@@ -271,6 +352,35 @@ export class WalletAppService {
    * @returns Array of token balances
    */
   async getPortfolioForNetwork(networkKey: string): Promise<{ token: Token; balance: string; error?: string }[]> {
+    // Handle Bitcoin networks
+    if (this.isNetworkBitcoin(networkKey)) {
+      const btcNetwork = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
+      try {
+        const btcInfo = this.wallet.getBitcoinAddress(btcNetwork);
+        if (!btcInfo) {
+          return [{
+            token: this.getNativeToken(networkKey),
+            balance: '0',
+            error: 'No Bitcoin address available',
+          }];
+        }
+        const provider = this.getBitcoinProviderForNetwork(networkKey);
+        const portfolio = await provider.getPortfolio(btcInfo.address);
+        return portfolio.map(p => ({
+          token: p.token,
+          balance: p.balance,
+          error: p.error,
+        }));
+      } catch (error) {
+        return [{
+          token: this.getNativeToken(networkKey),
+          balance: 'Error',
+          error: (error as Error).message,
+        }];
+      }
+    }
+
+    // EVM networks
     const tokens = this.getTokensForNetwork(networkKey);
     return this.wallet.getPortfolio(tokens);
   }
@@ -456,10 +566,11 @@ export class WalletAppService {
     const networkConfig = this.config.networks[networkKey] || {};
     const symbol = networkConfig.nativeSymbol || 'ETH';
     const name = networkConfig.nativeName || networkConfig.name || 'Ether';
+    const decimals = this.isNetworkBitcoin(networkKey) ? 8 : 18;
     return {
       symbol,
       type: 'native',
-      decimals: 18,
+      decimals,
       name,
       address: ''
     };
@@ -574,7 +685,7 @@ export class WalletAppService {
   /**
    * Switch to a different blockchain network.
    * Optionally persists the change to config file.
-   * 
+   *
    * @param networkKey - Network identifier
    * @param options - Persistence options
    * @param options.persist - Whether to save to config file (default: true)
@@ -582,10 +693,80 @@ export class WalletAppService {
   async setNetwork(networkKey: string, options: SetNetworkOptions = {}): Promise<void> {
     const persist = options.persist ?? true;
     this.config.network = networkKey;
-    await this.wallet.setNetwork(networkKey);
+
+    // Only initialize EVM provider for EVM networks
+    if (!this.isNetworkBitcoin(networkKey)) {
+      await this.wallet.setNetwork(networkKey);
+    } else {
+      // For Bitcoin, just update the provider cache
+      this.bitcoinProvider = getBitcoinProvider(networkKey);
+    }
 
     if (persist && process.env.NODE_ENV !== 'test') {
       this.storage.writeJSON(this.configPath, this.config);
     }
+  }
+
+  // ============================================================================
+  // Bitcoin-Specific Methods
+  // ============================================================================
+
+  /**
+   * Get Bitcoin transaction history for the current address.
+   * Only works when current network is Bitcoin.
+   *
+   * @param limit - Maximum number of transactions to return
+   * @returns Array of normalized Bitcoin transactions
+   */
+  async getBitcoinTransactionHistory(limit: number = 25): Promise<NormalizedBitcoinTransaction[]> {
+    if (!this.isCurrentNetworkBitcoin()) {
+      return [];
+    }
+
+    const btcInfo = this.getBitcoinAddress();
+    if (!btcInfo) {
+      return [];
+    }
+
+    const provider = this.getBitcoinProviderForNetwork(this.config.network);
+    return provider.getTransactionHistory(btcInfo.address, limit);
+  }
+
+  /**
+   * Get block explorer URL for a Bitcoin transaction.
+   *
+   * @param txid - Transaction ID
+   * @returns URL to Mempool.space
+   */
+  getBitcoinTransactionUrl(txid: string): string {
+    const provider = this.getBitcoinProviderForNetwork(this.config.network);
+    return provider.getTransactionUrl(txid);
+  }
+
+  /**
+   * Get block explorer URL for a Bitcoin address.
+   *
+   * @param address - Bitcoin address (optional, uses current if not provided)
+   * @returns URL to Mempool.space
+   */
+  getBitcoinAddressUrl(address?: string): string {
+    const addr = address || this.getBitcoinAddress()?.address;
+    if (!addr) {
+      return '';
+    }
+    const provider = this.getBitcoinProviderForNetwork(this.config.network);
+    return provider.getAddressUrl(addr);
+  }
+
+  /**
+   * Get Bitcoin private key in WIF format.
+   * Requires password verification.
+   *
+   * @param password - Master password
+   * @returns Private key in WIF format
+   */
+  getBitcoinPrivateKey(password: string): string {
+    const btcNetwork = this.config.network === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
+    return this.wallet.getBitcoinPrivateKey(password, btcNetwork);
   }
 }

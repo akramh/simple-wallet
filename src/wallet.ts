@@ -21,6 +21,7 @@ import { encryptMnemonic, decryptMnemonic, validateMnemonic } from './crypto-uti
 import type { Config, TokenMetadata, Token, PortfolioToken } from './types/index.js';
 import type { StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
+import { deriveBitcoinAddress, getBitcoinPrivateKey, type BitcoinAddressInfo } from './bitcoin/index.js';
 
 /**
  * Minimal ERC-20 ABI for token interactions.
@@ -259,6 +260,8 @@ export class Wallet {
   _getRpcList(networkKey: string): string[] {
     const networkConfig = this.config.networks[networkKey];
     if (!networkConfig) return [];
+    // Bitcoin networks don't have RPC URLs
+    if (networkConfig.type === 'bitcoin') return [];
     const urls: string[] = [];
     if (networkConfig.rpcUrl) {
       if (Array.isArray(networkConfig.rpcUrl)) {
@@ -281,6 +284,12 @@ export class Wallet {
    * @private
    */
   async _ensureProvider(networkKey: string): Promise<ethers.JsonRpcProvider> {
+    const networkConfig = this.config.networks[networkKey];
+    // Bitcoin networks don't use JSON-RPC providers
+    if (networkConfig?.type === 'bitcoin') {
+      throw new Error('Bitcoin networks do not use JSON-RPC providers');
+    }
+
     const rpcList = this._getRpcList(networkKey);
     if (!rpcList.length) {
       throw new Error('No RPC URLs configured for network');
@@ -294,9 +303,11 @@ export class Wallet {
     let lastError: Error | undefined;
     for (let i = 0; i < rpcList.length; i++) {
       const rpcUrl = rpcList[i];
+      // TypeScript guard: we already checked for Bitcoin above, so this is safe
+      const chainId = (networkConfig as { chainId: number }).chainId;
       const candidate = this.providerFactory.createProvider(
         rpcUrl,
-        this.config.networks[networkKey].chainId
+        chainId
       );
       try {
         await this._retryRpcRequest(() => candidate.getBlockNumber(), 2, 2000);
@@ -1060,7 +1071,7 @@ export class Wallet {
   /**
    * Get the mnemonic phrase for the wallet.
    * Requires password verification for security.
-   * 
+   *
    * @param password - Master password to verify
    * @returns BIP-39 mnemonic phrase
    * @throws Error if password incorrect or no wallet loaded
@@ -1071,5 +1082,65 @@ export class Wallet {
     }
 
     return decryptMnemonic(this.encryptedMnemonic, password, this.salt, this.iv, this.authTag);
+  }
+
+  // ============================================================================
+  // Bitcoin Support
+  // ============================================================================
+
+  /**
+   * Get a Bitcoin address derived from the same mnemonic.
+   * Uses BIP-84 derivation path for Native SegWit (P2WPKH) addresses.
+   *
+   * @param network - Bitcoin network ('mainnet' or 'testnet')
+   * @param accountIndex - Optional account index override (defaults to current)
+   * @returns Bitcoin address information
+   * @throws Error if no mnemonic loaded
+   *
+   * @example
+   * ```typescript
+   * const btcInfo = wallet.getBitcoinAddress('mainnet');
+   * console.log(btcInfo.address); // bc1q...
+   * ```
+   */
+  getBitcoinAddress(
+    network: 'mainnet' | 'testnet' = 'mainnet',
+    accountIndex?: number
+  ): BitcoinAddressInfo {
+    if (!this.mnemonic) {
+      throw new Error('No mnemonic loaded');
+    }
+
+    const index = accountIndex ?? this.currentAccountIndex;
+    return deriveBitcoinAddress(this.mnemonic, network, index, 0);
+  }
+
+  /**
+   * Get the Bitcoin private key in WIF format.
+   * Requires password verification for security.
+   *
+   * @param password - Master password to verify
+   * @param network - Bitcoin network ('mainnet' or 'testnet')
+   * @returns Private key in Wallet Import Format (WIF)
+   * @throws Error if password incorrect or no wallet loaded
+   */
+  getBitcoinPrivateKey(
+    password: string,
+    network: 'mainnet' | 'testnet' = 'mainnet'
+  ): string {
+    if (!this.encryptedMnemonic || !this.salt || !this.iv || !this.authTag) {
+      throw new Error('No encrypted wallet loaded');
+    }
+
+    // Verify password by decrypting
+    const mnemonic = decryptMnemonic(
+      this.encryptedMnemonic,
+      password,
+      this.salt,
+      this.iv,
+      this.authTag
+    );
+
+    return getBitcoinPrivateKey(mnemonic, network, this.currentAccountIndex, 0);
   }
 }

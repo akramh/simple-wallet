@@ -71,6 +71,17 @@ const CHAIN_TO_NATIVE_ID: Record<number, string> = {
   11155111: 'ethereum',    // Sepolia testnet
 };
 
+/**
+ * Maps Bitcoin network keys to CoinGecko IDs
+ */
+const BITCOIN_NETWORK_TO_ID: Record<string, string> = {
+  'bitcoin-mainnet': 'bitcoin',
+  'bitcoin-testnet': 'bitcoin',  // Use mainnet price for testnet display
+};
+
+/** Bitcoin price cache (separate from EVM chain cache) */
+let bitcoinPriceCache: { price: number; lastUpdated: number } | null = null;
+
 // ============================================================================
 // Price Cache (per network)
 // ============================================================================
@@ -164,6 +175,52 @@ export async function getNativeTokenPrice(chainId: number): Promise<number | nul
     console.warn('[PriceService] Failed to fetch native price:', error);
     return null;
   }
+}
+
+/**
+ * Fetches the Bitcoin price.
+ * Works for both bitcoin-mainnet and bitcoin-testnet (uses mainnet price).
+ *
+ * @param networkKey - Bitcoin network key (e.g., 'bitcoin-mainnet')
+ * @returns Bitcoin price in USD, or null if unavailable
+ */
+export async function getBitcoinPrice(networkKey?: string): Promise<number | null> {
+  // Check cache first
+  if (bitcoinPriceCache && Date.now() - bitcoinPriceCache.lastUpdated < CACHE_TTL) {
+    return bitcoinPriceCache.price;
+  }
+
+  const coinId = 'bitcoin';
+
+  try {
+    const url = `${COINGECKO_BASE}/simple/price?ids=${coinId}&vs_currencies=usd`;
+    const response = await fetchWithTimeout(url);
+
+    if (!response.ok) {
+      console.warn(`[PriceService] Bitcoin API error: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json() as Record<string, { usd?: number } | undefined>;
+    const price = data[coinId]?.usd;
+
+    if (typeof price === 'number') {
+      bitcoinPriceCache = { price, lastUpdated: Date.now() };
+      return price;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('[PriceService] Failed to fetch Bitcoin price:', error);
+    return null;
+  }
+}
+
+/**
+ * Check if a network key is a Bitcoin network.
+ */
+export function isBitcoinNetworkKey(networkKey: string): boolean {
+  return networkKey in BITCOIN_NETWORK_TO_ID;
 }
 
 /**
@@ -318,6 +375,8 @@ export function clearPriceCache(): void {
   for (const key of Object.keys(priceCache)) {
     delete priceCache[Number(key)];
   }
+  // Also clear Bitcoin cache
+  bitcoinPriceCache = null;
 }
 
 // ============================================================================

@@ -1,17 +1,18 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
+import wasm from 'vite-plugin-wasm';
+import topLevelAwait from 'vite-plugin-top-level-await';
 import path from 'path';
+import fs from 'fs';
 
 export default defineConfig({
   plugins: [
+    wasm(),
+    topLevelAwait(),
     react(),
     viteStaticCopy({
       targets: [
-        {
-          src: 'extension/manifest.json',
-          dest: '.'
-        },
         {
           src: 'extension/assets',
           dest: '.'
@@ -25,7 +26,29 @@ export default defineConfig({
           dest: '.'
         }
       ]
-    })
+    }),
+    // Post-build: move sidepanel.html to root and generate manifest
+    {
+      name: 'fix-extension-structure',
+      closeBundle() {
+        const distDir = path.resolve(__dirname, 'dist-extension');
+
+        // Move sidepanel.html to root
+        const srcHtml = path.join(distDir, 'extension/sidepanel/sidepanel.html');
+        const destHtml = path.join(distDir, 'sidepanel.html');
+        if (fs.existsSync(srcHtml)) {
+          fs.copyFileSync(srcHtml, destHtml);
+          fs.rmSync(path.join(distDir, 'extension'), { recursive: true, force: true });
+        }
+
+        // Copy and update manifest
+        const srcManifest = path.resolve(__dirname, 'extension/manifest.json');
+        const destManifest = path.join(distDir, 'manifest.json');
+        const manifest = JSON.parse(fs.readFileSync(srcManifest, 'utf-8'));
+        manifest.side_panel = { default_path: 'sidepanel.html' };
+        fs.writeFileSync(destManifest, JSON.stringify(manifest, null, 2));
+      }
+    }
   ],
   build: {
     outDir: 'dist-extension',
