@@ -388,6 +388,17 @@ export class WalletAppService {
   }
 
   /**
+   * Rename a wallet in storage.
+   *
+   * @param oldName - Existing wallet name
+   * @param newName - Desired new wallet name
+   * @returns The new wallet name
+   */
+  renameWallet(oldName: string, newName: string): string {
+    return this.wallet.renameWallet(oldName, newName);
+  }
+
+  /**
    * Switch to a different account within the wallet.
    * @param index - BIP-44 account index
    * @returns New account info

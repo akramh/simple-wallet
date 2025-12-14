@@ -46,6 +46,8 @@ interface WalletState {
   network: string;
   /** Current wallet address (null if locked) */
   address: string | null;
+  /** Current wallet name (null if locked) */
+  currentWalletName?: string | null;
 }
 
 /**
@@ -214,6 +216,9 @@ function App() {
             <>
               <p className="approval-label">Connection request</p>
               <p className="approval-value">Origin: {currentRequest.origin}</p>
+              {state?.currentWalletName && (
+                <p className="approval-value">Wallet: {state.currentWalletName}</p>
+              )}
               <p className="approval-value">Account: {state?.address}</p>
             </>
           );
@@ -222,6 +227,9 @@ function App() {
             <>
               <p className="approval-label">Transaction request</p>
               <p className="approval-value">Origin: {currentRequest.origin}</p>
+              {state?.currentWalletName && (
+                <p className="approval-value">Wallet: {state.currentWalletName}</p>
+              )}
               <p className="approval-value">To: {currentRequest.tx?.to || 'N/A'}</p>
               <p className="approval-value">Value: {currentRequest.tx?.value || '0'} wei</p>
             </>
@@ -231,6 +239,9 @@ function App() {
             <>
               <p className="approval-label">Signature request</p>
               <p className="approval-value">Origin: {currentRequest.origin}</p>
+              {state?.currentWalletName && (
+                <p className="approval-value">Wallet: {state.currentWalletName}</p>
+              )}
               <p className="approval-value">Method: {currentRequest.method}</p>
               <p className="approval-box">{JSON.stringify(currentRequest.params, null, 2)}</p>
             </>

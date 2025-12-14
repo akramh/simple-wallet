@@ -948,6 +948,38 @@ export class Wallet {
   }
 
   /**
+   * Rename a wallet entry in persistent storage.
+   *
+   * Wallet names are the top-level keys in `wallets.json`.
+   *
+   * @param oldName - Existing wallet name
+   * @param newName - New wallet name
+   * @returns The new wallet name
+   * @throws Error if wallet not found or name already exists
+   */
+  renameWallet(oldName: string, newName: string): string {
+    if (!oldName || !newName) {
+      throw new Error('Wallet name is required');
+    }
+    if (oldName === newName) {
+      return newName;
+    }
+
+    const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
+    if (!wallets[oldName]) {
+      throw new Error('Wallet not found');
+    }
+    if (wallets[newName]) {
+      throw new Error('A wallet with this name already exists');
+    }
+
+    wallets[newName] = wallets[oldName];
+    delete wallets[oldName];
+    this.storage.writeJSON('wallets.json', wallets);
+    return newName;
+  }
+
+  /**
    * Delete a wallet from storage.
    * 
    * @param walletName - Name of the wallet to delete

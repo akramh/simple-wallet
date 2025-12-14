@@ -127,6 +127,33 @@ test('getTokenBalance surfaces BAD_DATA with descriptive error', async () => {
   );
 });
 
+test('renameWallet moves wallets.json entry', async () => {
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+
+  const storage = new MemoryStorage();
+  const wallet = new Wallet(config, storage);
+  wallet.providerFactory = {
+    createProvider: () => ({ getBlockNumber: async () => 1 })
+  };
+  await wallet.initialize();
+
+  const password = 'password123';
+  wallet.createNewWallet(password);
+  wallet.saveWallet('oldname');
+
+  wallet.renameWallet('oldname', 'newname');
+
+  const walletsFile = storage.readJSON('wallets.json', {});
+  assert.ok(walletsFile.newname, 'new key should exist');
+  assert.equal(walletsFile.oldname, undefined, 'old key should be removed');
+
+  const loaded = wallet.loadWallet('newname', password);
+  assert.ok(loaded?.address, 'should still be loadable by new name');
+});
+
 test('setNetwork reconnects wallet to new provider', async () => {
   const constructed = [];
 

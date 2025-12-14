@@ -35,6 +35,9 @@ function AccountMenu({
   onWalletSwitch,
   onStateChange
 }: Props) {
+  // Keep wallet names consistent with storage keys and background validation rules.
+  const isValidWalletName = (name: string) => /^[A-Za-z0-9]{1,12}$/.test(name);
+
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [wallets, setWallets] = useState<WalletMeta[]>([]);
   const [loading, setLoading] = useState(false);
@@ -51,6 +54,10 @@ function AccountMenu({
   const [toast, setToast] = useState('');
   const [pendingCreateName, setPendingCreateName] = useState('wallet1');
   const [pendingImportName, setPendingImportName] = useState('wallet1');
+  const [createNameInput, setCreateNameInput] = useState('');
+  const [importNameInput, setImportNameInput] = useState('');
+  const [isEditingCurrentWalletName, setIsEditingCurrentWalletName] = useState(false);
+  const [currentWalletNameDraft, setCurrentWalletNameDraft] = useState('');
   const toastTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -138,6 +145,47 @@ function AccountMenu({
     }
   };
 
+  // UX: click the "Current wallet" name to rename in-place (no separate Rename buttons).
+  const startEditingCurrentWalletName = () => {
+    if (!currentWalletName) return;
+    setStatus({ type: '', message: '' });
+    setIsEditingCurrentWalletName(true);
+    setCurrentWalletNameDraft(currentWalletName);
+  };
+
+  const submitCurrentWalletRename = async () => {
+    if (!currentWalletName) return;
+    const next = currentWalletNameDraft.trim();
+    if (!isValidWalletName(next)) {
+      setStatus({ type: 'error', message: 'Name must be 1-12 letters/numbers (no spaces or symbols)' });
+      return;
+    }
+    if (next === currentWalletName) {
+      setIsEditingCurrentWalletName(false);
+      return;
+    }
+
+    setLoading(true);
+    setStatus({ type: '', message: '' });
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'RENAME_WALLET',
+        payload: { oldName: currentWalletName, newName: next }
+      });
+      if (response?.success) {
+        showToast(`Renamed to ${next}`);
+        setIsEditingCurrentWalletName(false);
+        await Promise.all([loadWallets(), loadAccounts()]);
+        onAccountSwitch();
+        onStateChange?.();
+      }
+    } catch (err: any) {
+      setStatus({ type: 'error', message: err.message || 'Failed to rename wallet' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCreateAccount = async () => {
     setLoading(true);
     setStatus({ type: '', message: '' });
@@ -156,7 +204,12 @@ function AccountMenu({
   };
 
   const handleCreateWallet = async () => {
-    const finalName = pendingCreateName || (await getNextWalletName());
+    // Optional name; fallback to existing walletN convention.
+    const finalName = createNameInput.trim() || pendingCreateName || (await getNextWalletName());
+    if (!isValidWalletName(finalName)) {
+      setStatus({ type: 'error', message: 'Name must be 1-12 letters/numbers (no spaces or symbols)' });
+      return;
+    }
     setLoading(true);
     setStatus({ type: '', message: '' });
     try {
@@ -171,6 +224,7 @@ function AccountMenu({
         setShowCreatedMnemonic(false);
         setCreatedWalletName(finalName);
         setCreateStep('success');
+        setCreateNameInput('');
         setPendingCreateName(await getNextWalletName());
       }
     } catch (err) {
@@ -200,7 +254,12 @@ function AccountMenu({
   };
 
   const handleImportWallet = async () => {
-    const finalName = pendingImportName || (await getNextWalletName());
+    // Optional name; fallback to existing walletN convention.
+    const finalName = importNameInput.trim() || pendingImportName || (await getNextWalletName());
+    if (!isValidWalletName(finalName)) {
+      setStatus({ type: 'error', message: 'Name must be 1-12 letters/numbers (no spaces or symbols)' });
+      return;
+    }
     if (!importMnemonic.trim()) {
       setStatus({ type: 'error', message: 'Please paste a recovery phrase' });
       return;
@@ -223,6 +282,7 @@ function AccountMenu({
         setImportMnemonic('');
         setImportedWalletName(finalName);
         setImportStep('success');
+        setImportNameInput('');
         await Promise.all([loadWallets(), loadAccounts()]);
         await chrome.runtime.sendMessage({ type: 'SWITCH_WALLET', payload: { name: finalName } });
         onWalletSwitch?.();
@@ -258,7 +318,32 @@ function AccountMenu({
         <div className="account-menu-header">
           <div className="account-menu-title-group">
             <div className="account-menu-label">Current wallet</div>
-            <div className="account-menu-title">{currentWalletName || 'Wallet'}</div>
+            {isEditingCurrentWalletName ? (
+              <input
+                className="account-menu-title"
+                value={currentWalletNameDraft}
+                onChange={(e) => setCurrentWalletNameDraft(e.target.value)}
+                onBlur={() => submitCurrentWalletRename()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') submitCurrentWalletRename();
+                  if (e.key === 'Escape') {
+                    setIsEditingCurrentWalletName(false);
+                    setStatus({ type: '', message: '' });
+                  }
+                }}
+                disabled={loading}
+                autoFocus
+              />
+            ) : (
+              <div
+                className="account-menu-title"
+                onClick={startEditingCurrentWalletName}
+                title="Click to rename (1-12 letters/numbers)"
+                style={{ cursor: 'text' }}
+              >
+                {currentWalletName || 'Wallet'}
+              </div>
+            )}
           </div>
           <button className="close-btn" onClick={onClose}>×</button>
         </div>
@@ -302,7 +387,7 @@ function AccountMenu({
             {getWalletsWithAccounts().map((wallet) => (
               <div key={wallet.name} className="wallet-group">
                 <div className="wallet-group-header">
-                  {wallet.name}
+                  <span>{wallet.name}</span>
                 </div>
 
                 <div className="account-list">
@@ -407,9 +492,19 @@ function AccountMenu({
             )}
 
             {createStep === 'form' ? (
-              <button className="btn btn-primary" onClick={handleCreateWallet} disabled={loading}>
-                {loading ? 'Creating...' : 'Create wallet'}
-              </button>
+              <>
+                <div className="form-group">
+                  <label>Wallet name (optional)</label>
+                  <input
+                    value={createNameInput}
+                    onChange={(e) => setCreateNameInput(e.target.value)}
+                    placeholder={`Default: ${pendingCreateName}`}
+                  />
+                </div>
+                <button className="btn btn-primary" onClick={handleCreateWallet} disabled={loading}>
+                  {loading ? 'Creating...' : 'Create wallet'}
+                </button>
+              </>
             ) : (
               <button className="btn btn-primary" onClick={handleCreateWalletDone} disabled={loading}>
                 {loading ? 'Switching...' : 'Done — Switch to wallet'}
@@ -440,6 +535,14 @@ function AccountMenu({
 
             {importStep === 'form' ? (
               <>
+                <div className="form-group">
+                  <label>Wallet name (optional)</label>
+                  <input
+                    value={importNameInput}
+                    onChange={(e) => setImportNameInput(e.target.value)}
+                    placeholder={`Default: ${pendingImportName}`}
+                  />
+                </div>
                 <div className="form-group">
                   <label>Recovery Phrase</label>
                   <textarea
