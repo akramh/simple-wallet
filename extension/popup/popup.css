@@ -315,12 +315,17 @@
   font-weight: 600;
   color: var(--text-primary);
   cursor: pointer;
-  transition: border-color 0.2s, transform 0.1s;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
 }
 
 .action-tile:hover {
-  border-color: var(--primary);
-  transform: translateY(-1px);
+  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border-subtle));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.action-tile:active {
+  transform: translateY(0.5px);
 }
 
 .action-tile:focus-visible {
