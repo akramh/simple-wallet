@@ -29,6 +29,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import WelcomeScreen from './components/WelcomeScreen';
 import UnlockScreen from './components/UnlockScreen';
 import MainWallet from './components/MainWallet';
+import { applyTheme, getStoredTheme } from './theme';
 
 // ============================================================================
 // Type Definitions
@@ -117,6 +118,9 @@ function App() {
    * - Listens for visibility changes, wallet lock, and pending request updates
    */
   useEffect(() => {
+    // Apply persisted UI theme (light/dark) as early as possible.
+    getStoredTheme().then(applyTheme).catch(() => {});
+
     loadState();
     loadPending();
 

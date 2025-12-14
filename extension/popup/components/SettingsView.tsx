@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import RevealSecretModal from './RevealSecretModal';
 import mnemonicIcon from '../../assets/icons/mnemonic.svg';
 import keyIcon from '../../assets/icons/key.svg';
+import { applyTheme, getStoredTheme, setStoredTheme, type UiTheme } from '../theme';
 
 interface Props {
   currentAddress?: string;
@@ -19,10 +20,28 @@ interface Props {
 function SettingsView({ onClose }: Props) {
   const [showSecretModal, setShowSecretModal] = useState(false);
   const [secretType, setSecretType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
+  const [uiTheme, setUiTheme] = useState<UiTheme>('light');
+
+  React.useEffect(() => {
+    getStoredTheme()
+      .then((theme) => setUiTheme(theme))
+      .catch(() => {});
+  }, []);
 
   const handleRevealSecret = (type: 'mnemonic' | 'privateKey') => {
     setSecretType(type);
     setShowSecretModal(true);
+  };
+
+  const handleToggleTheme = async () => {
+    const nextTheme: UiTheme = uiTheme === 'dark' ? 'light' : 'dark';
+    setUiTheme(nextTheme);
+    applyTheme(nextTheme);
+    try {
+      await setStoredTheme(nextTheme);
+    } catch {
+      // If persistence fails, keep the current session's theme applied.
+    }
   };
 
   return (
@@ -39,6 +58,32 @@ function SettingsView({ onClose }: Props) {
 
       {/* Content */}
       <div className="content">
+        {/* Appearance Section */}
+        <div style={{ marginBottom: '24px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+            Appearance
+          </div>
+
+          <div className="wallet-card" style={{ padding: '14px 16px' }}>
+            <div className="theme-toggle-row">
+              <div>
+                <div className="theme-toggle-title">Theme</div>
+                <div className="theme-toggle-subtitle">{uiTheme === 'dark' ? 'Dark' : 'Light'}</div>
+              </div>
+              <button
+                type="button"
+                className={`theme-toggle ${uiTheme === 'dark' ? 'on' : ''}`}
+                role="switch"
+                aria-checked={uiTheme === 'dark'}
+                aria-label="Toggle dark mode"
+                onClick={handleToggleTheme}
+              >
+                <span className="theme-toggle-thumb" />
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Security Section */}
         <div style={{ marginBottom: '24px' }}>
           <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
