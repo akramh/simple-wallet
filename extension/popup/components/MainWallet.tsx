@@ -17,6 +17,7 @@ import AddTokenModal from './AddTokenModal';
 import SendTransactionView from './SendTransactionView';
 import Identicon from './ui/Identicon';
 import NetworkSelector from './ui/NetworkSelector';
+import Skeleton from './ui/Skeleton';
 import ethIcon from '../../assets/img/eth_logo.svg';
 import { useToast } from '../context/ToastContext';
 import bnbIcon from '../../assets/img/bnb.svg';
@@ -637,7 +638,23 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
             </div>
 
             {loading ? (
-              <div className="loading">Loading tokens...</div>
+              <div className="token-list">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="token-item" style={{ pointerEvents: 'none' }}>
+                    <div className="token-info">
+                      <Skeleton width={34} height={34} borderRadius="50%" />
+                      <div className="token-details">
+                        <Skeleton width={40} height={14} style={{ marginBottom: 4 }} />
+                        <Skeleton width={80} height={12} />
+                      </div>
+                    </div>
+                    <div className="token-balance" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                      <Skeleton width={60} height={15} style={{ marginBottom: 4 }} />
+                      <Skeleton width={40} height={12} />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="token-list">
                 {portfolio.map((item, index) => {
