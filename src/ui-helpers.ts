@@ -408,9 +408,13 @@ export function menuSeparator(label: string = ''): MenuSeparator {
  * ```
  */
 export function menuChoice(name: string, description: string = '', value: string | null = null): MenuChoice {
+  // Inquirer re-renders list prompts on arrow-key navigation. If a choice "wraps"
+  // to multiple terminal lines (because it's wider than the viewport), Inquirer can
+  // fail to fully clear the previous render, leading to duplicated prompt lines.
+  // Keep menu choice labels within the current terminal width to avoid wrapping.
   const displayName = description
-    ? `${chalk.white(name.padEnd(30))} ${chalk.gray(description)}`
-    : chalk.white(name);
+    ? formatMenuChoiceTwoColumn(name, description)
+    : chalk.white(truncateToWidth(name, getSafeMenuWidth()));
 
   return {
     name: displayName,
@@ -421,6 +425,46 @@ export function menuChoice(name: string, description: string = '', value: string
 // ============================================================================
 // Utility Functions
 // ============================================================================
+
+function getSafeMenuWidth(): number {
+  const defaultWidth = 80;
+  const columns =
+    typeof process !== 'undefined' &&
+    process.stdout &&
+    typeof (process.stdout as any).columns === 'number'
+      ? (process.stdout as any).columns
+      : undefined;
+  const width = typeof columns === 'number' && columns > 0 ? columns : defaultWidth;
+
+  // Leave room for inquirer prefixes/markers and reduce wrap risk.
+  return Math.max(40, width - 10);
+}
+
+function truncateToWidth(text: string, maxWidth: number): string {
+  if (maxWidth <= 0) return '';
+  if (text.length <= maxWidth) return text;
+  if (maxWidth === 1) return '…';
+  return text.slice(0, maxWidth - 1) + '…';
+}
+
+function formatMenuChoiceTwoColumn(name: string, description: string): string {
+  const maxWidth = getSafeMenuWidth();
+  const gap = 2;
+
+  // Keep the left column stable for scanability but adapt to the current width.
+  const leftColWidth = Math.min(30, Math.max(12, Math.floor(maxWidth * 0.45)));
+  const rightColWidth = Math.max(0, maxWidth - leftColWidth - gap);
+
+  // If the terminal is extremely narrow, fall back to a single line.
+  if (rightColWidth < 8) {
+    const combined = description ? `${name} ${description}` : name;
+    return chalk.white(truncateToWidth(combined, maxWidth));
+  }
+
+  const left = truncateToWidth(name, leftColWidth).padEnd(leftColWidth, ' ');
+  const right = truncateToWidth(description, rightColWidth);
+  return `${chalk.white(left)}${' '.repeat(gap)}${chalk.gray(right)}`;
+}
 
 /**
  * Clears the terminal screen.
