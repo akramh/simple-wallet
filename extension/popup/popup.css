@@ -929,6 +929,23 @@
   transition: transform 0.15s ease;
 }
 
+.theme-toggle--header {
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+}
+
+.theme-toggle--header .theme-toggle-thumb {
+  width: 18px;
+  height: 18px;
+  top: 1px;
+  left: 1px;
+}
+
+.theme-toggle--header.on .theme-toggle-thumb {
+  transform: translateX(18px);
+}
+
 .theme-toggle.on {
   background: var(--primary);
   border-color: color-mix(in srgb, var(--primary) 70%, transparent);

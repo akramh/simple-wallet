@@ -5,11 +5,15 @@
  * - App logo and branding
  * - Account/wallet selector button (shows wallet:account format)
  * - Settings and lock buttons
+ * - Light/dark theme toggle (quick access on wallet home)
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import lockSlashIcon from '../../assets/icons/lock-slash.svg';
 import settingIcon from '../../assets/icons/setting.svg';
+import moonIcon from '../../assets/icons/moon.svg';
+import sunIcon from '../../assets/icons/sun.svg';
 import logoIcon from '../../assets/img/logo.svg';
+import { applyTheme, getStoredTheme, setStoredTheme, type UiTheme } from '../theme';
 
 interface Props {
   network: string;
@@ -32,9 +36,31 @@ function Header({
   onLock,
   showAccountButton = true
 }: Props) {
+  const [uiTheme, setUiTheme] = useState<UiTheme>('light');
+
+  useEffect(() => {
+    getStoredTheme()
+      .then((theme) => setUiTheme(theme))
+      .catch(() => {});
+  }, []);
+
+  const handleToggleTheme = async () => {
+    const nextTheme: UiTheme = uiTheme === 'dark' ? 'light' : 'dark';
+    setUiTheme(nextTheme);
+    applyTheme(nextTheme);
+    try {
+      await setStoredTheme(nextTheme);
+    } catch {
+      // If persistence fails, keep the current session's theme applied.
+    }
+  };
+
   const formatAddress = (addr: string) => {
     return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
   };
+
+  const themeIcon = uiTheme === 'dark' ? sunIcon : moonIcon;
+  const themeTitle = uiTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
 
   return (
     <div className="header-new">
@@ -45,6 +71,14 @@ function Header({
           <span className="logo-text">Simple Wallet</span>
         </div>
         <div className="header-actions">
+          <button
+            className="icon-btn"
+            onClick={handleToggleTheme}
+            title={themeTitle}
+            aria-label={themeTitle}
+          >
+            <img src={themeIcon} alt="" className="header-icon" />
+          </button>
           {onOpenSettings && (
             <button 
               className="icon-btn"
