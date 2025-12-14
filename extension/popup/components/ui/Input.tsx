@@ -17,7 +17,7 @@ export function Input({
   const inputId = id || label?.toLowerCase().replace(/\s+/g, '-');
   
   const inputStyles = `
-    w-full px-4 py-3.5 rounded-wallet-sm border bg-white
+    w-full px-4 py-3.5 rounded-wallet-sm border bg-surface-primary
     text-base text-text-primary placeholder:text-text-tertiary leading-relaxed
     focus:outline-none focus:ring-1 transition-colors duration-150
     ${error 
@@ -69,7 +69,7 @@ export function TextArea({
   const inputId = id || label?.toLowerCase().replace(/\s+/g, '-');
   
   const textareaStyles = `
-    w-full px-4 py-3.5 rounded-wallet-sm border bg-white
+    w-full px-4 py-3.5 rounded-wallet-sm border bg-surface-primary
     text-base text-text-primary placeholder:text-text-tertiary leading-relaxed
     focus:outline-none focus:ring-1 transition-colors duration-150
     resize-vertical min-h-[120px] font-mono
@@ -122,7 +122,7 @@ export function Select({
   const inputId = id || label?.toLowerCase().replace(/\s+/g, '-');
   
   const selectStyles = `
-    w-full px-4 py-3 rounded-wallet-sm border bg-white
+    w-full px-4 py-3 rounded-wallet-sm border bg-surface-primary
     text-sm text-text-primary leading-relaxed
     focus:outline-none focus:ring-1 transition-colors duration-150
     cursor-pointer appearance-none

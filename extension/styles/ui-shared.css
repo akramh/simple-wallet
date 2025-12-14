@@ -69,3 +69,41 @@
   --focus-ring: color-mix(in srgb, var(--primary) 55%, transparent);
   --focus-ring-danger: color-mix(in srgb, var(--danger) 55%, transparent);
 }
+
+/* Dark theme overrides (light theme remains the default). */
+.theme-dark {
+  --color-primary: #8b5cf6;
+  --color-primary-dark: #7c3aed;
+  --color-primary-light: #a78bfa;
+  --color-primary-50: rgba(139, 92, 246, 0.12);
+  --color-primary-100: rgba(139, 92, 246, 0.18);
+  --color-primary-500: #8b5cf6;
+  --color-primary-600: #7c3aed;
+  --color-primary-700: #6d28d9;
+
+  --color-surface-primary: #0f172a;   /* slate-900 */
+  --color-surface-secondary: #0b1220; /* deeper base */
+  --color-surface-tertiary: #111c33;  /* elevated */
+  --color-surface-muted: rgba(255, 255, 255, 0.06);
+  --color-surface-inverse: #ffffff;
+
+  --color-border: rgba(148, 163, 184, 0.22);       /* slate-400 @ 22% */
+  --color-border-light: rgba(148, 163, 184, 0.16);
+  --color-border-dark: rgba(148, 163, 184, 0.34);
+
+  --color-text-primary: #f8fafc;   /* slate-50 */
+  --color-text-secondary: rgba(248, 250, 252, 0.72);
+  --color-text-tertiary: rgba(248, 250, 252, 0.52);
+  --color-text-on-inverse: #0b1220;
+
+  --color-gradient-accent-from: #7c3aed;
+  --color-gradient-accent-to: #4f46e5;
+  --color-gradient-soft-from: #0f172a;
+  --color-gradient-soft-to: #0b1220;
+
+  /* Dark shadows should be tighter to avoid a “foggy” feel. */
+  --shadow-wallet: 0 6px 18px rgba(0, 0, 0, 0.28);
+  --shadow-wallet-lg: 0 10px 30px rgba(0, 0, 0, 0.34);
+  --shadow-wallet-hover: 0 10px 30px rgba(139, 92, 246, 0.18);
+  --shadow-modal: 0 24px 70px rgba(0, 0, 0, 0.55);
+}

@@ -55,7 +55,7 @@ export function Modal({
     >
       <div 
         className={`
-          w-full ${sizeStyles[size]} bg-white rounded-wallet-lg shadow-modal
+          w-full ${sizeStyles[size]} bg-surface-primary rounded-wallet-lg shadow-modal
           flex flex-col max-h-[90vh] animate-slide-up
         `}
         onClick={(e) => e.stopPropagation()}

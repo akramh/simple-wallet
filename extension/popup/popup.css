@@ -875,6 +875,74 @@
   opacity: 0.85;
 }
 
+.theme-dark .logo-icon,
+.theme-dark .header-icon,
+.theme-dark .settings-icon,
+.theme-dark .unlock-icon {
+  filter: invert(1);
+}
+
+.theme-dark .action-icon,
+.theme-dark .back-button img {
+  filter: invert(1);
+}
+
+.theme-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.theme-toggle-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.theme-toggle-subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.theme-toggle {
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-dark) 70%, transparent);
+  border: 1px solid var(--border-subtle);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.theme-toggle .theme-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+  transition: transform 0.15s ease;
+}
+
+.theme-toggle.on {
+  background: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 70%, transparent);
+}
+
+.theme-toggle.on .theme-toggle-thumb {
+  transform: translateX(20px);
+}
+
+.theme-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
 .btn-inline {
   width: auto;
   padding: 10px 14px;
@@ -1173,6 +1241,10 @@
   padding: 20px;
   border-bottom: 1px solid var(--border-subtle);
   background: linear-gradient(to bottom, var(--warning-faint) 0%, var(--surface) 100%);
+}
+
+.theme-dark .account-menu-header {
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 0%, var(--surface) 100%);
 }
 
 .account-menu-title-group {
@@ -1492,7 +1564,9 @@
 }
 
 .modal {
-  background: white;
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
   border-radius: 16px;
   width: 100%;
   max-width: 440px;
@@ -1514,9 +1588,11 @@
 .modal textarea {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
   font-size: 13px;
+  background: var(--surface);
+  color: var(--text-primary);
 }
 
 .modal textarea {

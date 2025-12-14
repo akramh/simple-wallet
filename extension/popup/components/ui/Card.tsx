@@ -20,7 +20,7 @@ export function Card({
   hover = false,
   padding = 'md',
 }: CardProps) {
-  const baseStyles = 'bg-white rounded-wallet-lg border border-border';
+  const baseStyles = 'bg-surface-primary rounded-wallet-lg border border-border';
   const hoverStyles = hover ? 'hover:border-primary hover:shadow-wallet-hover transition-all duration-150 cursor-pointer' : '';
   
   return (
