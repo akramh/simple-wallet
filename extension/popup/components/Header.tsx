@@ -50,14 +50,16 @@ function Header({
               className="icon-btn"
               onClick={onOpenSettings} 
               title="Settings"
+              aria-label="Open settings"
             >
               <img src={settingIcon} alt="Settings" className="header-icon" />
             </button>
           )}
           <button 
-            className="lock-btn"
+            className="icon-btn"
             onClick={onLock} 
             title="Lock Wallet"
+            aria-label="Lock wallet"
           >
             <img src={lockSlashIcon} alt="Lock" className="header-icon" />
           </button>

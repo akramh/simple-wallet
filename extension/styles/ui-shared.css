@@ -48,4 +48,24 @@
   --gradient-accent-to: var(--color-gradient-accent-to);
   --gradient-soft-from: var(--color-gradient-soft-from);
   --gradient-soft-to: var(--color-gradient-soft-to);
+
+  /* -------------------------------------------------------------------------
+   * Opinionated UI tokens (use these in popup.css/components).
+   * ---------------------------------------------------------------------- */
+  --app-bg: var(--bg-secondary);
+  --surface: var(--bg-primary);
+  --surface-2: var(--bg-secondary);
+
+  /* Softer borders read better in small, card-heavy extension UIs */
+  --border-subtle: color-mix(in srgb, var(--border) 65%, transparent);
+
+  --shadow-sm: var(--shadow-wallet);
+  --shadow-md: var(--shadow-wallet-lg);
+
+  --radius-sm: var(--radius-wallet-sm);
+  --radius-md: var(--radius-wallet);
+  --radius-lg: var(--radius-wallet-lg);
+
+  --focus-ring: color-mix(in srgb, var(--primary) 55%, transparent);
+  --focus-ring-danger: color-mix(in srgb, var(--danger) 55%, transparent);
 }
