@@ -69,10 +69,22 @@ function isBitcoinNetwork(networkKey: string): boolean {
   return networkKey.startsWith('bitcoin-');
 }
 
+function isSolanaNetwork(networkKey: string): boolean {
+  return networkKey.startsWith('solana-');
+}
+
+function isEvmNetwork(networkKey: string): boolean {
+  return !isBitcoinNetwork(networkKey) && !isSolanaNetwork(networkKey);
+}
+
 function isValidRecipientAddress(networkKey: string, address: string): boolean {
   if (isBitcoinNetwork(networkKey)) {
     const btcNetwork = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
     return isValidBitcoinAddress(address, btcNetwork);
+  }
+  if (isSolanaNetwork(networkKey)) {
+    // Basic Solana base58 public key validation (length/range).
+    return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
   }
   return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
@@ -344,7 +356,13 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
     // Validate address format
     if (!isValidRecipientAddress(network, recipient)) {
-      setSendError(isBitcoinNetwork(network) ? 'Invalid Bitcoin address' : 'Invalid Ethereum address');
+      setSendError(
+        isBitcoinNetwork(network)
+          ? 'Invalid Bitcoin address'
+          : isSolanaNetwork(network)
+            ? 'Invalid Solana address'
+            : 'Invalid Ethereum address'
+      );
       return;
     }
 
@@ -575,30 +593,34 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 })}
 
                 {/* Add Token Button */}
-                <button
-                  className="token-item add-token-btn"
-                  onClick={() => setShowAddToken(true)}
-                  style={{
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    border: '2px dashed var(--border)',
-                    background: 'transparent'
-                  }}
-                >
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-                    + Add Custom Token
-                  </span>
-                </button>
+                {isEvmNetwork(network) && (
+                  <button
+                    className="token-item add-token-btn"
+                    onClick={() => setShowAddToken(true)}
+                    style={{
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      border: '2px dashed var(--border)',
+                      background: 'transparent'
+                    }}
+                  >
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+                      + Add Custom Token
+                    </span>
+                  </button>
+                )}
               </div>
             )}
 
             {/* Add Token Modal */}
-            <AddTokenModal
-              isOpen={showAddToken}
-              onClose={() => setShowAddToken(false)}
-              network={networks[network]?.name || network}
-              onTokenAdded={handleRefresh}
-            />
+            {isEvmNetwork(network) && (
+              <AddTokenModal
+                isOpen={showAddToken}
+                onClose={() => setShowAddToken(false)}
+                network={networks[network]?.name || network}
+                onTokenAdded={handleRefresh}
+              />
+            )}
           </>
         ) : view === 'activity' ? (
           <ActivityView currentAddress={address} network={network} />
@@ -651,7 +673,13 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                       type="text"
                       value={recipient}
                       onChange={(e) => setRecipient(e.target.value)}
-                      placeholder={isBitcoinNetwork(network) ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...') : '0x...'}
+                      placeholder={
+                        isBitcoinNetwork(network)
+                          ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
+                          : isSolanaNetwork(network)
+                            ? 'Base58 address...'
+                            : '0x...'
+                      }
                     />
                   </div>
 

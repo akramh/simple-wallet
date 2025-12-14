@@ -57,6 +57,7 @@ import {
   getNativeTokenPrice,
   getERC20TokenPrice,
   getBitcoinPrice,
+  getSolanaPrice,
   isBitcoinNetworkKey,
   calculateTotalValue,
   calculateTransactionCosts,
@@ -318,8 +319,6 @@ async function migrateExistingWallets(): Promise<void> {
 async function selectWalletMenu(existingWallets: Record<string, any>): Promise<void> {
   ui.clearScreen();
   ui.showHeader();
-
-  ui.showSection('Select Wallet');
   console.log('');
 
   const walletChoices = Object.keys(existingWallets).map(name => {
@@ -716,7 +715,7 @@ async function importWalletFromBackup(): Promise<void> {
  */
 async function mainMenu(walletName: string | null): Promise<void> {
   currentWalletName = walletName;
-  const currentAddress = wallet.getAddress();
+  const currentAddress = walletService.getAddress();
   const accountIndex = wallet.currentAccountIndex;
 
   ui.clearScreen();
@@ -829,14 +828,20 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
     ui.showLoading('Fetching USD prices...');
     let prices: Map<string, number | null>;
 
+    const currentNetConfig = config.networks[config.network];
+    const isSolana = currentNetConfig?.type === 'solana';
+
     if (isBitcoinNetwork(config.network)) {
       // Bitcoin network - get Bitcoin price
       const btcPrice = await getBitcoinPrice(config.network);
       prices = new Map([['native', btcPrice]]);
+    } else if (isSolana) {
+      // Solana network - get SOL price
+      const solPrice = await getSolanaPrice(config.network);
+      prices = new Map([['native', solPrice]]);
     } else {
       // EVM network - get token prices
-      const networkConfig = config.networks[config.network];
-      const chainId = 'chainId' in networkConfig ? networkConfig.chainId : 1;
+      const chainId = currentNetConfig && 'chainId' in currentNetConfig ? currentNetConfig.chainId : 1;
       const tokens = walletService.getTokensForNetwork(config.network);
       const tokenInfos: TokenInfo[] = tokens.map(t => ({
         type: t.type as 'native' | 'erc20',
@@ -915,7 +920,7 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
  */
 async function checkPortfolioAllNetworks(currentWalletName: string | null): Promise<void> {
   const originalNetwork = config.network;
-  const address = wallet.getAddress();
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, 'All Networks', address);
 
@@ -946,6 +951,9 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
           // Bitcoin network - get Bitcoin price
           const btcPrice = await getBitcoinPrice(net);
           prices = new Map([['native', btcPrice]]);
+        } else if (config.networks[net]?.type === 'solana') {
+          const solPrice = await getSolanaPrice(net);
+          prices = new Map([['native', solPrice]]);
         } else {
           // EVM network - get token prices
           const netConfig = config.networks[net];
@@ -1109,9 +1117,67 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
     return;
   }
 
+  // Solana history via RPC
+  if (config.networks[config.network]?.type === 'solana') {
+    ui.showLoading('Fetching transactions from Solana RPC...');
+    try {
+      const txs = await walletService.getSolanaTransactionHistory(15);
+      console.log('');
+
+      if (txs.length === 0) {
+        ui.showInfo('No transactions found for this address.');
+      } else {
+        ui.showSuccess(`Found ${txs.length} recent transactions`);
+        console.log('');
+        ui.showSeparator();
+
+        const symbol = config.networks[config.network].nativeSymbol || 'SOL';
+        for (const tx of txs) {
+          const isSent = tx.type === 'send';
+          const direction = isSent ? chalk.red('↑ SENT') : tx.type === 'receive' ? chalk.green('↓ RECEIVED') : chalk.gray('• OTHER');
+          const otherAddress = isSent ? tx.to : tx.from;
+          const shortAddr = otherAddress ? `${otherAddress.slice(0, 10)}...${otherAddress.slice(-8)}` : 'Unknown';
+
+          const solValue = tx.valueSol;
+          const valueStr = `${parseFloat(solValue).toFixed(9)} ${symbol}`;
+
+          const date = new Date(tx.timestamp);
+          const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          const statusIcon = tx.status === 'confirmed' ? '✓' : tx.status === 'failed' ? '✗' : '○';
+          const statusColor = tx.status === 'confirmed' ? chalk.green : tx.status === 'failed' ? chalk.red : chalk.yellow;
+
+          console.log(`${statusColor(statusIcon)} ${direction}  ${chalk.white(valueStr.padEnd(20))} ${chalk.gray(dateStr)}`);
+          if (tx.type !== 'contract_interaction') {
+            console.log(`  ${chalk.gray(isSent ? 'To:' : 'From:')} ${chalk.cyan(shortAddr)}`);
+          }
+          console.log(`  ${chalk.gray('Sig:')} ${chalk.gray(tx.signature.slice(0, 18))}...`);
+          if (tx.feeLamports > 0) {
+            console.log(`  ${chalk.gray('Fee:')} ${chalk.gray(`${tx.feeSol} ${symbol}`)}`);
+          }
+          console.log('');
+        }
+
+        ui.showSeparator();
+      }
+    } catch (error) {
+      const err = error as Error;
+      ui.showError('Failed to fetch transactions', [err.message]);
+    }
+
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    await mainMenu(currentWalletName);
+    return;
+  }
+
   if (!explorerAPI.isSupported(config.network)) {
     ui.showWarning(`Explorer API not configured for ${config.networks[config.network].name}`);
-    console.log(chalk.gray('Add explorerApiUrl and explorerApiKey to config.json to enable transaction history.'));
+    console.log(chalk.gray('Ensure explorerApiUrl is set in config.json and set EXPLORER_API_KEY (or EXPLORER_API_KEY_<NETWORK>) in .env.'));
     console.log('');
     
     await inquirer.prompt<{ continue: string }>([{
@@ -1319,6 +1385,131 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     if (txUrl) {
       console.log(chalk.gray('View: ') + chalk.cyan(txUrl));
     }
+    console.log('');
+
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  // Solana send flow
+  if (config.networks[config.network]?.type === 'solana') {
+    const solNetConfig = config.networks[config.network];
+    const nativeSymbol = solNetConfig.nativeSymbol || 'SOL';
+
+    ui.showSection('Send SOL');
+    ui.showInfo('Press Ctrl+C to cancel at any time');
+    console.log('');
+
+    const answers = await inquirer.prompt<{
+      toAddress?: string;
+      amount?: string;
+    }>([
+      {
+        type: 'input',
+        name: 'toAddress',
+        message: 'Recipient Solana address (or leave empty to cancel):',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          // Basic Solana base58 validation
+          if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input.trim())) {
+            return 'Please enter a valid Solana address (base58)';
+          }
+          return true;
+        }
+      },
+      {
+        type: 'input',
+        name: 'amount',
+        message: `Amount (in ${nativeSymbol}):`,
+        when: (a) => !!a.toAddress && a.toAddress.trim() !== '',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
+          const num = parseFloat(input);
+          if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
+          if (input.includes('.') && input.split('.')[1].length > 9) return 'SOL supports up to 9 decimals';
+          return true;
+        }
+      }
+    ]);
+
+    if (!answers.toAddress || answers.toAddress.trim() === '' || !answers.amount || answers.amount.trim() === '') {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Estimating network fee...');
+    const solToken = walletService.getNativeToken(config.network);
+    const gasEstimate = await walletService.getGasEstimate(solToken, answers.toAddress.trim(), answers.amount.trim());
+
+    let solPrice: number | null = null;
+    try {
+      solPrice = await getSolanaPrice();
+    } catch {
+      solPrice = null;
+    }
+
+    const { amountUsd, gasCostUsd, totalUsd } = calculateTransactionCosts(
+      answers.amount.trim(),
+      solPrice,
+      gasEstimate.estimatedCostNative,
+      solPrice
+    );
+
+    ui.clearScreen();
+    ui.showHeader(currentWalletName, wallet.currentAccountIndex, solNetConfig.name || config.network, address);
+
+    ui.showTransactionConfirmation({
+      tokenSymbol: nativeSymbol,
+      amount: answers.amount.trim(),
+      recipient: answers.toAddress.trim(),
+      networkName: solNetConfig.name || config.network,
+      amountUsd,
+      gasCostNative: gasEstimate.estimatedCostNative,
+      nativeSymbol: gasEstimate.nativeSymbol,
+      gasCostUsd,
+      totalUsd,
+      gasEstimateFailed: !!gasEstimate.error
+    });
+
+    if (!gasEstimate.error) {
+      console.log(chalk.gray('Fee:                 ') + chalk.white(`${gasEstimate.estimatedCostNative} ${nativeSymbol}`));
+      console.log('');
+    }
+
+    const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: 'Confirm & Send?',
+        default: false
+      }
+    ]);
+
+    if (!confirm) {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Broadcasting transaction...');
+    const password = await ensureMasterPassword();
+    const result = await walletService.sendSolanaTransaction(answers.toAddress.trim(), answers.amount.trim(), password);
+
+    ui.showSuccess('Transaction broadcasted (pending confirmation)');
+    console.log('');
+    console.log(chalk.gray('Signature: ') + chalk.magenta(result.signature));
+    console.log(chalk.gray('Fee:       ') + chalk.white(`${result.feeSol} ${nativeSymbol}`));
+
+    const txUrl = `${solNetConfig.blockExplorer}/tx/${result.signature}${config.network === 'solana-devnet' ? '?cluster=devnet' : ''}`;
+    console.log(chalk.gray('View:      ') + chalk.cyan(txUrl));
     console.log('');
 
     await inquirer.prompt<{ continue: string }>([{
@@ -1555,7 +1746,7 @@ async function showReceiveAddress(currentWalletName: string | null): Promise<voi
  * @param currentWalletName - Name of the current wallet for header display
  */
 async function showWalletSecrets(currentWalletName: string | null): Promise<void> {
-  const address = wallet.getAddress();
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
@@ -1631,7 +1822,7 @@ async function showWalletSecrets(currentWalletName: string | null): Promise<void
  * @param currentWalletName - Name of the wallet to export
  */
 async function exportWallet(currentWalletName: string | null): Promise<void> {
-  const address = wallet.getAddress();
+  const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
@@ -1697,7 +1888,7 @@ async function manageTokens(currentWalletName: string | null): Promise<void> {
   const tokens = walletService.getTokensForNetwork(networkKey);
 
   ui.clearScreen();
-  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[networkKey].name, wallet.getAddress());
+  ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[networkKey].name, walletService.getAddress());
 
   ui.showSection('Manage Tokens');
   ui.showInfo(`Network: ${config.networks[networkKey].name}`);

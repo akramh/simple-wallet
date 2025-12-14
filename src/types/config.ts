@@ -13,7 +13,7 @@
  * - 'evm': Ethereum and EVM-compatible chains (Polygon, BSC, etc.)
  * - 'bitcoin': Bitcoin mainnet and testnet
  */
-export type NetworkType = 'evm' | 'bitcoin';
+export type NetworkType = 'evm' | 'bitcoin' | 'solana';
 
 /**
  * Base configuration shared by all network types.
@@ -59,10 +59,22 @@ export interface BitcoinNetworkConfig extends BaseNetworkConfig {
 }
 
 /**
+ * Configuration for Solana networks.
+ */
+export interface SolanaNetworkConfig extends BaseNetworkConfig {
+  /** Network type discriminator */
+  type: 'solana';
+  /** Solana RPC URL */
+  rpcUrl: string | string[];
+  /** Solana cluster identifier (optional, informational) */
+  solanaCluster?: 'mainnet-beta' | 'devnet' | 'testnet' | string;
+}
+
+/**
  * Configuration for a single blockchain network.
  * Union type supporting both EVM and Bitcoin networks.
  */
-export type NetworkConfig = EVMNetworkConfig | BitcoinNetworkConfig;
+export type NetworkConfig = EVMNetworkConfig | BitcoinNetworkConfig | SolanaNetworkConfig;
 
 /**
  * Type guard to check if a network config is for Bitcoin.
@@ -72,10 +84,17 @@ export function isBitcoinNetworkConfig(config: NetworkConfig): config is Bitcoin
 }
 
 /**
+ * Type guard to check if a network config is for Solana.
+ */
+export function isSolanaNetworkConfig(config: NetworkConfig): config is SolanaNetworkConfig {
+  return config.type === 'solana';
+}
+
+/**
  * Type guard to check if a network config is for EVM.
  */
 export function isEVMNetworkConfig(config: NetworkConfig): config is EVMNetworkConfig {
-  return config.type !== 'bitcoin';
+  return config.type !== 'bitcoin' && config.type !== 'solana';
 }
 
 /**

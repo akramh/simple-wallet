@@ -12,6 +12,7 @@ A command-line Ethereum wallet and Chrome extension supporting testnet and mainn
 - ⚙️ Switch between Sepolia testnet and Ethereum mainnet
 - 🔒 Password-protected wallet encryption
 - 🔄 Multi-network support (Ethereum, Polygon, Base, Arbitrum, Optimism, etc.)
+- 🟣 Solana support (read-only: address, SOL balance, transaction history)
 - 💼 Multi-account support (BIP-44 HD wallet)
 - 📦 Token management (add custom ERC-20 tokens)
 - 🛡️ Atomic file writes with automatic backups
@@ -107,7 +108,8 @@ Explorer API keys are no longer stored in `config.json`. Provide them through en
 
 1. Copy `.env.example` to `.env`.
 2. Set a global fallback key via `EXPLORER_API_KEY` or network-specific keys like `EXPLORER_API_KEY_MAINNET` and `EXPLORER_API_KEY_SEPOLIA` (uppercase the network key from `config.json`, e.g., `BASE`, `ARBITRUM`, `OPTIMISM`, `POLYGON`, `AVALANCHE`, `BSC`, `LINEA`).
-3. For the Chrome extension build, Vite uses `VITE_`-prefixed variables (e.g., `VITE_EXPLORER_API_KEY_MAINNET` or `VITE_EXPLORER_API_KEY_BASE`).
+3. For networks whose keys contain non-alphanumeric characters (e.g. `solana-mainnet`), use underscores: `EXPLORER_API_KEY_SOLANA_MAINNET` (same for `VITE_`).
+4. For the Chrome extension build, Vite uses `VITE_`-prefixed variables (e.g., `VITE_EXPLORER_API_KEY_MAINNET` or `VITE_EXPLORER_API_KEY_BASE`).
 
 The CLI automatically loads `.env` via `dotenv`, and the extension build injects values from `import.meta.env`.
 
@@ -118,6 +120,10 @@ The CLI automatically loads `.env` via `dotenv`, and the extension build injects
 1. **Never share your mnemonic phrase** - Anyone with your mnemonic can access your funds
 2. **Back up your mnemonic** - Store it securely offline
 3. **Keep wallet.json secure** - This file contains sensitive data
+
+### Solana Address Note
+
+Solana addresses are base58 and **case-sensitive**. Changing letter casing (e.g. lowercasing an address) produces a different address.
 4. **Use testnet first** - Test all operations on Sepolia before using mainnet
 5. **This is a demo wallet** - For production use, consider hardware wallets or established solutions
 
@@ -412,6 +418,7 @@ interface NetworkConfig {
   nativeName: string;
   blockExplorer?: string;
   explorerApiUrl?: string;
+  // Explorer API keys are injected via environment variables (never stored in config.json)
   explorerApiKey?: string;
   name?: string;
 }

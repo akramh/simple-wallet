@@ -1,3 +1,4 @@
+import '../../src/process-polyfill.js';
 import '../../src/buffer-polyfill.js';
 import React from 'react';
 import ReactDOM from 'react-dom/client';

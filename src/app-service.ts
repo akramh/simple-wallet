@@ -18,11 +18,26 @@
  */
 
 import type { Config, Token, TokenRegistry, TokenMetadata } from './types/index.js';
-import { isBitcoinNetworkConfig } from './types/config.js';
+import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig } from './types/config.js';
 import { Wallet } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 import { ethers } from 'ethers';
+import {
+  SolanaProvider,
+  getSolanaExplorer,
+  deriveSolanaKeypair,
+  buildAndSignSolTransfer,
+  validateSufficientBalance,
+  isValidSolanaAddress,
+  solToLamports,
+  lamportsToSol,
+  type SolanaAddressInfo,
+  type NormalizedSolanaTransaction,
+  type SolanaExplorer,
+  type SolTransferResult,
+} from './solana/index.js';
+import { PublicKey } from '@solana/web3.js';
 import {
   BitcoinProvider,
   getBitcoinProvider,
@@ -113,6 +128,10 @@ export class WalletAppService {
   private bitcoinProvider: BitcoinProvider | null = null;
   /** Cached Bitcoin address for current account */
   private cachedBitcoinAddress: BitcoinAddressInfo | null = null;
+  /** Solana provider for Solana network operations */
+  private solanaProvider: SolanaProvider | null = null;
+  /** Solana explorer for Solana transaction history */
+  private solanaExplorer: SolanaExplorer | null = null;
 
   /**
    * Create a new WalletAppService instance.
@@ -160,14 +179,14 @@ export class WalletAppService {
    * Must be called before any blockchain operations.
    */
   async initialize(): Promise<void> {
-    // Only initialize EVM provider if current network is EVM
-    if (!this.isCurrentNetworkBitcoin()) {
+    const netConfig = this.config.networks[this.config.network];
+    if (netConfig && isEVMNetworkConfig(netConfig)) {
       await this.wallet.initialize();
     }
   }
 
   // ============================================================================
-  // Bitcoin Support Helpers
+  // Non-EVM Support Helpers
   // ============================================================================
 
   /**
@@ -178,10 +197,26 @@ export class WalletAppService {
   }
 
   /**
+   * Check if the current network is a Solana network.
+   */
+  isCurrentNetworkSolana(): boolean {
+    const netConfig = this.config.networks[this.config.network];
+    return !!netConfig && isSolanaNetworkConfig(netConfig);
+  }
+
+  /**
    * Check if a specific network is a Bitcoin network.
    */
   isNetworkBitcoin(networkKey: string): boolean {
     return isBitcoinNetwork(networkKey);
+  }
+
+  /**
+   * Check if a specific network is a Solana network.
+   */
+  isNetworkSolana(networkKey: string): boolean {
+    const netConfig = this.config.networks[networkKey];
+    return !!netConfig && isSolanaNetworkConfig(netConfig);
   }
 
   /**
@@ -193,6 +228,56 @@ export class WalletAppService {
       this.bitcoinProvider = getBitcoinProvider(networkKey);
     }
     return this.bitcoinProvider;
+  }
+
+  /**
+   * Get or create the Solana provider for a network.
+   * @private
+   */
+  private getSolanaProviderForNetwork(networkKey: string): SolanaProvider {
+    const netConfig = this.config.networks[networkKey];
+    if (!netConfig || !isSolanaNetworkConfig(netConfig)) {
+      throw new Error('Not a Solana network');
+    }
+
+    const rpcUrls = Array.isArray(netConfig.rpcUrl) ? netConfig.rpcUrl : [netConfig.rpcUrl];
+    const cleaned = rpcUrls.filter((u): u is string => typeof u === 'string' && u.trim() !== '').map(u => u.trim());
+    if (!cleaned.length) {
+      throw new Error('No Solana RPC URLs configured for network');
+    }
+
+    if (!this.solanaProvider || this.solanaProvider.getNetworkKey() !== networkKey) {
+      this.solanaProvider = new SolanaProvider({
+        networkKey,
+        rpcUrls: cleaned
+      });
+    }
+
+    return this.solanaProvider;
+  }
+
+  /**
+   * Get or create the Solana explorer for a network.
+   * Uses RPC for transaction history.
+   * @private
+   */
+  private getSolanaExplorerForNetwork(networkKey: string): SolanaExplorer {
+    const netConfig = this.config.networks[networkKey];
+    if (!netConfig || !isSolanaNetworkConfig(netConfig)) {
+      throw new Error('Not a Solana network');
+    }
+
+    const rpcUrls = Array.isArray(netConfig.rpcUrl) ? netConfig.rpcUrl : [netConfig.rpcUrl];
+    const cleanedRpcUrls = rpcUrls.filter((u): u is string => typeof u === 'string' && u.trim() !== '').map(u => u.trim());
+    if (!cleanedRpcUrls.length) {
+      throw new Error('No Solana RPC URLs configured for network');
+    }
+
+    if (!this.solanaExplorer || this.solanaExplorer.getNetworkKey() !== networkKey) {
+      this.solanaExplorer = getSolanaExplorer(networkKey, cleanedRpcUrls);
+    }
+
+    return this.solanaExplorer;
   }
 
   /**
@@ -214,6 +299,24 @@ export class WalletAppService {
       return this.wallet.getBitcoinAddress(btcNetwork, accountIndex);
     } catch (error) {
       console.warn('[WalletAppService] Failed to get Bitcoin address:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get the Solana address for the current account.
+   */
+  getSolanaAddress(): SolanaAddressInfo | null {
+    if (!this.isCurrentNetworkSolana()) {
+      return null;
+    }
+
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+
+    try {
+      return this.wallet.getSolanaAddress(accountIndex);
+    } catch (error) {
+      console.warn('[WalletAppService] Failed to get Solana address:', error);
       return null;
     }
   }
@@ -320,6 +423,10 @@ export class WalletAppService {
       const btcInfo = this.getBitcoinAddress();
       return btcInfo?.address || '';
     }
+    if (this.isCurrentNetworkSolana()) {
+      const solInfo = this.getSolanaAddress();
+      return solInfo?.address || '';
+    }
     return this.wallet.getAddress();
   }
 
@@ -343,6 +450,14 @@ export class WalletAppService {
       }
       const provider = this.getBitcoinProviderForNetwork(this.config.network);
       return provider.getBalanceFormatted(btcInfo.address);
+    }
+    if (this.isCurrentNetworkSolana()) {
+      const solInfo = this.getSolanaAddress();
+      if (!solInfo) {
+        return '0';
+      }
+      const provider = this.getSolanaProviderForNetwork(this.config.network);
+      return provider.getBalanceFormatted(solInfo.address);
     }
     return this.wallet.getBalance();
   }
@@ -372,6 +487,25 @@ export class WalletAppService {
           balance: p.balance,
           error: p.error,
         }));
+      } catch (error) {
+        return [{
+          token: this.getNativeToken(networkKey),
+          balance: 'Error',
+          error: (error as Error).message,
+        }];
+      }
+    }
+
+    // Handle Solana networks
+    if (this.isNetworkSolana(networkKey)) {
+      try {
+        const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
+        const provider = this.getSolanaProviderForNetwork(networkKey);
+        const balance = await provider.getBalanceFormatted(solInfo.address);
+        return [{
+          token: this.getNativeToken(networkKey),
+          balance,
+        }];
       } catch (error) {
         return [{
           token: this.getNativeToken(networkKey),
@@ -478,6 +612,43 @@ export class WalletAppService {
           maxPriorityFeePerGas: null,
           estimatedCostWei: '0',
           estimatedCostNative: '0',
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey
+        };
+      }
+    }
+
+    // Solana networks: estimate fee using base fee (5000 lamports per signature)
+    if (this.isCurrentNetworkSolana()) {
+      const networkKey = this.config.network;
+      const netConfig = this.config.networks[networkKey];
+      const nativeSymbol = netConfig?.nativeSymbol || 'SOL';
+
+      try {
+        const provider = this.getSolanaProviderForNetwork(networkKey);
+        const feeEstimate = await provider.estimateFee();
+
+        return {
+          gasLimit: '1', // 1 signature for simple transfers
+          gasPrice: feeEstimate.feeLamports.toString(), // lamports per signature
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: feeEstimate.feeLamports.toString(), // lamports
+          estimatedCostNative: feeEstimate.feeSol,
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey
+        };
+      } catch (error: any) {
+        return {
+          error: error.message || 'Failed to estimate Solana fee',
+          gasLimit: '1',
+          gasPrice: '5000', // Base fee fallback
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: '5000',
+          estimatedCostNative: '0.000005',
           nativeSymbol,
           supportsEIP1559: false,
           network: networkKey
@@ -635,7 +806,7 @@ export class WalletAppService {
     const networkConfig = this.config.networks[networkKey] || {};
     const symbol = networkConfig.nativeSymbol || 'ETH';
     const name = networkConfig.nativeName || networkConfig.name || 'Ether';
-    const decimals = this.isNetworkBitcoin(networkKey) ? 8 : 18;
+    const decimals = this.isNetworkBitcoin(networkKey) ? 8 : this.isNetworkSolana(networkKey) ? 9 : 18;
     return {
       symbol,
       type: 'native',
@@ -653,6 +824,11 @@ export class WalletAppService {
    * @returns Array of tokens with native first
    */
   getTokensForNetwork(networkKey: string): Token[] {
+    // Phase 1: Bitcoin/Solana only support native balances (no ERC-20 / SPL).
+    if (this.isNetworkBitcoin(networkKey) || this.isNetworkSolana(networkKey)) {
+      return [this.getNativeToken(networkKey)];
+    }
+
     const tokens: Token[] = [];
     const nativeToken = this.getNativeToken(networkKey);
 
@@ -712,6 +888,11 @@ export class WalletAppService {
    * @param token - Token definition to add
    */
   addCustomToken(networkKey: string, token: Token): void {
+    const netConfig = this.config.networks[networkKey];
+    if (netConfig && !isEVMNetworkConfig(netConfig)) {
+      throw new Error('Custom tokens are only supported on EVM networks');
+    }
+
     if (!this.customTokens[networkKey]) {
       this.customTokens[networkKey] = [];
     }
@@ -763,17 +944,136 @@ export class WalletAppService {
     const persist = options.persist ?? true;
     this.config.network = networkKey;
 
-    // Only initialize EVM provider for EVM networks
-    if (!this.isNetworkBitcoin(networkKey)) {
+    const netConfig = this.config.networks[networkKey];
+    if (netConfig && isEVMNetworkConfig(netConfig)) {
       await this.wallet.setNetwork(networkKey);
-    } else {
-      // For Bitcoin, just update the provider cache
+    } else if (this.isNetworkBitcoin(networkKey)) {
       this.bitcoinProvider = getBitcoinProvider(networkKey);
+      this.solanaProvider = null;
+    } else if (this.isNetworkSolana(networkKey)) {
+      this.solanaProvider = this.getSolanaProviderForNetwork(networkKey);
+      this.solanaExplorer = this.getSolanaExplorerForNetwork(networkKey);
+      this.bitcoinProvider = null;
     }
 
-    if (persist && process.env.NODE_ENV !== 'test') {
+    const nodeEnv = typeof process !== 'undefined' ? process.env?.NODE_ENV : undefined;
+    if (persist && nodeEnv !== 'test') {
       this.storage.writeJSON(this.configPath, this.config);
     }
+  }
+
+  // ============================================================================
+  // Solana-Specific Methods (Phase 2: History, Phase 3: Send)
+  // ============================================================================
+
+  /**
+   * Send SOL to another address.
+   * Only works when current network is Solana.
+   *
+   * @param toAddress - Recipient Solana address (base58)
+   * @param amountSol - Amount to send in SOL (e.g., "0.5")
+   * @param password - Wallet password to decrypt mnemonic for signing
+   * @returns Transaction result with signature and fee
+   */
+  async sendSolanaTransaction(
+    toAddress: string,
+    amountSol: string,
+    password: string
+  ): Promise<SolTransferResult> {
+    if (!this.isCurrentNetworkSolana()) {
+      throw new Error('Not on a Solana network');
+    }
+
+    // Validate recipient address
+    if (!isValidSolanaAddress(toAddress)) {
+      throw new Error('Invalid Solana recipient address');
+    }
+
+    // Get sender info
+    const solInfo = this.getSolanaAddress();
+    if (!solInfo) {
+      throw new Error('No Solana address available');
+    }
+
+    // Get mnemonic to derive keypair
+    const mnemonic = this.wallet.getMnemonic(password);
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+    const keypair = deriveSolanaKeypair(mnemonic, accountIndex);
+
+    // Get provider for RPC operations
+    const provider = this.getSolanaProviderForNetwork(this.config.network);
+
+    // Get current balance
+    const balanceLamports = await provider.getBalanceLamports(solInfo.address);
+
+    // Convert amount to lamports
+    const amountLamports = solToLamports(amountSol);
+    if (amountLamports <= 0) {
+      throw new Error('Amount must be greater than 0');
+    }
+
+    // Estimate fee
+    const feeEstimate = await provider.estimateFee();
+    const feeLamports = feeEstimate.feeLamports;
+
+    // Validate sufficient balance
+    validateSufficientBalance(balanceLamports, amountLamports, feeLamports);
+
+    // Get recent blockhash
+    const blockhashInfo = await provider.getRecentBlockhash();
+
+    // Build and sign transaction
+    const signedTx = buildAndSignSolTransfer(
+      {
+        fromPubkey: keypair.publicKey,
+        toPubkey: new PublicKey(toAddress),
+        lamports: amountLamports,
+        recentBlockhash: blockhashInfo.blockhash,
+        lastValidBlockHeight: blockhashInfo.lastValidBlockHeight,
+      },
+      keypair
+    );
+
+    // Send transaction
+    const sendResult = await provider.sendTransaction(signedTx.serialized);
+
+    return {
+      signature: sendResult.signature,
+      feeLamports,
+      feeSol: lamportsToSol(feeLamports),
+    };
+  }
+
+  /**
+   * Get Solana transaction history for the current address.
+   * Only works when current network is Solana.
+   *
+   * @param limit - Maximum number of transactions to return
+   * @returns Array of normalized Solana transactions
+   */
+  async getSolanaTransactionHistory(limit: number = 25): Promise<NormalizedSolanaTransaction[]> {
+    if (!this.isCurrentNetworkSolana()) {
+      return [];
+    }
+
+    const solInfo = this.getSolanaAddress();
+    if (!solInfo) {
+      return [];
+    }
+
+    return this.getSolanaTransactionHistoryForAddress(solInfo.address, limit);
+  }
+
+  /**
+   * Get Solana transaction history for a given address on the current Solana network.
+   * Only works when current network is Solana.
+   */
+  async getSolanaTransactionHistoryForAddress(address: string, limit: number = 25): Promise<NormalizedSolanaTransaction[]> {
+    if (!this.isCurrentNetworkSolana()) {
+      return [];
+    }
+    const explorer = this.getSolanaExplorerForNetwork(this.config.network);
+    return explorer.getTransactionHistory(address, limit);
   }
 
   // ============================================================================

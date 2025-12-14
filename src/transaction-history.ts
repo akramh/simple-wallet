@@ -355,10 +355,15 @@ export class TransactionHistoryManager {
       avalanche: 'https://snowtrace.io/tx/',
       linea: 'https://lineascan.build/tx/',
       'bitcoin-mainnet': 'https://mempool.space/tx/',
-      'bitcoin-testnet': 'https://mempool.space/testnet/tx/'
+      'bitcoin-testnet': 'https://mempool.space/testnet/tx/',
+      'solana-mainnet': 'https://solscan.io/tx/',
+      'solana-devnet': 'https://solscan.io/tx/'
     };
 
     const baseUrl = explorers[network] || explorers.mainnet;
+    if (network === 'solana-devnet') {
+      return `${baseUrl}${txHash}?cluster=devnet`;
+    }
     return `${baseUrl}${txHash}`;
   }
 }

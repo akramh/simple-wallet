@@ -22,6 +22,7 @@ import type { Config, TokenMetadata, Token, PortfolioToken } from './types/index
 import type { StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 import { deriveBitcoinAddress, getBitcoinPrivateKey, type BitcoinAddressInfo } from './bitcoin/index.js';
+import { deriveSolanaAddress, type SolanaAddressInfo } from './solana/index.js';
 
 /**
  * Minimal ERC-20 ABI for token interactions.
@@ -261,7 +262,7 @@ export class Wallet {
     const networkConfig = this.config.networks[networkKey];
     if (!networkConfig) return [];
     // Bitcoin networks don't have RPC URLs
-    if (networkConfig.type === 'bitcoin') return [];
+    if (networkConfig.type === 'bitcoin' || networkConfig.type === 'solana') return [];
     const urls: string[] = [];
     if (networkConfig.rpcUrl) {
       if (Array.isArray(networkConfig.rpcUrl)) {
@@ -288,6 +289,10 @@ export class Wallet {
     // Bitcoin networks don't use JSON-RPC providers
     if (networkConfig?.type === 'bitcoin') {
       throw new Error('Bitcoin networks do not use JSON-RPC providers');
+    }
+    // Solana networks don't use ethers JSON-RPC providers
+    if (networkConfig?.type === 'solana') {
+      throw new Error('Solana networks do not use ethers JSON-RPC providers');
     }
 
     const rpcList = this._getRpcList(networkKey);
@@ -335,6 +340,9 @@ export class Wallet {
     if (!networkConfig) {
       throw new Error('Network not found in configuration');
     }
+    if (networkConfig.type === 'bitcoin' || networkConfig.type === 'solana') {
+      throw new Error('Non-EVM networks must be handled by the app service');
+    }
 
     this.config.network = networkKey;
     await this._ensureProvider(networkKey);
@@ -362,7 +370,8 @@ export class Wallet {
     this.authTag = authTag;
 
     this.currentAccountIndex = 0;
-    this.wallet = this._deriveAccount(0).connect(this.provider!);
+    const derived = this._deriveAccount(0);
+    this.wallet = this.provider ? derived.connect(this.provider) : derived;
 
     return {
       address: this.wallet.address.toLowerCase(),
@@ -398,7 +407,8 @@ export class Wallet {
       this.authTag = authTag;
 
       this.currentAccountIndex = accountIndex;
-      this.wallet = this._deriveAccount(accountIndex).connect(this.provider!);
+      const derived = this._deriveAccount(accountIndex);
+      this.wallet = this.provider ? derived.connect(this.provider) : derived;
 
       return {
         address: this.wallet.address.toLowerCase(),
@@ -439,7 +449,8 @@ export class Wallet {
       throw new Error('No mnemonic loaded');
     }
     this.currentAccountIndex = accountIndex;
-    this.wallet = this._deriveAccount(accountIndex).connect(this.provider!);
+    const derived = this._deriveAccount(accountIndex);
+    this.wallet = this.provider ? derived.connect(this.provider) : derived;
     return {
       address: this.wallet.address.toLowerCase(),
       accountIndex: accountIndex
@@ -882,7 +893,8 @@ export class Wallet {
 
         const indexToLoad = accountIndex !== null ? accountIndex : (walletData.currentAccountIndex || 0);
         this.currentAccountIndex = indexToLoad;
-        this.wallet = this._deriveAccount(indexToLoad).connect(this.provider!);
+        const derived = this._deriveAccount(indexToLoad);
+        this.wallet = this.provider ? derived.connect(this.provider) : derived;
 
         return {
           address: this.wallet.address.toLowerCase(),
@@ -1142,5 +1154,25 @@ export class Wallet {
     );
 
     return getBitcoinPrivateKey(mnemonic, network, this.currentAccountIndex, 0);
+  }
+
+  // ============================================================================
+  // Solana Support (Phase 1: Address)
+  // ============================================================================
+
+  /**
+   * Get a Solana address derived from the same mnemonic.
+   * Uses BIP-44 derivation path: m/44'/501'/{accountIndex}'/0'
+   *
+   * @param accountIndex - Optional account index override (defaults to current)
+   * @returns Solana address information
+   * @throws Error if no mnemonic loaded
+   */
+  getSolanaAddress(accountIndex?: number): SolanaAddressInfo {
+    if (!this.mnemonic) {
+      throw new Error('No mnemonic loaded');
+    }
+    const index = accountIndex ?? this.currentAccountIndex;
+    return deriveSolanaAddress(this.mnemonic, index);
   }
 }
