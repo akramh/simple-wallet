@@ -15,6 +15,7 @@ import ReceiveView from './ReceiveView';
 import ActivityView from './ActivityView';
 import AddTokenModal from './AddTokenModal';
 import SendTransactionView from './SendTransactionView';
+import Identicon from './ui/Identicon';
 import ethIcon from '../../assets/img/eth_logo.svg';
 import bnbIcon from '../../assets/img/bnb.svg';
 import solIcon from '../../assets/img/solana-logo.svg';
@@ -154,6 +155,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [isSending, setIsSending] = useState(false);
   const [gasEstimate, setGasEstimate] = useState<{ estimatedCostNative: string; nativeSymbol: string } | null>(null);
   const [gasEstimateLoading, setGasEstimateLoading] = useState(false);
+  const [calculatingMax, setCalculatingMax] = useState(false);
 
   // Load tokens immediately, then trigger async balance refresh
   useEffect(() => {
@@ -309,15 +311,64 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     }
   };
 
-  const handleMaxClick = () => {
+  const handleMaxClick = async () => {
     if (!selectedToken) return;
     
     // Find the token's balance
     const tokenData = portfolio.find(p => p.token.symbol === selectedToken.symbol);
-    if (!tokenData) return;
-    
-    // Use full balance - user is responsible for ensuring sufficient funds for network fees
-    setAmount(tokenData.balance);
+    if (!tokenData || !tokenData.balance) return;
+
+    // If it's an ERC20/SPL token, just set the full balance (gas is paid in native)
+    if (selectedToken.type !== 'native') {
+      setAmount(tokenData.balance);
+      return;
+    }
+
+    // For native tokens (ETH, SOL, BTC), we must subtract gas.
+    setCalculatingMax(true);
+    try {
+      // Use the recipient if valid, otherwise use own address (self-send) for estimation
+      const estimateToAddress = (recipient && isValidRecipientAddress(network, recipient)) 
+        ? recipient 
+        : address;
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_GAS_ESTIMATE',
+        payload: { 
+          token: selectedToken, 
+          toAddress: estimateToAddress, 
+          amount: tokenData.balance // Estimate for sending max
+        }
+      });
+
+      if (response && response.estimatedCostNative) {
+        const balanceNum = parseFloat(tokenData.balance);
+        const feeNum = parseFloat(response.estimatedCostNative);
+        
+        // Subtract fee from balance
+        const maxAmount = balanceNum - feeNum;
+        
+        if (maxAmount > 0) {
+          // Truncate decimals to avoid precision issues
+          // Use a safe floor logic to avoid rounding up which could cause insufficient funds
+          const decimals = selectedToken.decimals || 18;
+          const factor = Math.pow(10, decimals);
+          const safeMax = Math.floor(maxAmount * factor) / factor;
+          
+          setAmount(safeMax.toString());
+        } else {
+          setAmount('0');
+        }
+      } else {
+        // Fallback if estimation fails, just set full balance
+        setAmount(tokenData.balance);
+      }
+    } catch (err) {
+      console.error('Failed to calculate max amount:', err);
+      setAmount(tokenData.balance);
+    } finally {
+      setCalculatingMax(false);
+    }
   };
 
   const getAmountUsdValue = (): string | null => {
@@ -673,18 +724,26 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
                   <div className="form-group">
                     <label>Recipient Address</label>
-                    <input
-                      type="text"
-                      value={recipient}
-                      onChange={(e) => setRecipient(e.target.value)}
-                      placeholder={
-                        isBitcoinNetwork(network)
-                          ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
-                          : isSolanaNetwork(network)
-                            ? 'Base58 address...'
-                            : '0x...'
-                      }
-                    />
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        value={recipient}
+                        onChange={(e) => setRecipient(e.target.value)}
+                        placeholder={
+                          isBitcoinNetwork(network)
+                            ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
+                            : isSolanaNetwork(network)
+                              ? 'Base58 address...'
+                              : '0x...'
+                        }
+                        style={{ paddingRight: '40px', width: '100%' }}
+                      />
+                      {recipient && (
+                        <div style={{ position: 'absolute', right: '10px', pointerEvents: 'none', display: 'flex' }}>
+                          <Identicon address={recipient} size={24} />
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="form-group">
@@ -695,8 +754,9 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                           type="button"
                           className="max-btn"
                           onClick={handleMaxClick}
+                          disabled={calculatingMax}
                         >
-                          Max
+                          {calculatingMax ? '...' : 'Max'}
                         </button>
                       )}
                     </div>

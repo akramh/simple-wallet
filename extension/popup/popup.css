@@ -1345,6 +1345,9 @@
 .account-menu-section {
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-subtle);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .account-menu-section:last-child {

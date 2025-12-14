@@ -215,7 +215,7 @@ function AccountMenu({
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'CREATE_WALLET',
-        payload: { name: finalName }
+        payload: { name: finalName, showMnemonic: true }
       });
       if (response.error) {
         setStatus({ type: 'error', message: response.error });
