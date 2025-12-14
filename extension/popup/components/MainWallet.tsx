@@ -175,10 +175,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
   // Fetch gas estimate when token/recipient changes
   useEffect(() => {
-    if (isSolanaNetwork(network)) {
-      setGasEstimate(null);
-      return;
-    }
     if (!selectedToken || !recipient || !isValidRecipientAddress(network, recipient)) {
       setGasEstimate(null);
       return;
@@ -353,11 +349,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     e.preventDefault();
     setSendError('');
 
-    if (isSolanaNetwork(network)) {
-      setSendError('Sending SOL is not supported yet');
-      return;
-    }
-
     if (!selectedToken || !recipient || !amount) {
       setSendError('Please fill in all fields');
       return;
@@ -515,7 +506,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
               <button
                 className="action-tile"
                 onClick={() => setView('send')}
-                disabled={isSolanaNetwork(network)}
               >
                 <img src={sendIcon} alt="Send" className="action-icon" />
                 <span>Send</span>
@@ -658,14 +648,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                   <img src={backIcon} alt="Back" />
                   <span>Back</span>
                 </button>
-                {isSolanaNetwork(network) ? (
-                  <div style={{ padding: '16px' }}>
-                    <div style={{ fontWeight: 600, marginBottom: '8px' }}>Sending SOL not supported yet</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      Phase 1 includes read-only support (address + balance). Sending will be added in a later phase.
-                    </div>
-                  </div>
-                ) : (
                 <form onSubmit={handleSend}>
                   <div className="form-group">
                     <label>Token</label>
@@ -757,7 +739,6 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                     Send
                   </button>
                 </form>
-                )}
               </>
             )}
           </div>

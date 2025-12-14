@@ -50,8 +50,10 @@ test('SolanaExplorer fetches transaction history via RPC', async () => {
   assert.equal(history[0].signature, 'sig_rpc');
   assert.equal(history[0].type, 'send');
   assert.equal(history[0].to, counterparty);
-  // Value should be delta minus fee (sender pays fee)
-  assert.equal(history[0].valueLamports, 999_995_000);
+  // Value is the transfer amount (fee is subtracted from delta to get the actual transfer value)
+  // delta = postBalance - preBalance = 999_995_000 - 2_000_000_000 = -1_000_005_000
+  // valueLamports = |delta| - fee = 1_000_005_000 - 5_000 = 1_000_000_000
+  assert.equal(history[0].valueLamports, 1_000_000_000);
 });
 
 test('SolanaExplorer RPC handles empty response from first endpoint and tries next', async () => {

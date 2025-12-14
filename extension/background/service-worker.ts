@@ -758,6 +758,71 @@ function startBitcoinConfirmationPolling(txid: string, networkKey: string): void
 }
 
 // ============================================================================
+// Solana Confirmation Polling
+// ============================================================================
+
+const solanaConfirmationPollers = new Map<string, NodeJS.Timeout>();
+
+function startSolanaConfirmationPolling(signature: string, networkKey: string): void {
+  if (solanaConfirmationPollers.has(signature)) return;
+  if (!walletService) return;
+
+  const startedAt = Date.now();
+  const maxMs = 60 * 1000; // 60 seconds (Solana is fast)
+  const intervalMs = 2 * 1000; // 2 seconds
+
+  const timer = setInterval(async () => {
+    try {
+      if (Date.now() - startedAt > maxMs) {
+        clearInterval(timer);
+        solanaConfirmationPollers.delete(signature);
+        return;
+      }
+
+      // Get the Solana provider to check confirmation status
+      const netConfig = walletService!.config.networks[networkKey];
+      if (!netConfig || netConfig.type !== 'solana') {
+        clearInterval(timer);
+        solanaConfirmationPollers.delete(signature);
+        return;
+      }
+
+      const rpcUrls = Array.isArray(netConfig.rpcUrl) ? netConfig.rpcUrl : [netConfig.rpcUrl];
+      const { getSolanaProvider } = await import('../../src/solana/index.js');
+      const provider = getSolanaProvider(networkKey, rpcUrls);
+
+      const status = await provider.getSignatureStatus(signature);
+
+      if (status.err) {
+        // Transaction failed
+        clearInterval(timer);
+        solanaConfirmationPollers.delete(signature);
+        if (transactionHistory) {
+          transactionHistory.updateTransactionStatus(signature, TransactionStatus.FAILED, undefined, status.err);
+        }
+        broadcastTransactionStatus(signature, 'failed', networkKey, undefined, status.err);
+        return;
+      }
+
+      if (status.confirmed) {
+        clearInterval(timer);
+        solanaConfirmationPollers.delete(signature);
+        const slot = status.slot;
+        if (transactionHistory) {
+          transactionHistory.updateTransactionStatus(signature, TransactionStatus.CONFIRMED, slot);
+        }
+        broadcastTransactionStatus(signature, 'confirmed', networkKey, slot);
+        refreshBalancesForCurrentNetwork().catch(() => {});
+      }
+    } catch {
+      // Ignore transient errors; keep polling until timeout.
+    }
+  }, intervalMs);
+
+  solanaConfirmationPollers.set(signature, timer);
+}
+
+// ============================================================================
 // Message Handler
 // ============================================================================
 
@@ -1123,8 +1188,45 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const sendNetworkConfig = walletService!.config.networks[network];
 
       try {
+        // Solana send path (broadcast + pending)
         if (isSolanaNetworkConfig(sendNetworkConfig)) {
-          throw new Error('Sending SOL is not supported yet');
+          if (!sessionPassword) {
+            throw new Error('Session password not available. Please unlock wallet again.');
+          }
+
+          const result = await walletService!.sendSolanaTransaction(
+            payload.toAddress,
+            payload.amount,
+            sessionPassword
+          );
+
+          // Track transaction in history as pending
+          if (transactionHistory && result.signature) {
+            transactionHistory.addTransaction({
+              hash: result.signature,
+              from: fromAddress,
+              to: payload.toAddress,
+              value: payload.amount,
+              network: network,
+              status: TransactionStatus.PENDING,
+              type: TransactionType.SEND,
+              timestamp: Date.now(),
+              tokenSymbol: sendNetworkConfig.nativeSymbol || 'SOL',
+              tokenAddress: ''
+            });
+          }
+
+          broadcastTransactionStatus(result.signature, 'pending', network);
+          startSolanaConfirmationPolling(result.signature, network);
+
+          return {
+            result: {
+              hash: result.signature,
+              status: 'pending',
+              feeSol: result.feeSol,
+              feeLamports: result.feeLamports
+            }
+          };
         }
 
         // Bitcoin send path (broadcast + pending)

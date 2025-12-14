@@ -1397,16 +1397,127 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     return;
   }
 
-  // Solana send flow is not implemented in Phase 1.
+  // Solana send flow
   if (config.networks[config.network]?.type === 'solana') {
-    ui.showWarning('Sending SOL is not supported yet.');
-    console.log(chalk.gray('Coming in a later phase (send functionality).'));
+    const solNetConfig = config.networks[config.network];
+    const nativeSymbol = solNetConfig.nativeSymbol || 'SOL';
+
+    ui.showSection('Send SOL');
+    ui.showInfo('Press Ctrl+C to cancel at any time');
     console.log('');
+
+    const answers = await inquirer.prompt<{
+      toAddress?: string;
+      amount?: string;
+    }>([
+      {
+        type: 'input',
+        name: 'toAddress',
+        message: 'Recipient Solana address (or leave empty to cancel):',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          // Basic Solana base58 validation
+          if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input.trim())) {
+            return 'Please enter a valid Solana address (base58)';
+          }
+          return true;
+        }
+      },
+      {
+        type: 'input',
+        name: 'amount',
+        message: `Amount (in ${nativeSymbol}):`,
+        when: (a) => !!a.toAddress && a.toAddress.trim() !== '',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
+          const num = parseFloat(input);
+          if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
+          if (input.includes('.') && input.split('.')[1].length > 9) return 'SOL supports up to 9 decimals';
+          return true;
+        }
+      }
+    ]);
+
+    if (!answers.toAddress || answers.toAddress.trim() === '' || !answers.amount || answers.amount.trim() === '') {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Estimating network fee...');
+    const solToken = walletService.getNativeToken(config.network);
+    const gasEstimate = await walletService.getGasEstimate(solToken, answers.toAddress.trim(), answers.amount.trim());
+
+    let solPrice: number | null = null;
+    try {
+      solPrice = await getSolanaPrice();
+    } catch {
+      solPrice = null;
+    }
+
+    const { amountUsd, gasCostUsd, totalUsd } = calculateTransactionCosts(
+      answers.amount.trim(),
+      solPrice,
+      gasEstimate.estimatedCostNative,
+      solPrice
+    );
+
+    ui.clearScreen();
+    ui.showHeader(currentWalletName, wallet.currentAccountIndex, solNetConfig.name || config.network, address);
+
+    ui.showTransactionConfirmation({
+      tokenSymbol: nativeSymbol,
+      amount: answers.amount.trim(),
+      recipient: answers.toAddress.trim(),
+      networkName: solNetConfig.name || config.network,
+      amountUsd,
+      gasCostNative: gasEstimate.estimatedCostNative,
+      nativeSymbol: gasEstimate.nativeSymbol,
+      gasCostUsd,
+      totalUsd,
+      gasEstimateFailed: !!gasEstimate.error
+    });
+
+    if (!gasEstimate.error) {
+      console.log(chalk.gray('Fee:                 ') + chalk.white(`${gasEstimate.estimatedCostNative} ${nativeSymbol}`));
+      console.log('');
+    }
+
+    const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: 'Confirm & Send?',
+        default: false
+      }
+    ]);
+
+    if (!confirm) {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Broadcasting transaction...');
+    const password = await ensureMasterPassword();
+    const result = await walletService.sendSolanaTransaction(answers.toAddress.trim(), answers.amount.trim(), password);
+
+    ui.showSuccess('Transaction broadcasted (pending confirmation)');
+    console.log('');
+    console.log(chalk.gray('Signature: ') + chalk.magenta(result.signature));
+    console.log(chalk.gray('Fee:       ') + chalk.white(`${result.feeSol} ${nativeSymbol}`));
+
+    const txUrl = `${solNetConfig.blockExplorer}/tx/${result.signature}${config.network === 'solana-devnet' ? '?cluster=devnet' : ''}`;
+    console.log(chalk.gray('View:      ') + chalk.cyan(txUrl));
+    console.log('');
+
     await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
     }]);
+
     await mainMenu(currentWalletName);
     return;
   }

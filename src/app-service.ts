@@ -23,7 +23,21 @@ import { Wallet } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 import { ethers } from 'ethers';
-import { SolanaProvider, getSolanaExplorer, type SolanaAddressInfo, type NormalizedSolanaTransaction, type SolanaExplorer } from './solana/index.js';
+import {
+  SolanaProvider,
+  getSolanaExplorer,
+  deriveSolanaKeypair,
+  buildAndSignSolTransfer,
+  validateSufficientBalance,
+  isValidSolanaAddress,
+  solToLamports,
+  lamportsToSol,
+  type SolanaAddressInfo,
+  type NormalizedSolanaTransaction,
+  type SolanaExplorer,
+  type SolTransferResult,
+} from './solana/index.js';
+import { PublicKey } from '@solana/web3.js';
 import {
   BitcoinProvider,
   getBitcoinProvider,
@@ -605,6 +619,43 @@ export class WalletAppService {
       }
     }
 
+    // Solana networks: estimate fee using base fee (5000 lamports per signature)
+    if (this.isCurrentNetworkSolana()) {
+      const networkKey = this.config.network;
+      const netConfig = this.config.networks[networkKey];
+      const nativeSymbol = netConfig?.nativeSymbol || 'SOL';
+
+      try {
+        const provider = this.getSolanaProviderForNetwork(networkKey);
+        const feeEstimate = await provider.estimateFee();
+
+        return {
+          gasLimit: '1', // 1 signature for simple transfers
+          gasPrice: feeEstimate.feeLamports.toString(), // lamports per signature
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: feeEstimate.feeLamports.toString(), // lamports
+          estimatedCostNative: feeEstimate.feeSol,
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey
+        };
+      } catch (error: any) {
+        return {
+          error: error.message || 'Failed to estimate Solana fee',
+          gasLimit: '1',
+          gasPrice: '5000', // Base fee fallback
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: '5000',
+          estimatedCostNative: '0.000005',
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey
+        };
+      }
+    }
+
     const gasNetwork = this.config.network;
     const gasNetworkConfig = this.config.networks[gasNetwork];
     const nativeSymbol = gasNetworkConfig?.nativeSymbol || 'ETH';
@@ -912,8 +963,86 @@ export class WalletAppService {
   }
 
   // ============================================================================
-  // Solana-Specific Methods (Phase 2: History)
+  // Solana-Specific Methods (Phase 2: History, Phase 3: Send)
   // ============================================================================
+
+  /**
+   * Send SOL to another address.
+   * Only works when current network is Solana.
+   *
+   * @param toAddress - Recipient Solana address (base58)
+   * @param amountSol - Amount to send in SOL (e.g., "0.5")
+   * @param password - Wallet password to decrypt mnemonic for signing
+   * @returns Transaction result with signature and fee
+   */
+  async sendSolanaTransaction(
+    toAddress: string,
+    amountSol: string,
+    password: string
+  ): Promise<SolTransferResult> {
+    if (!this.isCurrentNetworkSolana()) {
+      throw new Error('Not on a Solana network');
+    }
+
+    // Validate recipient address
+    if (!isValidSolanaAddress(toAddress)) {
+      throw new Error('Invalid Solana recipient address');
+    }
+
+    // Get sender info
+    const solInfo = this.getSolanaAddress();
+    if (!solInfo) {
+      throw new Error('No Solana address available');
+    }
+
+    // Get mnemonic to derive keypair
+    const mnemonic = this.wallet.getMnemonic(password);
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+    const keypair = deriveSolanaKeypair(mnemonic, accountIndex);
+
+    // Get provider for RPC operations
+    const provider = this.getSolanaProviderForNetwork(this.config.network);
+
+    // Get current balance
+    const balanceLamports = await provider.getBalanceLamports(solInfo.address);
+
+    // Convert amount to lamports
+    const amountLamports = solToLamports(amountSol);
+    if (amountLamports <= 0) {
+      throw new Error('Amount must be greater than 0');
+    }
+
+    // Estimate fee
+    const feeEstimate = await provider.estimateFee();
+    const feeLamports = feeEstimate.feeLamports;
+
+    // Validate sufficient balance
+    validateSufficientBalance(balanceLamports, amountLamports, feeLamports);
+
+    // Get recent blockhash
+    const blockhashInfo = await provider.getRecentBlockhash();
+
+    // Build and sign transaction
+    const signedTx = buildAndSignSolTransfer(
+      {
+        fromPubkey: keypair.publicKey,
+        toPubkey: new PublicKey(toAddress),
+        lamports: amountLamports,
+        recentBlockhash: blockhashInfo.blockhash,
+        lastValidBlockHeight: blockhashInfo.lastValidBlockHeight,
+      },
+      keypair
+    );
+
+    // Send transaction
+    const sendResult = await provider.sendTransaction(signedTx.serialized);
+
+    return {
+      signature: sendResult.signature,
+      feeLamports,
+      feeSol: lamportsToSol(feeLamports),
+    };
+  }
 
   /**
    * Get Solana transaction history for the current address.
