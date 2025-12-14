@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { useToast } from '../context/ToastContext';
 
 interface Props {
   address: string;
@@ -8,15 +9,34 @@ interface Props {
 }
 
 function ReceiveView({ address, network, networks }: Props) {
-  const [copied, setCopied] = useState(false);
+  const { showToast } = useToast();
 
   const handleCopyAddress = async () => {
     try {
       await navigator.clipboard.writeText(address);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      showToast('Address copied!');
     } catch (err) {
       console.error('Failed to copy address:', err);
+      showToast('Failed to copy address', 3000);
+    }
+  };
+
+  const handleShareAddress = async () => {
+    if (navigator.share) {
+      try {
+        const networkName = networks[network]?.name || network;
+        await navigator.share({
+          title: `My ${networkName} Address`,
+          text: `Here's my ${networkName} address:`,
+          url: address, // Or use a block explorer link if available
+        });
+        showToast('Address shared!');
+      } catch (error) {
+        console.error('Failed to share address:', error);
+        showToast('Failed to share address', 3000);
+      }
+    } else {
+      showToast('Share not supported on this browser.', 3000);
     }
   };
 
@@ -48,8 +68,13 @@ function ReceiveView({ address, network, networks }: Props) {
         <div className="receive-label">Your Address</div>
         <div className="receive-address">{address}</div>
         <button className="btn btn-primary" style={{ marginTop: '16px' }} onClick={handleCopyAddress}>
-          {copied ? '✓ Copied!' : 'Copy Address'}
+          Copy Address
         </button>
+        {navigator.share && (
+          <button className="btn btn-secondary" style={{ marginTop: '8px' }} onClick={handleShareAddress}>
+            Share Address
+          </button>
+        )}
       </div>
 
       {/* Warning */}

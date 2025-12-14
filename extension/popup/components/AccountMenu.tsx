@@ -4,8 +4,9 @@
  * A comprehensive modal for managing wallets and accounts.
  * Features: view/switch wallets & accounts, create/import wallets
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MnemonicDisplay } from './ui';
+import { useToast } from '../context/ToastContext';
 
 interface Account {
   index: number;
@@ -51,21 +52,19 @@ function AccountMenu({
   const [createdMnemonic, setCreatedMnemonic] = useState('');
   const [createdWalletName, setCreatedWalletName] = useState('');
   const [importedWalletName, setImportedWalletName] = useState('');
-  const [toast, setToast] = useState('');
+  const { showToast } = useToast();
   const [pendingCreateName, setPendingCreateName] = useState('wallet1');
   const [pendingImportName, setPendingImportName] = useState('wallet1');
   const [createNameInput, setCreateNameInput] = useState('');
   const [importNameInput, setImportNameInput] = useState('');
   const [isEditingCurrentWalletName, setIsEditingCurrentWalletName] = useState(false);
   const [currentWalletNameDraft, setCurrentWalletNameDraft] = useState('');
-  const toastTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     loadAccounts();
     loadWallets();
     return () => {
       setStatus({ type: '', message: '' });
-      if (toastTimer.current) clearTimeout(toastTimer.current);
     };
   }, []);
 
@@ -113,12 +112,6 @@ function AccountMenu({
     } catch {
       return 'wallet1';
     }
-  };
-
-  const showToast = (message: string) => {
-    setToast(message);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(''), 2000);
   };
 
   const handleSwitchAccount = async (walletName: string, accountIndex: number, accountAddress: string) => {
@@ -215,7 +208,7 @@ function AccountMenu({
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'CREATE_WALLET',
-        payload: { name: finalName }
+        payload: { name: finalName, showMnemonic: true }
       });
       if (response.error) {
         setStatus({ type: 'error', message: response.error });
@@ -577,10 +570,6 @@ function AccountMenu({
         </div>
       )}
 
-      {/* Toast */}
-      {toast && (
-        <div className="toast">{toast}</div>
-      )}
     </div>
   );
 }

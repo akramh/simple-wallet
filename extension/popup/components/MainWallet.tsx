@@ -7,7 +7,7 @@
  * - Activity/transaction history
  * - Multi-view navigation (tokens, send, receive, activity, settings)
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import SettingsView from './SettingsView';
 import Header from './Header';
 import AccountMenu from './AccountMenu';
@@ -15,7 +15,11 @@ import ReceiveView from './ReceiveView';
 import ActivityView from './ActivityView';
 import AddTokenModal from './AddTokenModal';
 import SendTransactionView from './SendTransactionView';
+import Identicon from './ui/Identicon';
+import NetworkSelector from './ui/NetworkSelector';
+import Skeleton from './ui/Skeleton';
 import ethIcon from '../../assets/img/eth_logo.svg';
+import { useToast } from '../context/ToastContext';
 import bnbIcon from '../../assets/img/bnb.svg';
 import solIcon from '../../assets/img/solana-logo.svg';
 import avaxIcon from '../../assets/img/avax-token.svg';
@@ -125,6 +129,7 @@ interface TokenWithBalance {
 }
 
 function MainWallet({ address, network, onLock, onStateChange }: Props) {
+  const { showToast } = useToast();
   const notifyStateChange = () => {
     if (onStateChange) {
       onStateChange();
@@ -154,6 +159,27 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [isSending, setIsSending] = useState(false);
   const [gasEstimate, setGasEstimate] = useState<{ estimatedCostNative: string; nativeSymbol: string } | null>(null);
   const [gasEstimateLoading, setGasEstimateLoading] = useState(false);
+  const [calculatingMax, setCalculatingMax] = useState(false);
+
+  const networkOptions = useMemo(() => {
+    return Object.entries(networks).map(([key, net]: [string, any]) => {
+      let icon;
+      if (key === 'base') icon = ICON_ASSETS['base.svg'];
+      else if (key === 'arbitrum') icon = ICON_ASSETS['arbitrum.svg'];
+      else if (key === 'linea') icon = ICON_ASSETS['linea-logo-mainnet.svg'];
+      else if (key.startsWith('solana')) icon = ICON_ASSETS['solana-logo.svg'];
+      else if (key.startsWith('bitcoin')) icon = ICON_ASSETS['bitcoin-logo.svg'];
+      else if (key === 'bsc') icon = ICON_ASSETS['bnb.svg'];
+      else if (key === 'avalanche') icon = ICON_ASSETS['avax-token.svg'];
+      else if (key === 'polygon') icon = ICON_ASSETS['pol-token.svg'];
+      
+      if (!icon && net.nativeSymbol) {
+         const file = SYMBOL_ICON_FALLBACK[net.nativeSymbol.toLowerCase()];
+         if (file) icon = ICON_ASSETS[file];
+      }
+      return { value: key, label: net.name, icon };
+    });
+  }, [networks]);
 
   // Load tokens immediately, then trigger async balance refresh
   useEffect(() => {
@@ -309,15 +335,64 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     }
   };
 
-  const handleMaxClick = () => {
+  const handleMaxClick = async () => {
     if (!selectedToken) return;
     
     // Find the token's balance
     const tokenData = portfolio.find(p => p.token.symbol === selectedToken.symbol);
-    if (!tokenData) return;
-    
-    // Use full balance - user is responsible for ensuring sufficient funds for network fees
-    setAmount(tokenData.balance);
+    if (!tokenData || !tokenData.balance) return;
+
+    // If it's an ERC20/SPL token, just set the full balance (gas is paid in native)
+    if (selectedToken.type !== 'native') {
+      setAmount(tokenData.balance);
+      return;
+    }
+
+    // For native tokens (ETH, SOL, BTC), we must subtract gas.
+    setCalculatingMax(true);
+    try {
+      // Use the recipient if valid, otherwise use own address (self-send) for estimation
+      const estimateToAddress = (recipient && isValidRecipientAddress(network, recipient)) 
+        ? recipient 
+        : address;
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_GAS_ESTIMATE',
+        payload: { 
+          token: selectedToken, 
+          toAddress: estimateToAddress, 
+          amount: tokenData.balance // Estimate for sending max
+        }
+      });
+
+      if (response && response.estimatedCostNative) {
+        const balanceNum = parseFloat(tokenData.balance);
+        const feeNum = parseFloat(response.estimatedCostNative);
+        
+        // Subtract fee from balance
+        const maxAmount = balanceNum - feeNum;
+        
+        if (maxAmount > 0) {
+          // Truncate decimals to avoid precision issues
+          // Use a safe floor logic to avoid rounding up which could cause insufficient funds
+          const decimals = selectedToken.decimals || 18;
+          const factor = Math.pow(10, decimals);
+          const safeMax = Math.floor(maxAmount * factor) / factor;
+          
+          setAmount(safeMax.toString());
+        } else {
+          setAmount('0');
+        }
+      } else {
+        // Fallback if estimation fails, just set full balance
+        setAmount(tokenData.balance);
+      }
+    } catch (err) {
+      console.error('Failed to calculate max amount:', err);
+      setAmount(tokenData.balance);
+    } finally {
+      setCalculatingMax(false);
+    }
   };
 
   const getAmountUsdValue = (): string | null => {
@@ -474,7 +549,16 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 <div className="account-name">
                   {currentWalletName} : Account {currentAccountIndex + 1}
                 </div>
-                <div className="account-address">
+                <div 
+                  className="account-address"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(address);
+                    showToast('Address copied!');
+                  }}
+                  title="Click to copy"
+                  style={{ cursor: 'pointer' }}
+                >
                   {/* Bitcoin addresses are longer, show more characters */}
                   {isBitcoinNetwork(network)
                     ? `${address.substring(0, 8)}...${address.substring(address.length - 6)}`
@@ -545,22 +629,32 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         ) : view === 'tokens' ? (
           <>
             {/* Tokens */}
-            <div className="tokens-header">
-              <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
-                <label style={{ marginBottom: 4 }}>Network</label>
-                <select
-                  value={network}
-                  onChange={(e) => handleNetworkChange(e.target.value)}
-                >
-                  {Object.entries(networks).map(([key, net]: [string, any]) => (
-                    <option key={key} value={key}>{net.name}</option>
-                  ))}
-                </select>
-              </div>
+            <div className="tokens-header" style={{ display: 'block', marginBottom: 12 }}>
+              <NetworkSelector
+                value={network}
+                options={networkOptions}
+                onChange={handleNetworkChange}
+              />
             </div>
 
             {loading ? (
-              <div className="loading">Loading tokens...</div>
+              <div className="token-list">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="token-item" style={{ pointerEvents: 'none' }}>
+                    <div className="token-info">
+                      <Skeleton width={34} height={34} borderRadius="50%" />
+                      <div className="token-details">
+                        <Skeleton width={40} height={14} style={{ marginBottom: 4 }} />
+                        <Skeleton width={80} height={12} />
+                      </div>
+                    </div>
+                    <div className="token-balance" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                      <Skeleton width={60} height={15} style={{ marginBottom: 4 }} />
+                      <Skeleton width={40} height={12} />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="token-list">
                 {portfolio.map((item, index) => {
@@ -627,7 +721,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
             )}
           </>
         ) : view === 'activity' ? (
-          <ActivityView currentAddress={address} network={network} />
+          <ActivityView currentAddress={address} network={network} networks={networks} />
         ) : view === 'receive' ? (
           <div className="takeover">
             <button className="back-button" onClick={() => setView('tokens')}>
@@ -673,18 +767,26 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
                   <div className="form-group">
                     <label>Recipient Address</label>
-                    <input
-                      type="text"
-                      value={recipient}
-                      onChange={(e) => setRecipient(e.target.value)}
-                      placeholder={
-                        isBitcoinNetwork(network)
-                          ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
-                          : isSolanaNetwork(network)
-                            ? 'Base58 address...'
-                            : '0x...'
-                      }
-                    />
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        value={recipient}
+                        onChange={(e) => setRecipient(e.target.value)}
+                        placeholder={
+                          isBitcoinNetwork(network)
+                            ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
+                            : isSolanaNetwork(network)
+                              ? 'Base58 address...'
+                              : '0x...'
+                        }
+                        style={{ paddingRight: '40px', width: '100%' }}
+                      />
+                      {recipient && (
+                        <div style={{ position: 'absolute', right: '10px', pointerEvents: 'none', display: 'flex' }}>
+                          <Identicon address={recipient} size={24} />
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="form-group">
@@ -695,8 +797,9 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                           type="button"
                           className="max-btn"
                           onClick={handleMaxClick}
+                          disabled={calculatingMax}
                         >
-                          Max
+                          {calculatingMax ? '...' : 'Max'}
                         </button>
                       )}
                     </div>

@@ -7,7 +7,7 @@ interface Props {
   onWalletCreated: () => void;
 }
 
-type Screen = 'choice' | 'set-password' | 'create-mnemonic' | 'import-mnemonic';
+type Screen = 'choice' | 'set-password' | 'create-mnemonic' | 'import-mnemonic' | 'verify-mnemonic';
 
 function WelcomeScreen({ onWalletCreated }: Props) {
   const [screen, setScreen] = useState<Screen>('choice');
@@ -22,6 +22,10 @@ function WelcomeScreen({ onWalletCreated }: Props) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [flowType, setFlowType] = useState<'create' | 'import'>('create');
   const [showMnemonic, setShowMnemonic] = useState(false);
+  
+  // Verification state
+  const [verifyIndices, setVerifyIndices] = useState<number[]>([]);
+  const [verifyInputs, setVerifyInputs] = useState<string[]>(['', '', '']);
 
   const validateMnemonicInput = (phrase: string) => {
     const words = phrase.trim().split(/\s+/);
@@ -100,7 +104,40 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     }
   };
 
-  const handleCreateFinalize = async () => {
+  const goToVerifyStep = () => {
+    // Generate 3 unique random indices between 0 and 11
+    const indices = new Set<number>();
+    while(indices.size < 3) {
+      indices.add(Math.floor(Math.random() * 12));
+    }
+    const sortedIndices = Array.from(indices).sort((a, b) => a - b);
+    setVerifyIndices(sortedIndices);
+    setVerifyInputs(['', '', '']);
+    setScreen('verify-mnemonic');
+    setError('');
+  };
+
+  const handleVerifyAndCreate = async () => {
+    setError('');
+    const words = generatedMnemonic.split(' ');
+    
+    // Check if inputs match
+    for (let i = 0; i < 3; i++) {
+      const index = verifyIndices[i];
+      const inputWord = verifyInputs[i].trim().toLowerCase();
+      const actualWord = words[index];
+      
+      if (inputWord !== actualWord) {
+        setError(`Word #${index + 1} is incorrect. Please try again.`);
+        return;
+      }
+    }
+    
+    // If correct, proceed to create
+    await createWallet();
+  };
+
+  const createWallet = async () => {
     setError('');
     if (!generatedMnemonic) {
       setError('Missing generated recovery phrase. Please try again.');
@@ -327,8 +364,8 @@ function WelcomeScreen({ onWalletCreated }: Props) {
           </div>
 
           <div className="action-buttons">
-            <button className="btn btn-primary" onClick={handleCreateFinalize} disabled={loading}>
-              {loading ? 'Creating...' : 'Continue'}
+            <button className="btn btn-primary" onClick={goToVerifyStep}>
+              I've Saved It
             </button>
           </div>
 
@@ -338,6 +375,57 @@ function WelcomeScreen({ onWalletCreated }: Props) {
             </div>
           )}
           {error && <div className="error mt-2.5">{error}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // Verify Mnemonic Screen
+  if (screen === 'verify-mnemonic') {
+    return (
+      <div className="container">
+        <div className="header">
+          <button className="btn-back" onClick={() => setScreen('create-mnemonic')}>
+            ← Back
+          </button>
+          <h1>Verify Phase</h1>
+        </div>
+        <div className="content">
+          <div className="info-box">
+            <p>
+              Please select the following words from your recovery phrase to verify you've saved it.
+            </p>
+          </div>
+
+          <form onSubmit={(e) => { e.preventDefault(); handleVerifyAndCreate(); }}>
+            {verifyIndices.map((wordIndex, i) => (
+              <div className="form-group" key={wordIndex}>
+                <label>Word #{wordIndex + 1}</label>
+                <input
+                  value={verifyInputs[i]}
+                  onChange={(e) => {
+                    const newInputs = [...verifyInputs];
+                    newInputs[i] = e.target.value;
+                    setVerifyInputs(newInputs);
+                  }}
+                  placeholder={`Enter word #${wordIndex + 1}`}
+                  autoComplete="off"
+                />
+              </div>
+            ))}
+
+            {error && <div className="error">{error}</div>}
+
+            <div className="action-buttons">
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={loading || verifyInputs.some(input => !input.trim())}
+              >
+                {loading ? 'Creating...' : 'Verify & Create'}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     );

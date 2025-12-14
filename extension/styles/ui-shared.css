@@ -107,3 +107,20 @@
   --shadow-wallet-hover: 0 10px 30px rgba(139, 92, 246, 0.18);
   --shadow-modal: 0 24px 70px rgba(0, 0, 0, 0.55);
 }
+
+/* Skeleton Loading */
+.skeleton {
+  background-color: var(--border); 
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+@keyframes skeleton-pulse {
+  0% { opacity: 0.6; }
+  50% { opacity: 0.3; }
+  100% { opacity: 0.6; }
+}
+
+.theme-dark .skeleton {
+  background-color: rgba(255, 255, 255, 0.1);
+}
