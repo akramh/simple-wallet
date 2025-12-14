@@ -25,6 +25,7 @@ import lineaIcon from '../../assets/img/linea-logo-mainnet.svg';
 import usdcIcon from '../../assets/img/icon-usdc.png';
 import usdtIcon from '../../assets/img/usdt.svg';
 import polIcon from '../../assets/img/pol-token.svg';
+import bitcoinIcon from '../../assets/img/bitcoin-logo.svg';
 import sendIcon from '../../assets/icons/send.svg';
 import receiveIcon from '../../assets/icons/receive.svg';
 import backIcon from '../../assets/icons/arrow-left.svg';
@@ -40,7 +41,10 @@ const ICON_ASSETS: Record<string, string> = {
   'linea-logo-mainnet.svg': lineaIcon,
   'icon-usdc.png': usdcIcon,
   'usdt.svg': usdtIcon,
-  'pol-token.svg': polIcon
+  'pol-token.svg': polIcon,
+  // Backwards-compatible aliases used by existing token lists/configs.
+  'bitcoin-logo.svg': bitcoinIcon,
+  'btc.svg': bitcoinIcon
 };
 
 const SYMBOL_ICON_FALLBACK: Record<string, string> = {
@@ -58,8 +62,8 @@ const SYMBOL_ICON_FALLBACK: Record<string, string> = {
   usdt: 'usdt.svg',
   pol: 'pol-token.svg',
   matic: 'pol-token.svg',
-  btc: 'btc.svg',
-  tbtc: 'btc.svg'
+  btc: 'bitcoin-logo.svg',
+  tbtc: 'bitcoin-logo.svg'
 };
 
 /**

@@ -12,7 +12,8 @@ type Screen = 'choice' | 'set-password' | 'create-mnemonic' | 'import-mnemonic';
 function WelcomeScreen({ onWalletCreated }: Props) {
   const [screen, setScreen] = useState<Screen>('choice');
   const [mnemonic, setMnemonic] = useState('');
-  const [walletName, setWalletName] = useState('wallet1');
+  const [suggestedWalletName, setSuggestedWalletName] = useState('wallet1');
+  const [walletNameInput, setWalletNameInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [generatedMnemonic, setGeneratedMnemonic] = useState('');
@@ -30,6 +31,9 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     }
     return true;
   };
+
+  // Keep wallet names consistent with storage keys and background validation rules.
+  const isValidWalletName = (name: string) => /^[A-Za-z0-9]{1,12}$/.test(name);
 
   const getNextWalletName = async (): Promise<string> => {
     try {
@@ -52,14 +56,16 @@ function WelcomeScreen({ onWalletCreated }: Props) {
 
   const goToCreateFlow = async () => {
     const nextName = await getNextWalletName();
-    setWalletName(nextName);
+    setSuggestedWalletName(nextName);
+    setWalletNameInput('');
     setFlowType('create');
     setScreen('set-password');
   };
 
   const goToImportFlow = async () => {
     const nextName = await getNextWalletName();
-    setWalletName(nextName);
+    setSuggestedWalletName(nextName);
+    setWalletNameInput('');
     setFlowType('import');
     setScreen('set-password');
   };
@@ -105,12 +111,17 @@ function WelcomeScreen({ onWalletCreated }: Props) {
       setError('Password is required');
       return;
     }
+    const finalWalletName = walletNameInput.trim() || suggestedWalletName;
+    if (!isValidWalletName(finalWalletName)) {
+      setError('Wallet name must be 1-12 characters and contain only letters and numbers');
+      return;
+    }
 
     setLoading(true);
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'IMPORT_WALLET',
-        payload: { mnemonic: generatedMnemonic, password: password, name: walletName }
+        payload: { mnemonic: generatedMnemonic, password: password, name: finalWalletName }
       });
 
       if (response.error) {
@@ -133,12 +144,17 @@ function WelcomeScreen({ onWalletCreated }: Props) {
       setError('Password is required');
       return;
     }
+    const finalWalletName = walletNameInput.trim() || suggestedWalletName;
+    if (!isValidWalletName(finalWalletName)) {
+      setError('Wallet name must be 1-12 characters and contain only letters and numbers');
+      return;
+    }
 
     setLoading(true);
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'IMPORT_WALLET',
-        payload: { mnemonic: mnemonic.trim(), password: password, name: walletName }
+        payload: { mnemonic: mnemonic.trim(), password: password, name: finalWalletName }
       });
 
       if (response.error) {
@@ -176,6 +192,17 @@ function WelcomeScreen({ onWalletCreated }: Props) {
 
           <form onSubmit={(e) => { e.preventDefault(); handlePasswordSet(); }}>
             <div className="form-group">
+              <label>Wallet name (optional)</label>
+              <input
+                value={walletNameInput}
+                onChange={(e) => setWalletNameInput(e.target.value)}
+                placeholder={`Default: ${suggestedWalletName}`}
+              />
+              <div className="text-sm text-text-secondary mt-2">
+                1-12 letters/numbers (no spaces or symbols)
+              </div>
+            </div>
+            <div className="form-group">
               <label>Password</label>
               <input
                 type="password"
@@ -207,6 +234,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
                   setPassword('');
                   setConfirmPassword('');
                   setError('');
+                  setWalletNameInput('');
                 }}
               >
                 Back

@@ -73,17 +73,23 @@ function UnlockScreen({ onUnlocked }: Props) {
         </div>
 
         <form onSubmit={handleUnlock}>
-          {availableWallets.length > 1 && (
+          {availableWallets.length > 0 && (
             <div className="form-group">
               <label>Wallet</label>
-              <select
-                value={walletName}
-                onChange={(e) => setWalletName(e.target.value)}
-              >
-                {availableWallets.map(name => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
+              {availableWallets.length > 1 ? (
+                <select
+                  value={walletName}
+                  onChange={(e) => setWalletName(e.target.value)}
+                >
+                  {availableWallets.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              ) : (
+                <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.05)' }}>
+                  {walletName}
+                </div>
+              )}
             </div>
           )}
 

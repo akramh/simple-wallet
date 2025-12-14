@@ -90,6 +90,13 @@ let sessionPassword: string | null = null;
 /** Set of approved dApp origins that don't require re-approval */
 let approvedDappOrigins = new Set<string>();
 
+function isValidWalletName(name: string): boolean {
+  // Wallet names are storage keys (top-level keys in wallets.json), so keep them simple/stable:
+  // - 1–12 chars
+  // - alphanumeric only (no spaces/symbols)
+  return /^[A-Za-z0-9]{1,12}$/.test(name);
+}
+
 // ============================================================================
 // Balance Cache
 // ============================================================================
@@ -889,6 +896,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'CREATE_WALLET':
       const walletName = payload.name || 'default';
+      if (!isValidWalletName(walletName)) {
+        throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+      }
       const createPassword = payload.password ?? sessionPassword;
       if (!createPassword) {
         throw new Error('Master password required');
@@ -914,6 +924,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'IMPORT_WALLET':
       const importWalletName = payload.name || 'default';
+      if (!isValidWalletName(importWalletName)) {
+        throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+      }
       const importPassword = payload.password ?? sessionPassword;
       if (!importPassword) {
         throw new Error('Master password required');
@@ -1002,6 +1015,49 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         address: walletService!.getAddress(),
         walletName: currentWalletName
       };
+
+    case 'RENAME_WALLET': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      const oldName = payload?.oldName;
+      const newName = payload?.newName;
+      if (!oldName || !newName) {
+        throw new Error('Wallet name is required');
+      }
+      if (!isValidWalletName(newName)) {
+        throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+      }
+      const allWallets = walletService!.getAllWallets();
+      if (!allWallets[oldName]) {
+        throw new Error('Wallet not found');
+      }
+      if (oldName !== newName && allWallets[newName]) {
+        throw new Error('A wallet with this name already exists');
+      }
+
+      walletService!.renameWallet(oldName, newName);
+
+      // Migrate transaction history to the new storage key (keep old key as backup).
+      try {
+        const storage = await ChromeStorageAdapter.create();
+        const oldKey = `transactions_${oldName}`;
+        const newKey = `transactions_${newName}`;
+        const txs = storage.readJSON(oldKey, []);
+        if (Array.isArray(txs)) {
+          storage.writeJSON(newKey, txs);
+        }
+      } catch (err) {
+        console.warn('[RENAME_WALLET] Failed to migrate tx history:', err);
+      }
+
+      if (currentWalletName === oldName) {
+        currentWalletName = newName;
+        const storage = await ChromeStorageAdapter.create();
+        transactionHistory = new TransactionHistoryManager(storage, currentWalletName);
+      }
+
+      return { success: true, walletName: currentWalletName };
+    }
 
     case 'GET_BALANCE':
       if (!isUnlocked) throw new Error('Wallet is locked');
