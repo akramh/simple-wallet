@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { TransactionHistoryManager } from '../../../src/transaction-history.js';
+import TransactionDetailsModal from './TransactionDetailsModal';
+import { useToast } from '../context/ToastContext';
 
 interface Transaction {
   hash: string;
@@ -17,18 +19,24 @@ interface Transaction {
   tokenSymbol?: string;
   tokenAddress?: string;
   error?: string;
+  nonce?: number;
 }
 
 interface Props {
   currentAddress: string;
   network: string;
+  networks: Record<string, any>;
 }
 
-function ActivityView({ currentAddress, network }: Props) {
+function ActivityView({ currentAddress, network, networks }: Props) {
+  const { showToast } = useToast();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
 
   const loadTransactions = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -108,12 +116,22 @@ function ActivityView({ currentAddress, network }: Props) {
     return `${numValue.toFixed(4)} ${tokenSymbol}`;
   };
 
-  const openInExplorer = (hash: string) => {
-    const url = TransactionHistoryManager.getExplorerUrl(network, hash);
-    chrome.tabs.create({ url });
+  const handleTransactionClick = (tx: Transaction) => {
+    setSelectedTx(tx);
+    setShowDetailsModal(true);
   };
 
-
+  const getNetworkConfigForTx = (txNetworkKey: string) => {
+    const netConfig = networks[txNetworkKey];
+    if (!netConfig) {
+      // Fallback for missing network config (shouldn't happen if networks prop is robust)
+      return { blockExplorer: '', nativeSymbol: '???' };
+    }
+    return {
+      blockExplorer: netConfig.blockExplorer || '',
+      nativeSymbol: netConfig.nativeSymbol || '???'
+    };
+  };
 
   if (loading) {
     return (
@@ -162,7 +180,7 @@ function ActivityView({ currentAddress, network }: Props) {
         ) : (
           <div>
             {transactions.map((tx) => (
-              <div key={tx.hash} className="transaction-item">
+              <div key={tx.hash} className="transaction-item" onClick={() => handleTransactionClick(tx)}>
                 {/* Status Indicator Bar */}
                 <div className={`tx-status-bar ${tx.status}`} title={tx.status.charAt(0).toUpperCase() + tx.status.slice(1)} />
                 
@@ -184,32 +202,21 @@ function ActivityView({ currentAddress, network }: Props) {
                     <div className="tx-error-inline">{tx.error}</div>
                   )}
                 </div>
-
-                {/* View Link */}
-                <button
-                  className="tx-view-link"
-                  onClick={() => openInExplorer(tx.hash)}
-                  title="View on explorer"
-                >
-                  View
-                </button>
-
-                {/* Hover Tooltip */}
-                <div className="tx-tooltip">
-                  <div className="tx-tooltip-row"><strong>Status:</strong> {tx.status.charAt(0).toUpperCase() + tx.status.slice(1)}</div>
-                  <div className="tx-tooltip-row"><strong>Hash:</strong> {tx.hash.substring(0, 10)}...{tx.hash.substring(tx.hash.length - 8)}</div>
-                  <div className="tx-tooltip-row"><strong>From:</strong> {formatAddress(tx.from)}</div>
-                <div className="tx-tooltip-row"><strong>To:</strong> {formatAddress(tx.to)}</div>
-                {tx.blockNumber && <div className="tx-tooltip-row"><strong>Block:</strong> {tx.blockNumber}</div>}
-                {tx.gasUsed && <div className="tx-tooltip-row"><strong>Gas Used:</strong> {tx.gasUsed}</div>}
-                {tx.fee && tx.tokenSymbol && <div className="tx-tooltip-row"><strong>Fee:</strong> {tx.fee} {tx.tokenSymbol}</div>}
-                <div className="tx-tooltip-row"><strong>Time:</strong> {new Date(tx.timestamp).toLocaleString()}</div>
               </div>
-            </div>
-          ))}
+            ))}
           </div>
         )}
       </div>
+
+      {/* Transaction Details Modal */}
+      {showDetailsModal && selectedTx && (
+        <TransactionDetailsModal
+          isOpen={showDetailsModal}
+          onClose={() => setShowDetailsModal(false)}
+          transaction={selectedTx}
+          networkConfig={getNetworkConfigForTx(selectedTx.network)}
+        />
+      )}
     </div>
   );
 }

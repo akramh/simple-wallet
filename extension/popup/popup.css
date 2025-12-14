@@ -985,6 +985,7 @@
 .logo-icon {
   width: 24px;
   height: 24px;
+  filter: invert(1);
 }
 
 .logo-text {
@@ -1996,656 +1997,153 @@
   padding: 12px 20px;
 }
 
+/* Transaction List Items */
 .transaction-item {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 14px 4px;
-  border-bottom: 1px solid var(--border-light);
-  transition: background 0.15s ease;
-  position: relative;
-}
-
-.transaction-item:last-child {
-  border-bottom: none;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .transaction-item:hover {
-  background: var(--bg-secondary);
-  margin: 0 -4px;
-  padding: 14px 8px;
-  border-radius: 8px;
+  border-color: var(--primary);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.05);
+  transform: translateY(-1px);
 }
 
-.transaction-item:hover .tx-tooltip {
-  opacity: 1;
-  visibility: visible;
+.transaction-item:active {
   transform: translateY(0);
 }
 
-/* Status Indicator Bar */
 .tx-status-bar {
-  width: 4px;
-  height: 36px;
-  border-radius: 2px;
+  width: 5px;
+  height: 40px;
+  border-radius: 999px;
   flex-shrink: 0;
 }
 
 .tx-status-bar.confirmed {
-  background: var(--success);
+  background-color: var(--success);
 }
 
 .tx-status-bar.pending {
-  background: var(--warning);
-  animation: pulse 1.5s ease-in-out infinite;
+  background-color: var(--warning);
 }
 
 .tx-status-bar.failed {
-  background: var(--danger);
+  background-color: var(--danger);
 }
 
-/* Transaction Content */
 .tx-content {
   flex: 1;
-  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.tx-row-primary {
+.tx-row-primary, .tx-row-secondary {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
 }
 
-.tx-row-secondary {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.tx-type {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .tx-amount-value {
   font-size: 14px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
 
-/* View Link */
-.tx-view-link {
-  background: none;
-  border: none;
-  color: var(--primary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background 0.15s ease, color 0.15s ease;
-  flex-shrink: 0;
-}
-
-.tx-view-link:hover {
-  background: var(--primary-light);
-  color: var(--primary-dark);
-}
-
-/* Transaction Tooltip */
-.tx-tooltip {
-  position: absolute;
-  top: 100%;
-  left: 12px;
-  right: 12px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  z-index: 100;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition: opacity 0.15s ease, visibility 0.15s ease, transform 0.15s ease;
-  pointer-events: none;
-}
-
-.tx-tooltip-row {
+.tx-address, .tx-time {
   font-size: 12px;
   color: var(--text-secondary);
-  margin-bottom: 4px;
-  word-break: break-all;
-}
-
-.tx-tooltip-row:last-child {
-  margin-bottom: 0;
-}
-
-.tx-tooltip-row strong {
-  color: var(--text-primary);
-  font-weight: 600;
-  margin-right: 4px;
 }
 
 .tx-error-inline {
   font-size: 11px;
   color: var(--danger);
+  word-break: break-all;
   margin-top: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.tx-icon {
+.activity-header-simple {
   display: flex;
-  align-items: flex-start;
-  padding-top: 2px;
+  justify-content: flex-end;
+  padding: 12px 20px 0;
 }
 
-.tx-type-badge {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+/* Transaction Details Modal */
+.transaction-details-modal {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  background: white;
-  border: 1px solid var(--border);
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px;
 }
 
-.tx-type-badge.send {
-  background: var(--warning-light);
-  border-color: var(--warning-mid);
-}
-
-.tx-type-badge.receive {
-  background: var(--success-light);
-  border-color: var(--success);
-}
-
-.tx-details {
-  flex: 1;
-  min-width: 0;
-}
-
-.tx-main {
+.detail-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border-subtle);
+  font-size: 13px;
 }
 
-.tx-type {
-  font-size: 15px;
-  font-weight: 700;
+.detail-row:last-of-type {
+  border-bottom: none;
+}
+
+.detail-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+  flex-shrink: 0;
+  margin-right: 12px;
+}
+
+.detail-value {
   color: var(--text-primary);
-}
-
-.tx-status {
-  font-size: 12px;
   font-weight: 600;
-  padding: 4px 10px;
-  border-radius: 12px;
-  display: inline-flex;
+  text-align: right;
+  word-break: break-all;
+  white-space: normal;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
+  max-width: 65%;
 }
 
-.tx-status-pending {
-  background: var(--warning-light);
-  color: var(--warning-dark);
-}
-
-.tx-status-confirmed {
-  background: var(--success-light);
-  color: var(--success-dark);
-}
-
-.tx-status-failed {
-  background: var(--danger-light);
-  color: var(--danger-dark);
-}
-
-.tx-addresses {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.tx-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.tx-address {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-family: monospace;
-}
-
-.tx-time {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.tx-amount {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.tx-error {
-  margin-top: 8px;
-  padding: 8px;
-  background: var(--danger-light);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--danger-dark);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.error-icon {
-  font-size: 14px;
-}
-
-.tx-actions {
-  display: flex;
-  align-items: flex-start;
-  padding-top: 2px;
-}
-
-.btn-explorer {
-  background: none;
-  border: 1px solid var(--border);
-  font-size: 16px;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+.detail-value.copyable {
   cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
-.btn-explorer:hover {
-  background: var(--primary);
-  border-color: var(--primary);
-  transform: scale(1.05);
+.detail-value.copyable:hover {
+  color: var(--primary);
 }
 
-/* Empty State */
-.empty-state {
-  text-align: center;
-  padding: 60px 20px;
-}
-
-.empty-icon {
-  font-size: 64px;
-  margin-bottom: 16px;
-  opacity: 0.5;
-}
-
-.empty-state p {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 8px 0;
-}
-
-.empty-state span {
+.copy-icon {
   font-size: 14px;
-  color: var(--text-secondary);
+  opacity: 0.6;
 }
 
-/* ============================================================================
-   Send Transaction View - Progress and Confirmation
-   ============================================================================ */
-
-.send-transaction-view {
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  min-height: 100%;
-}
-
-/* Progress Steps */
-.tx-progress-steps {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 16px 0;
-}
-
-.tx-step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  opacity: 0.4;
-  transition: opacity 0.3s ease;
-}
-
-.tx-step.active,
-.tx-step.completed {
+.detail-value.copyable:hover .copy-icon {
   opacity: 1;
 }
 
-.tx-step-indicator {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: var(--bg-tertiary);
-  border: 2px solid var(--border);
+.modal-actions {
   display: flex;
-  align-items: center;
   justify-content: center;
-  transition: all 0.3s ease;
-}
-
-.tx-step.active .tx-step-indicator {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-}
-
-.tx-step.completed .tx-step-indicator {
-  border-color: var(--success);
-  background: var(--success);
-  color: white;
-}
-
-.tx-step.failed .tx-step-indicator {
-  border-color: var(--error);
-  background: var(--error);
-  color: white;
-}
-
-.tx-step-indicator svg {
-  width: 20px;
-  height: 20px;
-}
-
-.tx-step-number {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.tx-step-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.tx-step.active .tx-step-label,
-.tx-step.completed .tx-step-label {
-  color: var(--text-primary);
-}
-
-.tx-step-connector {
-  width: 60px;
-  height: 2px;
-  background: var(--border);
-  margin-bottom: 28px;
-}
-
-/* Spinner */
-.tx-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border);
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: tx-spin 0.8s linear infinite;
-}
-
-@keyframes tx-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Transaction Details Card */
-.tx-details-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 24px;
-  transition: all 0.3s ease;
-}
-
-.tx-details-card.success {
-  border-color: var(--success);
-  background: var(--success-softbg);
-}
-
-.tx-details-card.error {
-  border-color: var(--error);
-  background: var(--error-softbg);
-}
-
-/* Success/Error Headers */
-.tx-success-header,
-.tx-error-header {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  margin-bottom: 20px;
-  gap: 12px;
-}
-
-.tx-success-icon,
-.tx-error-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tx-success-icon {
-  background: var(--success);
-  color: white;
-}
-
-.tx-error-icon {
-  background: var(--error);
-  color: white;
-}
-
-.tx-success-icon svg,
-.tx-error-icon svg {
-  width: 32px;
-  height: 32px;
-}
-
-.tx-success-header h3,
-.tx-error-header h3 {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0;
-  color: var(--text-primary);
-}
-
-.tx-error-message {
-  font-size: 14px;
-  color: var(--error);
-  margin: 0;
-  max-width: 280px;
-}
-
-/* Detail Rows */
-.tx-detail-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.tx-detail-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.tx-detail-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.tx-detail-label {
-  font-size: 14px;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.tx-detail-value {
-  font-size: 14px;
-  color: var(--text-primary);
-  font-weight: 600;
-  font-family: var(--font-mono, monospace);
-}
-
-.tx-detail-value-group {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-}
-
-.tx-detail-usd {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-weight: 400;
-}
-
-.tx-detail-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 4px 0;
-}
-
-.tx-total-row {
-  padding-top: 4px;
-}
-
-.tx-total-value {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.tx-hash-value {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.tx-copy-btn,
-.tx-explorer-btn {
-  background: transparent;
-  border: none;
-  padding: 4px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-}
-
-.tx-copy-btn:hover,
-.tx-explorer-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--primary);
-}
-
-.tx-copy-btn svg,
-.tx-explorer-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Action Buttons */
-.tx-actions {
-  display: flex;
-  gap: 12px;
-  margin-top: auto;
-  padding-top: 16px;
-}
-
-.tx-actions .btn {
-  flex: 1;
-}
-
-.tx-actions .btn-secondary {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-}
-
-.tx-actions .btn-secondary:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--primary);
-}
-
-.tx-sending-note {
-  font-size: 13px;
-  color: var(--text-secondary);
-  text-align: center;
-  margin: 16px 0 0 0;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-light);
-}
-
-/* Confirmation Header */
-.tx-confirm-header {
-  text-align: center;
-  margin-bottom: 20px;
-}
-
-.tx-confirm-header h3 {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 8px 0;
-}
-
-.tx-confirm-header p {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0;
-}
-
-.tx-amount-highlight {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--primary);
-}
-
-/* Info box */
-.info-box {
-  background-color: var(--primary-50, #eef2ff);
-  border: 1px solid var(--primary-100, #e0e7ff);
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 20px;
-}
-
-.info-box p {
-  margin: 0;
-  font-size: 14px;
-  color: var(--primary-700, #4338ca);
+  margin-top: 16px;
+  margin-bottom: 16px; /* Added for spacing */
 }

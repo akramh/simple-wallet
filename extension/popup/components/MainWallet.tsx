@@ -721,7 +721,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
             )}
           </>
         ) : view === 'activity' ? (
-          <ActivityView currentAddress={address} network={network} />
+          <ActivityView currentAddress={address} network={network} networks={networks} />
         ) : view === 'receive' ? (
           <div className="takeover">
             <button className="back-button" onClick={() => setView('tokens')}>
