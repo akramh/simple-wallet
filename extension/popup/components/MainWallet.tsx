@@ -7,7 +7,7 @@
  * - Activity/transaction history
  * - Multi-view navigation (tokens, send, receive, activity, settings)
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import SettingsView from './SettingsView';
 import Header from './Header';
 import AccountMenu from './AccountMenu';
@@ -16,7 +16,9 @@ import ActivityView from './ActivityView';
 import AddTokenModal from './AddTokenModal';
 import SendTransactionView from './SendTransactionView';
 import Identicon from './ui/Identicon';
+import NetworkSelector from './ui/NetworkSelector';
 import ethIcon from '../../assets/img/eth_logo.svg';
+import { useToast } from '../context/ToastContext';
 import bnbIcon from '../../assets/img/bnb.svg';
 import solIcon from '../../assets/img/solana-logo.svg';
 import avaxIcon from '../../assets/img/avax-token.svg';
@@ -126,6 +128,7 @@ interface TokenWithBalance {
 }
 
 function MainWallet({ address, network, onLock, onStateChange }: Props) {
+  const { showToast } = useToast();
   const notifyStateChange = () => {
     if (onStateChange) {
       onStateChange();
@@ -156,6 +159,26 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [gasEstimate, setGasEstimate] = useState<{ estimatedCostNative: string; nativeSymbol: string } | null>(null);
   const [gasEstimateLoading, setGasEstimateLoading] = useState(false);
   const [calculatingMax, setCalculatingMax] = useState(false);
+
+  const networkOptions = useMemo(() => {
+    return Object.entries(networks).map(([key, net]: [string, any]) => {
+      let icon;
+      if (key === 'base') icon = ICON_ASSETS['base.svg'];
+      else if (key === 'arbitrum') icon = ICON_ASSETS['arbitrum.svg'];
+      else if (key === 'linea') icon = ICON_ASSETS['linea-logo-mainnet.svg'];
+      else if (key.startsWith('solana')) icon = ICON_ASSETS['solana-logo.svg'];
+      else if (key.startsWith('bitcoin')) icon = ICON_ASSETS['bitcoin-logo.svg'];
+      else if (key === 'bsc') icon = ICON_ASSETS['bnb.svg'];
+      else if (key === 'avalanche') icon = ICON_ASSETS['avax-token.svg'];
+      else if (key === 'polygon') icon = ICON_ASSETS['pol-token.svg'];
+      
+      if (!icon && net.nativeSymbol) {
+         const file = SYMBOL_ICON_FALLBACK[net.nativeSymbol.toLowerCase()];
+         if (file) icon = ICON_ASSETS[file];
+      }
+      return { value: key, label: net.name, icon };
+    });
+  }, [networks]);
 
   // Load tokens immediately, then trigger async balance refresh
   useEffect(() => {
@@ -525,7 +548,16 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 <div className="account-name">
                   {currentWalletName} : Account {currentAccountIndex + 1}
                 </div>
-                <div className="account-address">
+                <div 
+                  className="account-address"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(address);
+                    showToast('Address copied!');
+                  }}
+                  title="Click to copy"
+                  style={{ cursor: 'pointer' }}
+                >
                   {/* Bitcoin addresses are longer, show more characters */}
                   {isBitcoinNetwork(network)
                     ? `${address.substring(0, 8)}...${address.substring(address.length - 6)}`
@@ -596,18 +628,12 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         ) : view === 'tokens' ? (
           <>
             {/* Tokens */}
-            <div className="tokens-header">
-              <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
-                <label style={{ marginBottom: 4 }}>Network</label>
-                <select
-                  value={network}
-                  onChange={(e) => handleNetworkChange(e.target.value)}
-                >
-                  {Object.entries(networks).map(([key, net]: [string, any]) => (
-                    <option key={key} value={key}>{net.name}</option>
-                  ))}
-                </select>
-              </div>
+            <div className="tokens-header" style={{ display: 'block', marginBottom: 12 }}>
+              <NetworkSelector
+                value={network}
+                options={networkOptions}
+                onChange={handleNetworkChange}
+              />
             </div>
 
             {loading ? (
