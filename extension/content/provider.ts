@@ -31,6 +31,16 @@
  */
 
 // ============================================================================
+// Security: Cache page origin for secure postMessage
+// ============================================================================
+
+/**
+ * Cache the page origin at load time for secure postMessage calls.
+ * This prevents origin spoofing attacks.
+ */
+const PAGE_ORIGIN = window.location.origin;
+
+// ============================================================================
 // Type Definitions
 // ============================================================================
 
@@ -78,7 +88,9 @@ class SimpleWalletProvider {
   constructor() {
     // Listen for responses from content script
     window.addEventListener('message', (event) => {
+      // Security: Only accept messages from same window and origin
       if (event.source !== window) return;
+      if (event.origin !== PAGE_ORIGIN) return;
 
       const { type, id, result, error, event: evt, data } = event.data;
 
@@ -132,12 +144,13 @@ class SimpleWalletProvider {
       this.pendingRequests.set(id, { resolve, reject });
 
       // Send request to content script
+      // Security: Use specific origin instead of wildcard
       window.postMessage({
         type: 'SIMPLE_WALLET_PROVIDER_REQUEST',
         id,
         method: args.method,
         params: args.params || []
-      }, '*');
+      }, PAGE_ORIGIN);
 
       // Timeout after 60 seconds
       setTimeout(() => {

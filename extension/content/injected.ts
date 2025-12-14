@@ -23,9 +23,14 @@
  * 
  * @security
  * - Validates message source (same window only)
+ * - Validates message origin matches current page origin
  * - Filters for our specific message types
  * - Uses chrome.runtime for secure extension communication
+ * - Uses specific origin for postMessage (not wildcard)
  */
+
+// Cache the page origin for secure postMessage calls
+const PAGE_ORIGIN = window.location.origin;
 
 // ============================================================================
 // Provider Script Injection
@@ -58,6 +63,9 @@ window.addEventListener('message', async (event) => {
   // Security: Only accept messages from the same window
   if (event.source !== window) return;
 
+  // Security: Validate origin matches current page (prevents cross-origin attacks)
+  if (event.origin !== PAGE_ORIGIN) return;
+
   const { type, id, method, params } = event.data;
 
   // Only handle our provider messages
@@ -67,29 +75,32 @@ window.addEventListener('message', async (event) => {
     // Forward request to background script
     const mapped = mapMethodToBackgroundType(method);
     if (mapped === 'UNKNOWN_METHOD') {
-      window.postMessage({ type: 'SIMPLE_WALLET_PROVIDER_RESPONSE', id, result: null, error: 'Method not supported' }, '*');
+      // Security: Use specific origin instead of wildcard
+      window.postMessage({ type: 'SIMPLE_WALLET_PROVIDER_RESPONSE', id, result: null, error: 'Method not supported' }, PAGE_ORIGIN);
       return;
     }
 
     const response = await chrome.runtime.sendMessage({
       type: mapped,
-      payload: { method, params, origin: window.location.origin }
+      payload: { method, params, origin: PAGE_ORIGIN }
     });
 
+    // Security: Use specific origin instead of wildcard
     window.postMessage({
       type: 'SIMPLE_WALLET_PROVIDER_RESPONSE',
       id,
       result: response,
       error: null
-    }, '*');
+    }, PAGE_ORIGIN);
   } catch (error: any) {
     // Send error back to page
+    // Security: Use specific origin instead of wildcard
     window.postMessage({
       type: 'SIMPLE_WALLET_PROVIDER_RESPONSE',
       id,
       result: null,
       error: error.message
-    }, '*');
+    }, PAGE_ORIGIN);
   }
 });
 
@@ -103,11 +114,12 @@ window.addEventListener('message', async (event) => {
  */
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'PROVIDER_EVENT') {
+    // Security: Use specific origin instead of wildcard
     window.postMessage({
       type: 'SIMPLE_WALLET_PROVIDER_EVENT',
       event: message.event,
       data: message.data
-    }, '*');
+    }, PAGE_ORIGIN);
   }
 });
 
