@@ -84,11 +84,191 @@ const AUTO_LOCK_TIMEOUT = 15 * 60 * 1000;
 /** Transaction history manager for the current wallet */
 let transactionHistory: TransactionHistoryManager | null = null;
 
-/** Cached session password (in-memory only, cleared on lock) */
-let sessionPassword: string | null = null;
+// ============================================================================
+// Session Password Protection
+// ============================================================================
 
-/** Set of approved dApp origins that don't require re-approval */
-let approvedDappOrigins = new Set<string>();
+/**
+ * Session password storage with basic obfuscation.
+ *
+ * Security notes:
+ * - The password is XOR'd with a random key to prevent trivial memory scanning
+ * - This is NOT encryption - it's obfuscation to raise the bar for memory dump attacks
+ * - True protection would require hardware security modules or OS-level secure storage
+ * - The password is still in memory and can be extracted by determined attackers
+ */
+interface ObfuscatedPassword {
+  /** XOR'd password bytes */
+  data: Uint8Array;
+  /** Random key used for XOR */
+  key: Uint8Array;
+}
+
+let obfuscatedPassword: ObfuscatedPassword | null = null;
+
+/**
+ * Store session password with obfuscation.
+ * @param password - Plain text password to store
+ */
+function setSessionPassword(password: string | null): void {
+  if (password === null) {
+    // Clear the obfuscated password
+    if (obfuscatedPassword) {
+      // Overwrite memory before clearing
+      obfuscatedPassword.data.fill(0);
+      obfuscatedPassword.key.fill(0);
+      obfuscatedPassword = null;
+    }
+    return;
+  }
+
+  // Convert password to bytes
+  const encoder = new TextEncoder();
+  const passwordBytes = encoder.encode(password);
+
+  // Generate random key of same length
+  const key = new Uint8Array(passwordBytes.length);
+  crypto.getRandomValues(key);
+
+  // XOR password with key
+  const data = new Uint8Array(passwordBytes.length);
+  for (let i = 0; i < passwordBytes.length; i++) {
+    data[i] = passwordBytes[i] ^ key[i];
+  }
+
+  // Clear original password bytes
+  passwordBytes.fill(0);
+
+  obfuscatedPassword = { data, key };
+}
+
+/**
+ * Retrieve session password (de-obfuscate).
+ * @returns Plain text password or null if not set
+ */
+function getSessionPassword(): string | null {
+  if (!obfuscatedPassword) return null;
+
+  // XOR data with key to recover password
+  const passwordBytes = new Uint8Array(obfuscatedPassword.data.length);
+  for (let i = 0; i < obfuscatedPassword.data.length; i++) {
+    passwordBytes[i] = obfuscatedPassword.data[i] ^ obfuscatedPassword.key[i];
+  }
+
+  // Convert to string
+  const decoder = new TextDecoder();
+  const password = decoder.decode(passwordBytes);
+
+  // Clear temporary bytes
+  passwordBytes.fill(0);
+
+  return password;
+}
+
+/**
+ * Check if session password is set.
+ */
+function hasSessionPassword(): boolean {
+  return obfuscatedPassword !== null;
+}
+
+// ============================================================================
+// dApp Approval Management (with expiration support)
+// ============================================================================
+
+/** Approval expiration time: 24 hours (in milliseconds) */
+const DAPP_APPROVAL_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Structure for persisted dApp approvals with timestamps.
+ * Approvals expire after DAPP_APPROVAL_EXPIRY_MS for security.
+ */
+interface DappApproval {
+  origin: string;
+  approvedAt: number;
+  /** If true, approval only lasts for current session (cleared on lock/browser close) */
+  sessionOnly: boolean;
+}
+
+/** Map of approved dApp origins to their approval info */
+let approvedDappOrigins = new Map<string, DappApproval>();
+
+/** Session-only approvals (cleared on wallet lock) */
+let sessionOnlyApprovals = new Set<string>();
+
+/**
+ * Check if a dApp origin is currently approved (not expired).
+ * @param origin - The dApp origin to check
+ * @returns true if approved and not expired
+ */
+function isDappApproved(origin: string): boolean {
+  const approval = approvedDappOrigins.get(origin);
+  if (!approval) return false;
+
+  // Check if session-only approval was cleared
+  if (approval.sessionOnly && !sessionOnlyApprovals.has(origin)) {
+    approvedDappOrigins.delete(origin);
+    return false;
+  }
+
+  // Check if approval has expired
+  const now = Date.now();
+  if (now - approval.approvedAt > DAPP_APPROVAL_EXPIRY_MS) {
+    approvedDappOrigins.delete(origin);
+    saveApprovedOrigins();
+    console.log(`[DappApproval] Expired approval for ${origin}`);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Add a dApp approval with timestamp.
+ * @param origin - The dApp origin to approve
+ * @param sessionOnly - If true, approval only lasts for current session
+ */
+function approveDapp(origin: string, sessionOnly: boolean = false): void {
+  const approval: DappApproval = {
+    origin,
+    approvedAt: Date.now(),
+    sessionOnly
+  };
+  approvedDappOrigins.set(origin, approval);
+
+  if (sessionOnly) {
+    sessionOnlyApprovals.add(origin);
+  }
+
+  // Only persist non-session-only approvals
+  if (!sessionOnly) {
+    saveApprovedOrigins();
+  }
+
+  console.log(`[DappApproval] Approved ${origin} (sessionOnly: ${sessionOnly})`);
+}
+
+/**
+ * Revoke a dApp approval.
+ * @param origin - The dApp origin to revoke
+ */
+function revokeDappApproval(origin: string): void {
+  approvedDappOrigins.delete(origin);
+  sessionOnlyApprovals.delete(origin);
+  saveApprovedOrigins();
+  console.log(`[DappApproval] Revoked approval for ${origin}`);
+}
+
+/**
+ * Clear all session-only approvals (called on wallet lock).
+ */
+function clearSessionOnlyApprovals(): void {
+  for (const origin of sessionOnlyApprovals) {
+    approvedDappOrigins.delete(origin);
+  }
+  sessionOnlyApprovals.clear();
+  console.log('[DappApproval] Cleared session-only approvals');
+}
 
 function isValidWalletName(name: string): boolean {
   // Wallet names are storage keys (top-level keys in wallets.json), so keep them simple/stable:
@@ -320,12 +500,39 @@ const resolveOrigin = (sender: chrome.runtime.MessageSender, payload?: any): str
 /**
  * Loads the list of approved dApp origins from chrome.storage.local.
  * Called during service worker initialization.
+ * Migrates from old format (string[]) to new format (DappApproval[]) if needed.
  */
 async function loadApprovedOrigins(): Promise<void> {
   try {
     const stored = await chrome.storage.local.get('approvedDapps');
-    const list: string[] = stored?.approvedDapps || [];
-    approvedDappOrigins = new Set(list);
+    const data = stored?.approvedDapps;
+
+    // Handle migration from old format (string[]) to new format (DappApproval[])
+    if (Array.isArray(data)) {
+      approvedDappOrigins = new Map();
+
+      for (const item of data) {
+        if (typeof item === 'string') {
+          // Old format: just origin string - migrate with current timestamp
+          approvedDappOrigins.set(item, {
+            origin: item,
+            approvedAt: Date.now(),
+            sessionOnly: false
+          });
+        } else if (typeof item === 'object' && item.origin) {
+          // New format: DappApproval object
+          const approval = item as DappApproval;
+          // Skip expired approvals during load
+          if (Date.now() - approval.approvedAt <= DAPP_APPROVAL_EXPIRY_MS) {
+            approvedDappOrigins.set(approval.origin, approval);
+          }
+        }
+      }
+
+      // Save in new format after migration
+      await saveApprovedOrigins();
+      console.log('[DappApproval] Loaded and migrated approved origins');
+    }
   } catch (err) {
     console.warn('Failed to load approved origins', err);
   }
@@ -333,11 +540,18 @@ async function loadApprovedOrigins(): Promise<void> {
 
 /**
  * Persists the current set of approved dApp origins to chrome.storage.local.
- * Called after granting a new dApp connection.
+ * Only saves non-session-only approvals.
  */
 async function saveApprovedOrigins(): Promise<void> {
   try {
-    await chrome.storage.local.set({ approvedDapps: Array.from(approvedDappOrigins) });
+    // Only persist non-session-only approvals
+    const persistable: DappApproval[] = [];
+    for (const approval of approvedDappOrigins.values()) {
+      if (!approval.sessionOnly) {
+        persistable.push(approval);
+      }
+    }
+    await chrome.storage.local.set({ approvedDapps: persistable });
   } catch (err) {
     console.warn('Failed to save approved origins', err);
   }
@@ -699,21 +913,24 @@ function resetAutoLockTimer(): void {
  */
 function lockWallet(): void {
   isUnlocked = false;
-  sessionPassword = null;
+  setSessionPassword(null);
   if (autoLockTimer) {
     clearTimeout(autoLockTimer);
     autoLockTimer = null;
   }
-  
+
   // Stop balance polling
   stopBalancePolling();
+
+  // Security: Clear session-only dApp approvals on lock
+  clearSessionOnlyApprovals();
 
   // Notify all extension contexts (popup, side panel, etc.) that wallet is locked
   // Use storage change event as a reliable broadcast mechanism
   chrome.storage.session.set({ walletLocked: Date.now() }).catch(() => {
     // Fallback for browsers without session storage
   });
-  
+
   // Also try direct message (works for popup)
   chrome.runtime.sendMessage({ type: 'WALLET_LOCKED' }).catch(() => {
     // Ignore errors if no listeners
@@ -894,16 +1111,16 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         currentWalletName: isUnlocked ? currentWalletName : null
       };
 
-    case 'CREATE_WALLET':
+    case 'CREATE_WALLET': {
       const walletName = payload.name || 'default';
       if (!isValidWalletName(walletName)) {
         throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
       }
-      const createPassword = payload.password ?? sessionPassword;
+      const createPassword = payload.password ?? getSessionPassword();
       if (!createPassword) {
         throw new Error('Master password required');
       }
-      sessionPassword = createPassword;
+      setSessionPassword(createPassword);
       const newWallet = walletService!.createWallet(createPassword);
       walletService!.saveWallet(walletName);
       currentWalletName = walletName;
@@ -916,22 +1133,34 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       transactionHistory = new TransactionHistoryManager(createStorage, currentWalletName);
 
       resetAutoLockTimer();
-      return {
+
+      // Security: Only return mnemonic if explicitly requested (for initial backup display)
+      // The mnemonic is stored encrypted and can be retrieved via GET_SECRET_PHRASE with password
+      const response: { success: boolean; address: string; mnemonic?: string; requiresBackup: boolean } = {
         success: true,
         address: walletService!.getAddress(),
-        mnemonic: newWallet.mnemonic
+        requiresBackup: true // Signal to UI that user should backup their mnemonic
       };
+
+      // Only include mnemonic if this is initial creation (showMnemonic flag)
+      // This limits exposure - subsequent retrievals require password via GET_SECRET_PHRASE
+      if (payload.showMnemonic === true) {
+        response.mnemonic = newWallet.mnemonic;
+      }
+
+      return response;
+    }
 
     case 'IMPORT_WALLET':
       const importWalletName = payload.name || 'default';
       if (!isValidWalletName(importWalletName)) {
         throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
       }
-      const importPassword = payload.password ?? sessionPassword;
+      const importPassword = payload.password ?? getSessionPassword();
       if (!importPassword) {
         throw new Error('Master password required');
       }
-      sessionPassword = importPassword;
+      setSessionPassword(importPassword);
       const importedWallet = walletService!.importWallet(
         payload.mnemonic,
         importPassword,
@@ -955,12 +1184,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'UNLOCK_WALLET':
       const unlockWalletName = payload.name || 'default';
-      const unlockPassword = payload.password ?? sessionPassword;
+      const unlockPassword = payload.password ?? getSessionPassword();
       const loaded = walletService!.loadWallet(unlockWalletName, unlockPassword);
       if (!loaded) {
         throw new Error('Invalid password or wallet not found');
       }
-      sessionPassword = unlockPassword || null;
+      setSessionPassword(unlockPassword || null);
       currentWalletName = unlockWalletName;
       isUnlocked = true;
 
@@ -994,7 +1223,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!switchWalletName) {
         throw new Error('Wallet name is required');
       }
-      const switchPassword = sessionPassword;
+      const switchPassword = getSessionPassword();
       if (!switchPassword) {
         throw new Error('Session password not available. Please unlock wallet first.');
       }
@@ -1246,14 +1475,15 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       try {
         // Solana send path (broadcast + pending)
         if (isSolanaNetworkConfig(sendNetworkConfig)) {
-          if (!sessionPassword) {
+          const solanaPassword = getSessionPassword();
+          if (!solanaPassword) {
             throw new Error('Session password not available. Please unlock wallet again.');
           }
 
           const result = await walletService!.sendSolanaTransaction(
             payload.toAddress,
             payload.amount,
-            sessionPassword
+            solanaPassword
           );
 
           // Track transaction in history as pending
@@ -1287,14 +1517,15 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
         // Bitcoin send path (broadcast + pending)
         if (isBitcoinNetworkConfig(sendNetworkConfig)) {
-          if (!sessionPassword) {
+          const bitcoinPassword = getSessionPassword();
+          if (!bitcoinPassword) {
             throw new Error('Session password not available. Please unlock wallet again.');
           }
 
           const result = await walletService!.sendBitcoinTransaction(
             payload.toAddress,
             payload.amount,
-            sessionPassword
+            bitcoinPassword
           );
 
           // Track transaction in history as pending
@@ -1599,23 +1830,61 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!isEVMNetworkConfig(ethReqNetworkConfig)) {
         throw new Error('eth_requestAccounts is only supported on EVM networks');
       }
+
+      const addr = walletService!.getAddress();
+
+      // Check if this origin is already approved and not expired
+      if (origin && isDappApproved(origin)) {
+        // Already approved - return accounts without prompting
+        emitProviderEvent('connect', { chainId: '0x' + ethReqNetworkConfig.chainId.toString(16) });
+        broadcastAccountsChanged([addr]);
+        return { accounts: [addr] };
+      }
+
+      // Need approval - check if already pending
       if (pendingRequests.some(r => r.type === 'connect')) {
         throw new Error('Connection request already pending');
       }
+
+      // Request user approval
       await enqueueApproval({
         id: createRequestId(),
         type: 'connect',
         origin: origin || 'unknown',
         createdAt: Date.now()
       });
-      const addr = walletService!.getAddress();
+
+      // User approved - save with expiration timestamp
+      // Default to persistent approval (sessionOnly: false)
+      // UI can be extended to offer session-only option
       if (origin) {
-        approvedDappOrigins.add(origin);
-        saveApprovedOrigins();
+        approveDapp(origin, false);
       }
+
       emitProviderEvent('connect', { chainId: '0x' + ethReqNetworkConfig.chainId.toString(16) });
       broadcastAccountsChanged([addr]);
       return { accounts: [addr] };
+    }
+
+    case 'REVOKE_DAPP_APPROVAL': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      const revokeOrigin = payload?.origin;
+      if (revokeOrigin) {
+        revokeDappApproval(revokeOrigin);
+      }
+      return { success: true };
+    }
+
+    case 'GET_APPROVED_DAPPS': {
+      // Return list of approved dApps with their approval info
+      const approvals: Array<{ origin: string; approvedAt: number; sessionOnly: boolean; expiresAt: number }> = [];
+      for (const approval of approvedDappOrigins.values()) {
+        approvals.push({
+          ...approval,
+          expiresAt: approval.approvedAt + DAPP_APPROVAL_EXPIRY_MS
+        });
+      }
+      return { approvals };
     }
 
     case 'ETH_NET_VERSION': {

@@ -1,5 +1,5 @@
 {
-  "network": "solana-mainnet",
+  "network": "mainnet",
   "networks": {
     "bitcoin-mainnet": {
       "type": "bitcoin",

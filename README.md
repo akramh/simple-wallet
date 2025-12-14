@@ -1,22 +1,53 @@
 # Simple Crypto Wallet
 
-A command-line Ethereum wallet and Chrome extension supporting testnet and mainnet operations, written in TypeScript with full type safety. Also provides a programmatic SDK for integration into browser extensions, mobile apps, and other applications.
+A multi-chain cryptocurrency wallet with CLI and Chrome extension interfaces, supporting Ethereum (EVM chains), Bitcoin, and Solana. Written in TypeScript with full type safety. Also provides a programmatic SDK for integration into browser extensions, mobile apps, and other applications.
 
 ## Features
 
-- 🆕 Create new wallet with 12-word mnemonic phrase
-- 📥 Import existing wallet from mnemonic
-- 💰 Check wallet balance (ETH + ERC-20 tokens)
-- 📤 Send ETH or ERC-20 token transactions
-- 📥 Display receive address
-- ⚙️ Switch between Sepolia testnet and Ethereum mainnet
-- 🔒 Password-protected wallet encryption
-- 🔄 Multi-network support (Ethereum, Polygon, Base, Arbitrum, Optimism, etc.)
-- 🟣 Solana support (read-only: address, SOL balance, transaction history)
-- 💼 Multi-account support (BIP-44 HD wallet)
-- 📦 Token management (add custom ERC-20 tokens)
-- 🛡️ Atomic file writes with automatic backups
-- 🔁 RPC failover with retry mechanism
+### Multi-Chain Support
+- **Ethereum & EVM Chains** - Mainnet, Sepolia, Polygon, Base, Arbitrum, Optimism, Avalanche, BSC, Linea
+- **Bitcoin** - Mainnet and Testnet support
+- **Solana** - Mainnet and Devnet support
+
+### Core Wallet Features
+- Create new wallet with 12-word BIP-39 mnemonic phrase
+- Import existing wallet from mnemonic
+- Password-protected wallet encryption (AES-256-GCM)
+- Multi-account support (BIP-44 HD wallet)
+- Wallet import/export with backup functionality
+
+### EVM Features
+- Check wallet balance (ETH + ERC-20 tokens)
+- Send ETH or ERC-20 token transactions
+- Token management (add custom ERC-20 tokens)
+- Portfolio aggregation with real-time price data
+- RPC failover with retry mechanism
+
+### Bitcoin Features
+- BTC address generation and balance checking
+- Send BTC transactions
+- Transaction history via Mempool.space API
+
+### Solana Features
+- SOL address generation and balance checking
+- Send SOL transactions
+- Transaction history via Solscan API
+
+### Additional Features
+- QR code display for receiving
+- Block explorer integration (Etherscan, Solscan, Mempool.space, etc.)
+- Atomic file writes with automatic backups
+- Light/dark theme toggle (extension)
+
+## Supported Networks
+
+| Blockchain | Networks |
+|------------|----------|
+| Ethereum | Mainnet, Sepolia Testnet |
+| Layer 2 | Base, Arbitrum, Optimism, Linea |
+| Sidechains | Polygon, Avalanche, BSC |
+| Bitcoin | Mainnet, Testnet |
+| Solana | Mainnet, Devnet |
 
 ## Installation
 
@@ -72,13 +103,17 @@ npm test
 
 These tests run offline with mocked providers/contracts and stubbed prompts (no real RPC calls). The CLI is suppressed when `NODE_ENV=test`.
 
-**All 9 tests passing:** ✅
+**19 test files covering:**
+- Wallet creation and import
 - Crypto utilities (password validation, encryption/decryption)
 - Balance checking and portfolio aggregation
-- Network switching
-- RPC failover mechanism
+- Network switching and RPC failover
 - Token metadata caching
-- Transaction validation
+- Bitcoin functionality (address, explorer, transactions)
+- Solana functionality (address, explorer, transactions)
+- Chrome storage adapter
+- Price service
+- Transaction history
 
 ## Configuration
 
@@ -86,57 +121,78 @@ Edit `config.json` to change the default network or add custom RPC endpoints:
 
 ```json
 {
-  "network": "sepolia",
+  "network": "mainnet",
   "networks": {
-    "sepolia": {
-      "name": "Sepolia Testnet",
-      "rpcUrl": "https://rpc.sepolia.org",
-      "chainId": 11155111
-    },
     "mainnet": {
+      "type": "evm",
       "name": "Ethereum Mainnet",
       "rpcUrl": "https://eth.llamarpc.com",
-      "chainId": 1
+      "chainId": 1,
+      "nativeSymbol": "ETH"
+    },
+    "bitcoin-mainnet": {
+      "type": "bitcoin",
+      "name": "Bitcoin Mainnet",
+      "bitcoinNetwork": "mainnet",
+      "nativeSymbol": "BTC"
+    },
+    "solana-mainnet": {
+      "type": "solana",
+      "name": "Solana Mainnet",
+      "rpcUrl": "https://api.mainnet-beta.solana.com",
+      "nativeSymbol": "SOL"
     }
   }
 }
 ```
 
-### Explorer API keys (Etherscan/BaseScan/etc.)
+### Environment Variables
 
-Explorer API keys are no longer stored in `config.json`. Provide them through environment variables instead:
+Explorer and RPC API keys are provided through environment variables:
 
 1. Copy `.env.example` to `.env`.
 2. Set a global fallback key via `EXPLORER_API_KEY` or network-specific keys like `EXPLORER_API_KEY_MAINNET` and `EXPLORER_API_KEY_SEPOLIA` (uppercase the network key from `config.json`, e.g., `BASE`, `ARBITRUM`, `OPTIMISM`, `POLYGON`, `AVALANCHE`, `BSC`, `LINEA`).
 3. For networks whose keys contain non-alphanumeric characters (e.g. `solana-mainnet`), use underscores: `EXPLORER_API_KEY_SOLANA_MAINNET` (same for `VITE_`).
-4. For the Chrome extension build, Vite uses `VITE_`-prefixed variables (e.g., `VITE_EXPLORER_API_KEY_MAINNET` or `VITE_EXPLORER_API_KEY_BASE`).
+4. For Solana RPC access via Helius, set `HELIUS_API_KEY` (or `VITE_HELIUS_API_KEY` for the extension).
+5. For the Chrome extension build, Vite uses `VITE_`-prefixed variables (e.g., `VITE_EXPLORER_API_KEY_MAINNET` or `VITE_EXPLORER_API_KEY_BASE`).
 
 The CLI automatically loads `.env` via `dotenv`, and the extension build injects values from `import.meta.env`.
 
 ## Security Notes
 
-⚠️ **IMPORTANT SECURITY WARNINGS:**
+**IMPORTANT SECURITY WARNINGS:**
 
 1. **Never share your mnemonic phrase** - Anyone with your mnemonic can access your funds
 2. **Back up your mnemonic** - Store it securely offline
-3. **Keep wallet.json secure** - This file contains sensitive data
-
-### Solana Address Note
-
-Solana addresses are base58 and **case-sensitive**. Changing letter casing (e.g. lowercasing an address) produces a different address.
-4. **Use testnet first** - Test all operations on Sepolia before using mainnet
+3. **Keep wallets.json secure** - This file contains encrypted wallet data
+4. **Use testnet first** - Test all operations on testnets before using mainnet
 5. **This is a demo wallet** - For production use, consider hardware wallets or established solutions
 
-## Getting Testnet ETH
+### Address Format Notes
 
-To test the wallet on Sepolia testnet:
+- **Solana addresses** are base58 and **case-sensitive**. Changing letter casing produces a different address.
+- **Bitcoin addresses** support multiple formats (Legacy, SegWit, Native SegWit).
+- **Ethereum addresses** are case-insensitive but use mixed-case checksums (EIP-55).
+
+## Getting Testnet Funds
+
+### Ethereum (Sepolia)
 - Visit a Sepolia faucet (search "Sepolia faucet")
 - Enter your wallet address
 - Receive free test ETH
 
+### Bitcoin (Testnet)
+- Visit a Bitcoin testnet faucet (search "Bitcoin testnet faucet")
+- Enter your testnet address
+- Receive free test BTC
+
+### Solana (Devnet)
+- Use the Solana CLI: `solana airdrop 1 <address> --url devnet`
+- Or visit a Solana devnet faucet
+
 ## Switching Networks
 
-Use the "Change Network" option in the menu to switch between Sepolia testnet and Ethereum mainnet. The application will restart after changing networks.
+Use the "Change Network" option in the menu to switch between networks. The application will restart after changing networks.
 
 ## Architecture
 
@@ -157,6 +213,7 @@ Use the "Change Network" option in the menu to switch between Sepolia testnet an
 │   - Token registry (built-in + custom tokens)                               │
 │   - Network switching with persistence                                      │
 │   - Portfolio queries and transaction sending                               │
+│   - Price service integration                                               │
 └─────────────────────────────────┬───────────────────────────────────────────┘
                                   │
           ┌───────────────────────┼───────────────────────┐
@@ -164,26 +221,26 @@ Use the "Change Network" option in the menu to switch between Sepolia testnet an
 ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────────────┐
 │  Wallet (wallet.ts) │ │ Storage Adapters    │ │ ExplorerAPI                 │
 │  - BIP-44 HD wallet │ │ - FileStorage       │ │ - Etherscan V2 API          │
-│  - AES-256-GCM      │ │ - MemoryStorage     │ │ - Transaction history       │
-│  - RPC failover     │ │ - ChromeStorage     │ │ - Result caching            │
-│  - Token operations │ └─────────────────────┘ └─────────────────────────────┘
-└──────────┬──────────┘
+│  - AES-256-GCM      │ │ - MemoryStorage     │ │ - Mempool.space API         │
+│  - RPC failover     │ │ - ChromeStorage     │ │ - Solscan API               │
+│  - Token operations │ └─────────────────────┘ │ - Transaction history       │
+└──────────┬──────────┘                         └─────────────────────────────┘
            │
-     ┌─────┴─────┐
-     ▼           ▼
-┌──────────┐ ┌──────────────────┐
-│ Crypto   │ │ Provider Factory │
-│ Utils    │ │ (providers.ts)   │
-│ - PBKDF2 │ │ - ethers.js v6   │
-│ - AES    │ │ - RPC connection │
-└────┬─────┘ └──────────────────┘
-     │
-     ▼
-┌─────────────────────────────────┐
-│ CryptoAdapter                   │
-│ - NodeCryptoAdapter (Node.js)   │
-│ - WebCryptoAdapter (Browser)    │
-└─────────────────────────────────┘
+     ┌─────┴─────────────────────────┐
+     ▼                ▼              ▼
+┌──────────┐ ┌──────────────┐ ┌──────────────┐
+│ Bitcoin  │ │ Solana       │ │ EVM Provider │
+│ Module   │ │ Module       │ │ Factory      │
+│ - Keys   │ │ - Keys       │ │ - ethers.js  │
+│ - TX     │ │ - TX         │ │ - RPC calls  │
+└──────────┘ └──────────────┘ └──────────────┘
+     │              │               │
+     ▼              ▼               ▼
+┌─────────────────────────────────────────────┐
+│ CryptoAdapter                               │
+│ - NodeCryptoAdapter (Node.js)               │
+│ - WebCryptoAdapter (Browser)                │
+└─────────────────────────────────────────────┘
 ```
 
 ## Project Structure
@@ -192,34 +249,66 @@ Use the "Change Network" option in the menu to switch between Sepolia testnet an
 simple-wallet/
 ├── src/                       # TypeScript source files
 │   ├── types/                 # Type definitions
-│   │   ├── config.ts          # Network & token types
+│   │   ├── config.ts          # Network & token types (EVM/Bitcoin/Solana)
 │   │   ├── wallet.ts          # Wallet & transaction types
 │   │   └── index.ts           # Type exports
+│   ├── bitcoin/               # Bitcoin support module
+│   │   ├── address.ts         # Address derivation
+│   │   ├── explorer.ts        # Mempool.space API integration
+│   │   ├── provider.ts        # Bitcoin RPC provider
+│   │   ├── transaction.ts     # TX building
+│   │   ├── types.ts           # Bitcoin types
+│   │   └── index.ts           # Module exports
+│   ├── solana/                # Solana support module
+│   │   ├── address.ts         # Address derivation (base58)
+│   │   ├── explorer.ts        # Solscan API integration
+│   │   ├── provider.ts        # Solana RPC provider
+│   │   ├── transaction.ts     # TX building
+│   │   ├── types.ts           # Solana types
+│   │   └── index.ts           # Module exports
 │   ├── index.ts               # CLI entry point with menus
 │   ├── wallet.ts              # Core HD wallet implementation
 │   ├── app-service.ts         # UI-neutral service layer
 │   ├── storage.ts             # Storage adapters (File/Memory)
+│   ├── chrome-storage.ts      # Chrome extension storage adapter
 │   ├── providers.ts           # Provider factory abstraction
 │   ├── crypto-utils.ts        # Encryption utilities
 │   ├── crypto-adapter.ts      # Node + WebCrypto adapters
 │   ├── explorer-api.ts        # Block explorer integration
+│   ├── price-service.ts       # Token price data and portfolio valuation
+│   ├── transaction-history.ts # Transaction history tracking
+│   ├── config-utils.ts        # Configuration utilities
 │   ├── ui-helpers.ts          # Terminal UI formatting
 │   ├── sdk.ts                 # SDK entry for Node/CLI
 │   └── sdk-browser.ts         # SDK entry for browser/extension
 ├── extension/                 # Chrome extension source
-│   ├── manifest.json          # Extension manifest
+│   ├── manifest.json          # Extension manifest v3
 │   ├── background/            # Service worker
 │   ├── content/               # Content scripts
 │   ├── sidepanel/             # Side panel UI
 │   └── popup/                 # React components
+│       └── components/        # UI components (MainWallet, Send, Receive, etc.)
 ├── dist/                      # Compiled JavaScript (generated)
 ├── dist-extension/            # Extension build (generated)
-├── tests/                     # Test files
+├── tests/                     # Test files (19 test files)
 │   ├── wallet.test.js         # Wallet class tests
 │   ├── app-service.test.js    # Service layer tests
 │   ├── crypto-utils.test.js   # Encryption tests
+│   ├── crypto-adapter.test.js # Crypto adapter tests
 │   ├── storage.test.js        # Storage adapter tests
-│   └── menu.test.js           # CLI menu tests
+│   ├── chrome-storage.test.js # Chrome storage tests
+│   ├── bitcoin.test.js        # Bitcoin functionality tests
+│   ├── bitcoin-explorer.test.js
+│   ├── bitcoin-transaction.test.js
+│   ├── solana.test.js         # Solana tests
+│   ├── solana-explorer.test.js
+│   ├── solana-address-format.test.js
+│   ├── explorer-api.test.js   # Explorer API tests
+│   ├── transaction-history.test.js
+│   ├── price-service.test.js  # Price service tests
+│   ├── config-utils.test.js
+│   ├── menu.test.js           # CLI menu tests
+│   └── ui-helpers.test.js
 ├── config.json                # Network configuration
 ├── tokens.json                # Built-in ERC-20 token registry
 ├── tokens-user.json           # User-added custom tokens (auto-generated)
@@ -233,12 +322,12 @@ simple-wallet/
 ## TypeScript Features
 
 This project uses TypeScript with:
-- ✅ **Strict Mode Enabled** - Maximum type safety
-- ✅ **Full Type Coverage** - All functions and variables typed
-- ✅ **Generic Types** - Type-safe JSON operations
-- ✅ **Type Guards** - Proper error handling
-- ✅ **Source Maps** - Easy debugging
-- ✅ **Declaration Files** - Type definitions for consumers
+- **Strict Mode Enabled** - Maximum type safety
+- **Full Type Coverage** - All functions and variables typed
+- **Generic Types** - Type-safe JSON operations
+- **Type Guards** - Proper error handling
+- **Source Maps** - Easy debugging
+- **Declaration Files** - Type definitions for consumers
 
 ## Programmatic SDK (for browser/extension/mobile)
 
@@ -410,18 +499,36 @@ setCryptoAdapter(createWebCryptoAdapter());
 Key types exported from `simple-crypto-wallet/sdk`:
 
 ```typescript
-// Network configuration
-interface NetworkConfig {
-  rpcUrl: string | string[];  // Supports failover
-  chainId: number;
+// Base network configuration
+interface BaseNetworkConfig {
+  name: string;
   nativeSymbol: string;
   nativeName: string;
   blockExplorer?: string;
-  explorerApiUrl?: string;
-  // Explorer API keys are injected via environment variables (never stored in config.json)
-  explorerApiKey?: string;
-  name?: string;
 }
+
+// EVM network configuration
+interface EVMNetworkConfig extends BaseNetworkConfig {
+  type: 'evm';
+  rpcUrl: string | string[];  // Supports failover
+  chainId: number;
+  explorerApiUrl?: string;
+}
+
+// Bitcoin network configuration
+interface BitcoinNetworkConfig extends BaseNetworkConfig {
+  type: 'bitcoin';
+  bitcoinNetwork: 'mainnet' | 'testnet';
+}
+
+// Solana network configuration
+interface SolanaNetworkConfig extends BaseNetworkConfig {
+  type: 'solana';
+  rpcUrl: string | string[];
+}
+
+// Union type for all networks
+type NetworkConfig = EVMNetworkConfig | BitcoinNetworkConfig | SolanaNetworkConfig;
 
 // Token definition
 interface Token {
@@ -464,11 +571,13 @@ npm run watch:extension
 ### Extension Features
 
 - Create/import wallets with encrypted storage
-- View balances across multiple networks
-- Send ETH and ERC-20 tokens
+- View balances across multiple networks (EVM, Bitcoin, Solana)
+- Send ETH, ERC-20 tokens, BTC, and SOL
 - Add custom tokens
 - View transaction history
 - QR code for receiving
+- Light/dark theme toggle
+- Account switching
 - Side panel interface
 
 For detailed extension setup, see [EXTENSION_SETUP.md](./EXTENSION_SETUP.md).
