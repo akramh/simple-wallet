@@ -17,13 +17,9 @@
  */
 
 import * as bip39 from 'bip39';
-import BIP32Factory from 'bip32';
-import * as ecc from 'tiny-secp256k1';
 import { Wallet, isValidClassicAddress } from 'xrpl';
 import type { XRPAddressInfo } from './types.js';
-
-// Initialize BIP32 with secp256k1 implementation
-const bip32 = BIP32Factory(ecc);
+import { bip32 } from '../bip32-utils.js';
 
 /**
  * XRP coin type for BIP-44 derivation.

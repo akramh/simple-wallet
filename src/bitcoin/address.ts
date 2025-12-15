@@ -15,14 +15,11 @@
  */
 
 import * as bitcoin from 'bitcoinjs-lib';
-import BIP32Factory from 'bip32';
-import * as ecc from 'tiny-secp256k1';
 import * as bip39 from 'bip39';
 import { ECPairFactory } from 'ecpair';
+import * as ecc from 'tiny-secp256k1';
 import type { BitcoinAddressInfo } from './types.js';
-
-// Initialize BIP32 with secp256k1 implementation
-const bip32 = BIP32Factory(ecc);
+import { bip32 } from '../bip32-utils.js';
 
 /**
  * Bitcoin network configurations.
