@@ -101,6 +101,13 @@
   --color-gradient-soft-from: #0f172a;
   --color-gradient-soft-to: #0b1220;
 
+  /* Semantic color overrides for dark mode contrast */
+  --color-success-softbg: rgba(16, 185, 129, 0.15);
+  --color-success-light: rgba(16, 185, 129, 0.25);
+  --color-danger-softbg: rgba(239, 68, 68, 0.15);
+  --color-danger-light: rgba(239, 68, 68, 0.25);
+  --color-warning-light: rgba(245, 158, 11, 0.15);
+
   /* Dark shadows should be tighter to avoid a “foggy” feel. */
   --shadow-wallet: 0 6px 18px rgba(0, 0, 0, 0.28);
   --shadow-wallet-lg: 0 10px 30px rgba(0, 0, 0, 0.34);
