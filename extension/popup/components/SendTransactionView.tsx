@@ -204,6 +204,22 @@ export function SendTransactionView({
       {txState.status === 'confirm' && (
         <>
           <div className="tx-confirm-header">
+            <div className="tx-confirm-icon" style={{ 
+              width: '48px', 
+              height: '48px', 
+              margin: '0 auto 12px', 
+              color: 'var(--primary)',
+              background: 'var(--primary-50)',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="24" height="24">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </div>
             <h3>Confirm Transaction</h3>
             <p>Please review the details before sending</p>
           </div>
