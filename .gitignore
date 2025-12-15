@@ -13,5 +13,5 @@ backup-*.json
 dist/
 dist-extension/
 *.tsbuildinfo
-.npm-cache/
 .github/
+.npm-cache/
