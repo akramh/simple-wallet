@@ -319,7 +319,7 @@ export function needsMigration(): boolean {
 /**
  * Validate a BIP-39 mnemonic phrase using the official library.
  * Checks word count, word validity, and checksum.
- * 
+ *
  * @param mnemonic - Space-separated mnemonic phrase
  * @returns True if mnemonic is valid (including checksum)
  */
@@ -330,6 +330,25 @@ export function validateMnemonic(mnemonic: string): boolean {
   // Normalize whitespace: trim and replace multiple spaces with single space
   const normalized = mnemonic.trim().replace(/\s+/g, ' ');
   return bip39.validateMnemonic(normalized);
+}
+
+/**
+ * Generate a new BIP-39 mnemonic phrase.
+ *
+ * @param wordCount - Number of words (12 or 24). Defaults to 24 for maximum security.
+ * @returns Generated mnemonic phrase
+ *
+ * @example
+ * ```typescript
+ * const mnemonic24 = generateMnemonic();      // 24 words (256-bit entropy)
+ * const mnemonic12 = generateMnemonic(12);    // 12 words (128-bit entropy)
+ * ```
+ */
+export function generateMnemonic(wordCount: 12 | 24 = 24): string {
+  // 12 words = 128 bits entropy
+  // 24 words = 256 bits entropy
+  const strength = wordCount === 12 ? 128 : 256;
+  return bip39.generateMnemonic(strength);
 }
 
 /**

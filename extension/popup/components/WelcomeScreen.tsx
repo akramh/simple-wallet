@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ethers } from 'ethers';
+import * as bip39 from 'bip39';
 import { MnemonicDisplay } from './ui';
 import logoIcon from '../../assets/img/logo.svg';
 
@@ -93,9 +93,9 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     }
 
     if (flowType === 'create') {
-      // Generate mnemonic and go to create-mnemonic screen
-      const random = ethers.Wallet.createRandom();
-      setGeneratedMnemonic(random.mnemonic.phrase);
+      // Generate 24-word mnemonic (256-bit entropy) for maximum security
+      const mnemonic = bip39.generateMnemonic(256);
+      setGeneratedMnemonic(mnemonic);
       setCopyState('idle');
       setScreen('create-mnemonic');
     } else {
@@ -105,10 +105,11 @@ function WelcomeScreen({ onWalletCreated }: Props) {
   };
 
   const goToVerifyStep = () => {
-    // Generate 3 unique random indices between 0 and 11
+    // Generate 3 unique random indices based on mnemonic length (12 or 24 words)
+    const wordCount = generatedMnemonic.split(' ').length;
     const indices = new Set<number>();
     while(indices.size < 3) {
-      indices.add(Math.floor(Math.random() * 12));
+      indices.add(Math.floor(Math.random() * wordCount));
     }
     const sortedIndices = Array.from(indices).sort((a, b) => a - b);
     setVerifyIndices(sortedIndices);

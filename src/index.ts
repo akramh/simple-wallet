@@ -535,10 +535,10 @@ async function createWallet(): Promise<void> {
 }
 
 /**
- * Imports an existing wallet from a 12-word mnemonic phrase.
+ * Imports an existing wallet from a 12 or 24-word mnemonic phrase.
  * Validates the mnemonic format before import.
  * Sets up master password if this is the first wallet.
- * 
+ *
  * @async
  */
 async function importWallet(): Promise<void> {
@@ -559,11 +559,11 @@ async function importWallet(): Promise<void> {
     {
       type: 'input',
       name: 'mnemonic',
-      message: 'Enter your 12-word mnemonic phrase:',
+      message: 'Enter your 12 or 24-word mnemonic phrase:',
       validate: (input) => {
         const words = input.trim().split(/\s+/);
-        if (words.length !== 12) {
-          return 'Please enter exactly 12 words';
+        if (![12, 15, 18, 21, 24].includes(words.length)) {
+          return 'Please enter a valid mnemonic (12, 15, 18, 21, or 24 words)';
         }
         return true;
       }

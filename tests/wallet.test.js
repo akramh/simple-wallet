@@ -491,6 +491,128 @@ test('importFromBackup fails with non-existent file', async () => {
   );
 });
 
+// ============================================================================
+// 24-Word Mnemonic Tests
+// ============================================================================
+
+test('createNewWallet generates 24-word mnemonic by default', async () => {
+  const storage = new MemoryStorage();
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+  class MockProvider { async getBlockNumber() { return 1; } }
+  const wallet = new Wallet(config, storage);
+  wallet.providerFactory = { createProvider: () => new MockProvider() };
+  await wallet.initialize();
+
+  const result = wallet.createNewWallet('password123');
+
+  const words = result.mnemonic.split(' ');
+  assert.equal(words.length, 24, 'should generate 24-word mnemonic');
+  assert.ok(result.address, 'should have an address');
+  assert.ok(result.privateKey, 'should have a private key');
+});
+
+test('importWallet with 24-word mnemonic works correctly', async () => {
+  const storage = new MemoryStorage();
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+  class MockProvider { async getBlockNumber() { return 1; } }
+  const wallet = new Wallet(config, storage);
+  wallet.providerFactory = { createProvider: () => new MockProvider() };
+  await wallet.initialize();
+
+  // Valid 24-word test mnemonic
+  const mnemonic24 = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art';
+  wallet.importWallet(mnemonic24, 'password123', 0);
+
+  assert.ok(wallet.wallet, 'wallet should be created');
+  assert.ok(wallet.wallet.address, 'wallet should have an address');
+  assert.equal(wallet.mnemonic.split(' ').length, 24, 'mnemonic should be 24 words');
+});
+
+test('importWallet with 12-word mnemonic still works (backward compatibility)', async () => {
+  const storage = new MemoryStorage();
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+  class MockProvider { async getBlockNumber() { return 1; } }
+  const wallet = new Wallet(config, storage);
+  wallet.providerFactory = { createProvider: () => new MockProvider() };
+  await wallet.initialize();
+
+  // Standard 12-word test mnemonic
+  const mnemonic12 = 'test test test test test test test test test test test junk';
+  wallet.importWallet(mnemonic12, 'password123', 0);
+
+  assert.ok(wallet.wallet, 'wallet should be created');
+  assert.ok(wallet.wallet.address, 'wallet should have an address');
+  assert.equal(wallet.mnemonic.split(' ').length, 12, 'mnemonic should be 12 words');
+});
+
+test('12-word and 24-word mnemonics derive different addresses', async () => {
+  const storage = new MemoryStorage();
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+  class MockProvider { async getBlockNumber() { return 1; } }
+
+  const wallet1 = new Wallet(config, storage);
+  wallet1.providerFactory = { createProvider: () => new MockProvider() };
+  await wallet1.initialize();
+
+  const wallet2 = new Wallet(config, new MemoryStorage());
+  wallet2.providerFactory = { createProvider: () => new MockProvider() };
+  await wallet2.initialize();
+
+  // 12-word mnemonic
+  const mnemonic12 = 'test test test test test test test test test test test junk';
+  // 24-word mnemonic (different entropy)
+  const mnemonic24 = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art';
+
+  wallet1.importWallet(mnemonic12, 'pw', 0);
+  wallet2.importWallet(mnemonic24, 'pw', 0);
+
+  assert.notEqual(wallet1.wallet.address, wallet2.wallet.address,
+    '12-word and 24-word mnemonics should derive different addresses');
+});
+
+test('saved 12-word wallet can be loaded after creating 24-word wallets', async () => {
+  const storage = new MemoryStorage();
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+  class MockProvider { async getBlockNumber() { return 1; } }
+  const wallet = new Wallet(config, storage);
+  wallet.providerFactory = { createProvider: () => new MockProvider() };
+  await wallet.initialize();
+
+  // Import and save a 12-word wallet
+  const mnemonic12 = 'test test test test test test test test test test test junk';
+  wallet.importWallet(mnemonic12, 'password12', 0);
+  const address12 = wallet.wallet.address;
+  wallet.saveWallet('wallet12');
+
+  // Create a new 24-word wallet
+  wallet.createNewWallet('password24');
+  wallet.saveWallet('wallet24');
+
+  // Load the 12-word wallet back
+  const loaded = wallet.loadWallet('wallet12', 'password12');
+
+  assert.ok(loaded, 'should be able to load 12-word wallet');
+  assert.equal(loaded.address.toLowerCase(), address12.toLowerCase(),
+    'loaded address should match original 12-word wallet address');
+  assert.equal(loaded.mnemonic.split(' ').length, 12,
+    'loaded mnemonic should still be 12 words');
+});
+
 test('export/import round-trip preserves wallet identity', async () => {
   const storage = new MemoryStorage();
   const config = {

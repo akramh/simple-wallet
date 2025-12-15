@@ -480,30 +480,31 @@ export function clearScreen(): void {
 
 /**
  * Displays a wallet's recovery phrase in a secure, formatted box.
- * Shows 12-word mnemonic in two columns with numbered words.
+ * Shows mnemonic in two columns with numbered words.
  * Includes prominent security warnings about protecting the phrase.
- * 
- * @param mnemonic - Space-separated 12-word recovery phrase
- * 
+ *
+ * @param mnemonic - Space-separated recovery phrase (12-24 words)
+ *
  * @example
  * ```typescript
- * showMnemonic('word1 word2 word3 ... word12');
+ * showMnemonic('word1 word2 word3 ... word24');
  * // Displays:
  * // ┌──────────────────────────────────────────────────────────┐
- * // │ Recovery Phrase (12 words)                               │
+ * // │ Recovery Phrase (24 words)                               │
  * // ├──────────────────────────────────────────────────────────┤
- * // │  1. word1                      7. word7                  │
- * // │  2. word2                      8. word8                  │
+ * // │  1. word1                     13. word13                 │
+ * // │  2. word2                     14. word14                 │
  * // │  ...                                                     │
  * // └──────────────────────────────────────────────────────────┘
  * ```
  */
 export function showMnemonic(mnemonic: string): void {
   const words = mnemonic.split(' ');
-  const halfLength = Math.ceil(words.length / 2);
+  const wordCount = words.length;
+  const halfLength = Math.ceil(wordCount / 2);
 
   console.log('\n' + chalk.yellow('┌' + '─'.repeat(58) + '┐'));
-  console.log(chalk.yellow('│') + chalk.bold.yellow(' Recovery Phrase (12 words)'.padEnd(58)) + chalk.yellow('│'));
+  console.log(chalk.yellow('│') + chalk.bold.yellow(` Recovery Phrase (${wordCount} words)`.padEnd(58)) + chalk.yellow('│'));
   console.log(chalk.yellow('├' + '─'.repeat(58) + '┤'));
 
   for (let i = 0; i < halfLength; i++) {
