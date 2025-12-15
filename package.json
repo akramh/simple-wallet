@@ -43,7 +43,8 @@
     "qrcode-terminal": "^0.12.0",
     "qrcode.react": "^4.2.0",
     "tiny-secp256k1": "^2.2.4",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "xrpl": "^4.1.0"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.268",

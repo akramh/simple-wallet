@@ -23,6 +23,7 @@ import type { StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 import { deriveBitcoinAddress, getBitcoinPrivateKey, type BitcoinAddressInfo } from './bitcoin/index.js';
 import { deriveSolanaAddress, type SolanaAddressInfo } from './solana/index.js';
+import { deriveXRPAddress, getXRPPrivateKey, type XRPAddressInfo } from './xrp/index.js';
 
 /**
  * Minimal ERC-20 ABI for token interactions.
@@ -1206,5 +1207,56 @@ export class Wallet {
     }
     const index = accountIndex ?? this.currentAccountIndex;
     return deriveSolanaAddress(this.mnemonic, index);
+  }
+
+  // ============================================================================
+  // XRP Ledger Support
+  // ============================================================================
+
+  /**
+   * Get an XRP address derived from the same mnemonic.
+   * Uses BIP-44 derivation path: m/44'/144'/{accountIndex}'/0/0
+   *
+   * @param accountIndex - Optional account index override (defaults to current)
+   * @returns XRP address information
+   * @throws Error if no mnemonic loaded
+   *
+   * @example
+   * ```typescript
+   * const xrpInfo = wallet.getXRPAddress();
+   * console.log(xrpInfo.address); // r...
+   * ```
+   */
+  getXRPAddress(accountIndex?: number): XRPAddressInfo {
+    if (!this.mnemonic) {
+      throw new Error('No mnemonic loaded');
+    }
+    const index = accountIndex ?? this.currentAccountIndex;
+    return deriveXRPAddress(this.mnemonic, index);
+  }
+
+  /**
+   * Get the XRP private key in hex format.
+   * Requires password verification for security.
+   *
+   * @param password - Master password to verify
+   * @returns Private key as hex string
+   * @throws Error if password incorrect or no wallet loaded
+   */
+  getXRPPrivateKey(password: string): string {
+    if (!this.encryptedMnemonic || !this.salt || !this.iv || !this.authTag) {
+      throw new Error('No encrypted wallet loaded');
+    }
+
+    // Verify password by decrypting
+    const mnemonic = decryptMnemonic(
+      this.encryptedMnemonic,
+      password,
+      this.salt,
+      this.iv,
+      this.authTag
+    );
+
+    return getXRPPrivateKey(mnemonic, this.currentAccountIndex);
   }
 }
