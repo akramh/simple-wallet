@@ -16,10 +16,10 @@
  * @module xrp/address
  */
 
-import * as bip39 from 'bip39';
 import { Wallet, isValidClassicAddress } from 'xrpl';
 import type { XRPAddressInfo } from './types.js';
 import { bip32 } from '../bip32-utils.js';
+import { validateMnemonic, mnemonicToSeed } from '../crypto-utils.js';
 
 /**
  * XRP coin type for BIP-44 derivation.
@@ -61,12 +61,12 @@ export function deriveXRPAddress(
   accountIndex: number = 0
 ): XRPAddressInfo {
   // Validate mnemonic
-  if (!bip39.validateMnemonic(mnemonic)) {
+  if (!validateMnemonic(mnemonic)) {
     throw new Error('Invalid mnemonic phrase');
   }
 
   // Convert mnemonic to seed
-  const seed = bip39.mnemonicToSeedSync(mnemonic);
+  const seed = mnemonicToSeed(mnemonic);
 
   // Derive the master key from seed
   const root = bip32.fromSeed(seed);
@@ -140,12 +140,12 @@ export function getXRPPrivateKey(
   accountIndex: number = 0
 ): string {
   // Validate mnemonic
-  if (!bip39.validateMnemonic(mnemonic)) {
+  if (!validateMnemonic(mnemonic)) {
     throw new Error('Invalid mnemonic phrase');
   }
 
   // Convert mnemonic to seed
-  const seed = bip39.mnemonicToSeedSync(mnemonic);
+  const seed = mnemonicToSeed(mnemonic);
 
   // Derive the master key from seed
   const root = bip32.fromSeed(seed);
@@ -177,12 +177,12 @@ export function getXRPWallet(
   accountIndex: number = 0
 ): Wallet {
   // Validate mnemonic
-  if (!bip39.validateMnemonic(mnemonic)) {
+  if (!validateMnemonic(mnemonic)) {
     throw new Error('Invalid mnemonic phrase');
   }
 
   // Convert mnemonic to seed
-  const seed = bip39.mnemonicToSeedSync(mnemonic);
+  const seed = mnemonicToSeed(mnemonic);
 
   // Derive the master key from seed
   const root = bip32.fromSeed(seed);
