@@ -13,6 +13,7 @@ import {
   encryptMnemonic,
   decryptMnemonic,
   validateMnemonic,
+  generateMnemonic,
   safeWriteJSON,
   safeReadJSON
 } from '../dist/crypto-utils.js';
@@ -255,6 +256,54 @@ test('validateMnemonic rejects empty and invalid input', () => {
 test('validateMnemonic handles extra whitespace', () => {
   const mnemonic = '  abandon  abandon  abandon  abandon  abandon  abandon  abandon  abandon  abandon  abandon  abandon  about  ';
   assert.equal(validateMnemonic(mnemonic), true);
+});
+
+// ============================================================================
+// Mnemonic Generation Tests
+// ============================================================================
+
+test('generateMnemonic generates 24-word mnemonic by default', () => {
+  const mnemonic = generateMnemonic();
+  const words = mnemonic.split(' ');
+
+  assert.equal(words.length, 24, 'should generate 24 words by default');
+  assert.equal(validateMnemonic(mnemonic), true, 'generated mnemonic should be valid');
+});
+
+test('generateMnemonic generates 12-word mnemonic when specified', () => {
+  const mnemonic = generateMnemonic(12);
+  const words = mnemonic.split(' ');
+
+  assert.equal(words.length, 12, 'should generate 12 words when specified');
+  assert.equal(validateMnemonic(mnemonic), true, 'generated mnemonic should be valid');
+});
+
+test('generateMnemonic generates 24-word mnemonic when specified', () => {
+  const mnemonic = generateMnemonic(24);
+  const words = mnemonic.split(' ');
+
+  assert.equal(words.length, 24, 'should generate 24 words when specified');
+  assert.equal(validateMnemonic(mnemonic), true, 'generated mnemonic should be valid');
+});
+
+test('generateMnemonic generates unique mnemonics each time', () => {
+  const mnemonic1 = generateMnemonic();
+  const mnemonic2 = generateMnemonic();
+  const mnemonic3 = generateMnemonic();
+
+  assert.notEqual(mnemonic1, mnemonic2, 'mnemonics should be unique');
+  assert.notEqual(mnemonic2, mnemonic3, 'mnemonics should be unique');
+  assert.notEqual(mnemonic1, mnemonic3, 'mnemonics should be unique');
+});
+
+test('generateMnemonic produces mnemonics that can be encrypted and decrypted', () => {
+  const mnemonic = generateMnemonic(24);
+  const password = 'testpassword';
+
+  const { encrypted, salt, iv, authTag } = encryptMnemonic(mnemonic, password);
+  const decrypted = decryptMnemonic(encrypted, password, salt, iv, authTag);
+
+  assert.equal(decrypted, mnemonic, 'decrypted should match original');
 });
 
 // ============================================================================

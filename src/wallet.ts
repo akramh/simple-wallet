@@ -10,7 +10,7 @@
  */
 
 import { ethers } from 'ethers';
-import { encryptMnemonic, decryptMnemonic, validateMnemonic } from './crypto-utils.js';
+import { encryptMnemonic, decryptMnemonic, validateMnemonic, generateMnemonic } from './crypto-utils.js';
 import type { Config, TokenMetadata, Token } from './types/index.js';
 import type { StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
@@ -175,8 +175,8 @@ export class Wallet {
   }
 
   createNewWallet(password: string): WalletInfo {
-    const randomWallet = ethers.Wallet.createRandom();
-    this.mnemonic = randomWallet.mnemonic!.phrase;
+    // Generate 24-word mnemonic by default for maximum security (256-bit entropy)
+    this.mnemonic = generateMnemonic(24);
 
     const { encrypted, salt, iv, authTag } = encryptMnemonic(this.mnemonic, password);
     this.encryptedMnemonic = encrypted;
