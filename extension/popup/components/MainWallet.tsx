@@ -30,10 +30,12 @@ import usdcIcon from '../../assets/img/icon-usdc.png';
 import usdtIcon from '../../assets/img/usdt.svg';
 import polIcon from '../../assets/img/pol-token.svg';
 import bitcoinIcon from '../../assets/img/bitcoin-logo.svg';
+import xrpIcon from '../../assets/img/xrp.svg';
 import sendIcon from '../../assets/icons/send.svg';
 import receiveIcon from '../../assets/icons/receive.svg';
 import backIcon from '../../assets/icons/arrow-left.svg';
 import { isValidBitcoinAddress } from '../../../src/bitcoin/index.js';
+import { isValidXRPAddress, isXAddress, isValidDestinationTag } from '../../../src/xrp/index.js';
 
 const ICON_ASSETS: Record<string, string> = {
   'eth_logo.svg': ethIcon,
@@ -46,6 +48,7 @@ const ICON_ASSETS: Record<string, string> = {
   'icon-usdc.png': usdcIcon,
   'usdt.svg': usdtIcon,
   'pol-token.svg': polIcon,
+  'xrp.svg': xrpIcon,
   // Backwards-compatible aliases used by existing token lists/configs.
   'bitcoin-logo.svg': bitcoinIcon,
   'btc.svg': bitcoinIcon
@@ -67,7 +70,9 @@ const SYMBOL_ICON_FALLBACK: Record<string, string> = {
   pol: 'pol-token.svg',
   matic: 'pol-token.svg',
   btc: 'bitcoin-logo.svg',
-  tbtc: 'bitcoin-logo.svg'
+  tbtc: 'bitcoin-logo.svg',
+  xrp: 'xrp.svg',
+  txrp: 'xrp.svg'
 };
 
 /**
@@ -81,8 +86,12 @@ function isSolanaNetwork(networkKey: string): boolean {
   return networkKey.startsWith('solana-');
 }
 
+function isXrpNetwork(networkKey: string): boolean {
+  return networkKey.startsWith('xrp-');
+}
+
 function isEvmNetwork(networkKey: string): boolean {
-  return !isBitcoinNetwork(networkKey) && !isSolanaNetwork(networkKey);
+  return !isBitcoinNetwork(networkKey) && !isSolanaNetwork(networkKey) && !isXrpNetwork(networkKey);
 }
 
 function isValidRecipientAddress(networkKey: string, address: string): boolean {
@@ -93,6 +102,11 @@ function isValidRecipientAddress(networkKey: string, address: string): boolean {
   if (isSolanaNetwork(networkKey)) {
     // Basic Solana base58 public key validation (length/range).
     return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+  }
+  if (isXrpNetwork(networkKey)) {
+    // Only classic addresses are supported for now (r...). X-addresses are detected for better UX.
+    if (isXAddress(address)) return false;
+    return isValidXRPAddress(address);
   }
   return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
@@ -117,6 +131,10 @@ interface TokenBalance {
   token: Token;
   balance: string;
   error?: string;
+  // XRP portfolio fields (optional)
+  availableBalance?: string;
+  reservedBalance?: string;
+  isActivated?: boolean;
 }
 
 type View = 'tokens' | 'activity' | 'receive' | 'send' | 'settings';
@@ -160,6 +178,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [gasEstimate, setGasEstimate] = useState<{ estimatedCostNative: string; nativeSymbol: string } | null>(null);
   const [gasEstimateLoading, setGasEstimateLoading] = useState(false);
   const [calculatingMax, setCalculatingMax] = useState(false);
+  const [destinationTag, setDestinationTag] = useState<string>('');
 
   const networkOptions = useMemo(() => {
     return Object.entries(networks).map(([key, net]: [string, any]) => {
@@ -192,7 +211,10 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         setPortfolio(message.balances.map((item: any) => ({
           token: item.token,
           balance: item.balance || '0',
-          error: item.error
+          error: item.error,
+          availableBalance: item.availableBalance,
+          reservedBalance: item.reservedBalance,
+          isActivated: item.isActivated
         })));
       }
     };
@@ -348,9 +370,15 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       return;
     }
 
-    // For native tokens (ETH, SOL, BTC), we must subtract gas.
+    // For native tokens (ETH, SOL, BTC, XRP), we must subtract fees (and keep reserves where applicable).
     setCalculatingMax(true);
     try {
+      // XRP: if we have availableBalance (already excludes reserve), use that as the starting point.
+      const maxBaseBalance =
+        isXrpNetwork(network) && selectedToken.type === 'native' && tokenData.availableBalance
+          ? tokenData.availableBalance
+          : tokenData.balance;
+
       // Use the recipient if valid, otherwise use own address (self-send) for estimation
       const estimateToAddress = (recipient && isValidRecipientAddress(network, recipient)) 
         ? recipient 
@@ -361,12 +389,12 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         payload: { 
           token: selectedToken, 
           toAddress: estimateToAddress, 
-          amount: tokenData.balance // Estimate for sending max
+          amount: maxBaseBalance // Estimate for sending max
         }
       });
 
       if (response && response.estimatedCostNative) {
-        const balanceNum = parseFloat(tokenData.balance);
+        const balanceNum = parseFloat(maxBaseBalance);
         const feeNum = parseFloat(response.estimatedCostNative);
         
         // Subtract fee from balance
@@ -440,9 +468,19 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
           ? 'Invalid Bitcoin address'
           : isSolanaNetwork(network)
             ? 'Invalid Solana address'
+            : isXrpNetwork(network)
+              ? (isXAddress(recipient) ? 'X-address not supported (use classic r... address)' : 'Invalid XRP address')
             : 'Invalid Ethereum address'
       );
       return;
+    }
+
+    // Validate destination tag if provided (XRP only)
+    if (isXrpNetwork(network) && destinationTag.trim() !== '') {
+      if (!isValidDestinationTag(destinationTag)) {
+        setSendError('Invalid destination tag (must be a uint32: 0 to 4294967295)');
+        return;
+      }
     }
 
     // Validate amount
@@ -460,6 +498,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     setIsSending(false);
     setRecipient('');
     setAmount('');
+    setDestinationTag('');
     setSelectedToken(null);
     setView('tokens');
     handleRefresh();
@@ -618,7 +657,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
       {/* Content Area */}
       <div className="content">
-        {view === 'settings' ? (
+      {view === 'settings' ? (
           <SettingsView
             currentAddress={address}
             onAccountSwitch={() => loadTokensAndData()}
@@ -737,6 +776,9 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 token={selectedToken}
                 recipient={recipient}
                 amount={amount}
+                destinationTag={
+                  isXrpNetwork(network) && destinationTag.trim() !== '' ? Number(destinationTag) : undefined
+                }
                 onClose={handleSendClose}
                 onSuccess={handleSendComplete}
               />
@@ -777,6 +819,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                             ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
                             : isSolanaNetwork(network)
                               ? 'Base58 address...'
+                              : isXrpNetwork(network)
+                                ? 'r...'
                               : '0x...'
                         }
                         style={{ paddingRight: '40px', width: '100%' }}
@@ -788,6 +832,23 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                       )}
                     </div>
                   </div>
+
+                  {/* XRP destination tag (optional) */}
+                  {isXrpNetwork(network) && selectedToken?.type === 'native' && (
+                    <div className="form-group">
+                      <label>Destination Tag (optional)</label>
+                      <input
+                        type="text"
+                        value={destinationTag}
+                        onChange={(e) => setDestinationTag(e.target.value)}
+                        placeholder="e.g. 12345"
+                        inputMode="numeric"
+                      />
+                      <div className="form-hint" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                        Required for some exchange deposits. Leave blank if not provided by the recipient.
+                      </div>
+                    </div>
+                  )}
 
                   <div className="form-group">
                     <div className="amount-label-row">
@@ -838,6 +899,38 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                         )}
                       </div>
                     </div>
+                  )}
+
+                  {/* Reserve hint for XRP (available vs reserved) */}
+                  {isXrpNetwork(network) && selectedToken?.type === 'native' && selectedToken && (
+                    (() => {
+                      const tokenData = portfolio.find(p => p.token.symbol === selectedToken.symbol);
+                      if (!tokenData) return null;
+                      if (tokenData.isActivated === false) {
+                        return (
+                          <div className="gas-estimate-box" style={{ borderColor: 'var(--warning)' }}>
+                            <div className="gas-estimate-label">XRP Account Not Activated</div>
+                            <div className="gas-estimate-value" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+                              <span className="gas-loading">
+                                You may need to receive enough XRP to meet the network reserve before the account can be used.
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (tokenData.availableBalance && tokenData.reservedBalance) {
+                        return (
+                          <div className="gas-estimate-box">
+                            <div className="gas-estimate-label">Spendable Balance</div>
+                            <div className="gas-estimate-value" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+                              <span className="gas-amount">{tokenData.availableBalance} {selectedToken.symbol}</span>
+                              <span className="gas-usd">Reserve: {tokenData.reservedBalance} {selectedToken.symbol}</span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()
                   )}
 
                   {sendError && <div className="error">{sendError}</div>}

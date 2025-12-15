@@ -47,6 +47,9 @@ This will watch for changes and rebuild automatically.
 - Base
 - Arbitrum
 - Optimism
+- Bitcoin (mainnet/testnet)
+- Solana (mainnet/devnet)
+- XRP Ledger (mainnet/testnet)
 - And more...
 
 ### Token Management
@@ -58,6 +61,7 @@ This will watch for changes and rebuild automatically.
 ### Transaction Features
 - Send native tokens
 - Send ERC-20 tokens
+- Send BTC/SOL/XRP (native)
 - Transaction confirmation
 - Gas estimation
 

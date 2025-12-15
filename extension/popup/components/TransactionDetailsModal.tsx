@@ -9,6 +9,7 @@ interface Transaction {
   to: string | null;
   value: string;
   fee?: string;
+  destinationTag?: number;
   network: string;
   status: 'pending' | 'confirmed' | 'failed';
   type: 'send' | 'receive' | 'contract_interaction';
@@ -81,7 +82,7 @@ function TransactionDetailsModal({ isOpen, onClose, transaction, networkConfig }
   
   // Convert wei to ETH for display if it's an EVM native token
   const formatValueForDisplay = (value: string, symbol: string) => {
-    if (networkConfig.nativeSymbol === 'ETH' || networkConfig.nativeSymbol === 'tETH') { // Assuming standard EVM config
+    if (networkConfig.nativeSymbol === 'ETH' || networkConfig.nativeSymbol === 'tETH') { // EVM native is stored as wei
       const numValue = parseFloat(value) / 1e18; // Convert from wei
       return `${numValue.toFixed(4)} ${symbol}`;
     }
@@ -129,6 +130,13 @@ function TransactionDetailsModal({ isOpen, onClose, transaction, networkConfig }
             <span className="copy-icon">📋</span>
           </span>
         </div>
+
+        {typeof transaction.destinationTag === 'number' && (
+          <div className="detail-row">
+            <span className="detail-label">Destination Tag</span>
+            <span className="detail-value">{transaction.destinationTag.toString()}</span>
+          </div>
+        )}
 
         <div className="detail-row">
           <span className="detail-label">Transaction Hash</span>

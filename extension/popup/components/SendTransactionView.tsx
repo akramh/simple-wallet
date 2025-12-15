@@ -16,6 +16,7 @@ interface SendTransactionViewProps {
   token: Token;
   recipient: string;
   amount: string;
+  destinationTag?: number;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -35,6 +36,7 @@ interface NetworkConfig {
   chainId?: number;
   isBitcoin?: boolean;
   bitcoinNetwork?: string;
+  isXrp?: boolean;
 }
 
 interface GasEstimate {
@@ -52,6 +54,7 @@ export function SendTransactionView({
   token,
   recipient,
   amount,
+  destinationTag,
   onClose,
   onSuccess
 }: SendTransactionViewProps) {
@@ -143,7 +146,7 @@ export function SendTransactionView({
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'SEND_TRANSACTION',
-        payload: { token, toAddress: recipient, amount }
+        payload: { token, toAddress: recipient, amount, destinationTag }
       });
 
       if (response.error) {
@@ -219,6 +222,13 @@ export function SendTransactionView({
                 <span className="tx-detail-label">To</span>
                 <span className="tx-detail-value">{formatAddress(recipient)}</span>
               </div>
+
+              {typeof destinationTag === 'number' && networkConfig?.isXrp && (
+                <div className="tx-detail-row">
+                  <span className="tx-detail-label">Destination Tag</span>
+                  <span className="tx-detail-value">{destinationTag.toString()}</span>
+                </div>
+              )}
 
               <div className="tx-detail-row">
                 <span className="tx-detail-label">Network</span>

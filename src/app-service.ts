@@ -555,7 +555,15 @@ export class WalletAppService {
    * @param networkKey - Network identifier
    * @returns Array of token balances
    */
-  async getPortfolioForNetwork(networkKey: string): Promise<{ token: Token; balance: string; error?: string }[]> {
+  async getPortfolioForNetwork(networkKey: string): Promise<Array<{
+    token: Token;
+    balance: string;
+    error?: string;
+    // Non-EVM networks may expose additional metadata (UI can ignore if unused).
+    availableBalance?: string;
+    reservedBalance?: string;
+    isActivated?: boolean;
+  }>> {
     // Handle Bitcoin networks
     if (this.isNetworkBitcoin(networkKey)) {
       const btcNetwork = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
@@ -612,6 +620,9 @@ export class WalletAppService {
         return portfolio.map(p => ({
           token: p.token,
           balance: p.balance,
+          availableBalance: p.availableBalance,
+          reservedBalance: p.reservedBalance,
+          isActivated: p.isActivated,
           error: p.error,
         }));
       } catch (error) {
@@ -1343,6 +1354,26 @@ export class WalletAppService {
 
     const provider = this.getXRPProviderForNetwork(this.config.network);
     return provider.getTransactionHistory(xrpInfo.address, limit);
+  }
+
+  /**
+   * Get XRP transaction history for a specific address and network.
+   * Useful for extension UIs that need to query the currently-selected network/address.
+   *
+   * @param address - XRP classic address (r...)
+   * @param limit - Maximum number of transactions to return
+   * @param networkKey - XRP network key (defaults to current)
+   */
+  async getXRPTransactionHistoryForAddress(
+    address: string,
+    limit: number = 25,
+    networkKey: string = this.config.network
+  ): Promise<NormalizedXRPTransaction[]> {
+    if (!this.isNetworkXRP(networkKey)) {
+      return [];
+    }
+    const provider = this.getXRPProviderForNetwork(networkKey);
+    return provider.getTransactionHistory(address, limit);
   }
 
   /**
