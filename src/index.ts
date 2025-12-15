@@ -1659,6 +1659,30 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
       return;
     }
 
+    const destTag = answers.destinationTag?.trim();
+    const destTagNum = destTag ? parseInt(destTag, 10) : undefined;
+
+    // Preflight: reserve/spendable validation before confirmation + password prompt
+    let xrpPreflight: Awaited<ReturnType<typeof walletService.estimateXRPTransaction>> | null = null;
+    try {
+      ui.showLoading('Checking XRP reserves and spendable balance...');
+      xrpPreflight = await walletService.estimateXRPTransaction(
+        answers.toAddress.trim(),
+        answers.amount.trim(),
+        destTagNum
+      );
+    } catch (error) {
+      const err = error as Error;
+      ui.showError('XRP send preflight failed', [err.message]);
+      await inquirer.prompt<{ continue: string }>([{
+        type: 'input',
+        name: 'continue',
+        message: 'Press Enter to continue...'
+      }]);
+      await mainMenu(currentWalletName);
+      return;
+    }
+
     ui.showLoading('Estimating network fee...');
     const xrpToken = walletService.getNativeToken(config.network);
     const gasEstimate = await walletService.getGasEstimate(xrpToken, answers.toAddress.trim(), answers.amount.trim());
@@ -1694,9 +1718,18 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     });
 
     // Show destination tag if provided
-    const destTag = answers.destinationTag?.trim();
     if (destTag) {
       console.log(chalk.gray('Destination Tag:     ') + chalk.yellow(destTag));
+      console.log('');
+    }
+
+    // Reserve/spendable warnings (XRP-specific)
+    if (xrpPreflight) {
+      console.log(chalk.gray('Spendable Balance:   ') + chalk.white(`${xrpPreflight.sender.availableXrp} ${nativeSymbol}`));
+      console.log(chalk.gray('Reserved (min):      ') + chalk.gray(`${xrpPreflight.sender.reservedXrp} ${nativeSymbol}`));
+      if (!xrpPreflight.sender.isActivated) {
+        console.log(chalk.yellow('Warning: Your XRP account is not activated on-ledger yet.'));
+      }
       console.log('');
     }
 
@@ -1722,7 +1755,6 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
 
     ui.showLoading('Broadcasting transaction to XRP Ledger...');
     const password = await ensureMasterPassword();
-    const destTagNum = destTag ? parseInt(destTag, 10) : undefined;
     const result = await walletService.sendXRPTransaction(answers.toAddress.trim(), answers.amount.trim(), password, destTagNum);
 
     ui.showSuccess('Transaction broadcasted (pending validation)');

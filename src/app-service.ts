@@ -1461,4 +1461,58 @@ export class WalletAppService {
       feeXrp: result.feeXrp,
     };
   }
+
+  /**
+   * Estimate an XRP send and surface reserve/spendable constraints.
+   * Intended for UI preflight checks (CLI/extension) before prompting for password.
+   *
+   * @param toAddress - Recipient XRP classic address (r...)
+   * @param amountXrp - Amount in XRP string
+   * @param destinationTag - Optional destination tag
+   */
+  async estimateXRPTransaction(
+    toAddress: string,
+    amountXrp: string,
+    destinationTag?: number
+  ): Promise<{
+    feeXrp: string;
+    maxSendableXrp: string;
+    sender: { totalXrp: string; availableXrp: string; reservedXrp: string; isActivated: boolean };
+    recipient: { isActivated: boolean };
+  }> {
+    if (!this.isCurrentNetworkXRP()) {
+      throw new Error('Not on an XRP network');
+    }
+
+    if (!isValidXRPAddress(toAddress)) {
+      throw new Error('Invalid XRP recipient address');
+    }
+
+    const xrpInfo = this.getXRPAddress();
+    if (!xrpInfo) {
+      throw new Error('No XRP address available');
+    }
+
+    const provider = this.getXRPProviderForNetwork(this.config.network);
+    const estimate = await provider.estimateSendTransaction(
+      xrpInfo.address,
+      toAddress,
+      amountXrp,
+      destinationTag
+    );
+
+    return {
+      feeXrp: estimate.feeXrpStr,
+      maxSendableXrp: estimate.maxSendableXrp,
+      sender: {
+        totalXrp: dropsToXrp(estimate.senderBalance.total),
+        availableXrp: dropsToXrp(estimate.senderBalance.available),
+        reservedXrp: dropsToXrp(estimate.senderBalance.reserved),
+        isActivated: estimate.senderBalance.isActivated,
+      },
+      recipient: {
+        isActivated: estimate.recipientBalance.isActivated,
+      },
+    };
+  }
 }

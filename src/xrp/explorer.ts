@@ -337,35 +337,74 @@ export class XRPExplorer {
       const transactions = response.result.transactions || [];
       const normalized: NormalizedXRPTransaction[] = [];
 
+      const parseDrops = (value: unknown): number | null => {
+        if (typeof value === 'string') {
+          if (!/^\d+$/.test(value)) return null;
+          const parsed = Number.parseInt(value, 10);
+          return Number.isFinite(parsed) ? parsed : null;
+        }
+        if (typeof value === 'number') {
+          if (!Number.isFinite(value)) return null;
+          // Drops must be an integer; if not, reject.
+          if (!Number.isInteger(value)) return null;
+          return value;
+        }
+        return null;
+      };
+
+      const getDeliveredDrops = (tx: any, meta: any): number | null => {
+        // Prefer delivered_amount from metadata (partial payments, rippled API v2)
+        const fromMeta = meta && typeof meta === 'object' ? (meta as any).delivered_amount : undefined;
+        const metaDrops = parseDrops(fromMeta);
+        if (metaDrops !== null) return metaDrops;
+
+        // Standard Payment field (classic)
+        const amountDrops = parseDrops(tx?.Amount);
+        if (amountDrops !== null) return amountDrops;
+
+        // Some servers/API versions may provide DeliverMax for XRP-native payments.
+        const deliverMaxDrops = parseDrops(tx?.DeliverMax);
+        if (deliverMaxDrops !== null) return deliverMaxDrops;
+
+        return null;
+      };
+
       for (const txResult of transactions) {
-        // Cast to any to access properties - xrpl types are complex
-        const tx = txResult.tx as any;
-        const meta = txResult.meta as any;
+        // xrpl.js v4 defaults to rippled API v2, which uses tx_json + optional hash.
+        // Some servers/clients may return v1 (tx), so handle both.
+        const tx = ((txResult as any).tx_json ?? (txResult as any).tx) as any;
+        const meta = (txResult as any).meta as any;
 
         // Skip non-Payment transactions for now
         if (!tx || tx.TransactionType !== 'Payment') {
           continue;
         }
 
-        // Skip transactions with non-XRP amounts (issued currencies)
-        if (typeof tx.Amount !== 'string') {
+        // Skip issued currency payments (Amount object) and handle XRP-native amounts robustly.
+        if (typeof tx.Amount === 'object' && tx.Amount !== null) {
           continue;
         }
 
-        const hash = tx.hash || '';
+        const hash = (txResult as any).hash || tx.hash || '';
         const from = tx.Account || '';
         const to = tx.Destination || '';
-        const valueDrops = tx.Amount;
-        const feeDrops = tx.Fee || '0';
+        const deliveredDrops = getDeliveredDrops(tx, meta);
+        if (deliveredDrops === null) {
+          continue;
+        }
+
+        const feeDropsNum = parseDrops(tx.Fee) ?? 0;
         const destinationTag = tx.DestinationTag;
         const sourceTag = tx.SourceTag;
-        const ledgerIndex = tx.ledger_index || 0;
+        const ledgerIndex = (txResult as any).ledger_index || tx.ledger_index || 0;
 
         // Determine transaction status
+        const validated = Boolean((txResult as any).validated);
         const txResult2 = typeof meta === 'object' && meta !== null && 'TransactionResult' in meta
           ? (meta as any).TransactionResult
           : 'unknown';
         const status: 'confirmed' | 'pending' | 'failed' =
+          !validated ? 'pending' :
           txResult2 === 'tesSUCCESS' ? 'confirmed' :
           txResult2.startsWith('tec') || txResult2.startsWith('tef') || txResult2.startsWith('tel') ? 'failed' :
           'pending';
@@ -375,20 +414,11 @@ export class XRPExplorer {
           from.toLowerCase() === address.toLowerCase() ? 'send' :
           to.toLowerCase() === address.toLowerCase() ? 'receive' : 'other';
 
-        // Get delivered amount (may differ from Amount for partial payments)
-        let deliveredDrops = valueDrops;
-        if (typeof meta === 'object' && meta !== null && 'delivered_amount' in meta) {
-          const delivered = (meta as any).delivered_amount;
-          if (typeof delivered === 'string') {
-            deliveredDrops = delivered;
-          }
-        }
-
         // Calculate timestamp from close_time_iso or close_time
         // XRP Ledger epoch starts at 2000-01-01T00:00:00Z (946684800 seconds after Unix epoch)
         const XRP_EPOCH_OFFSET = 946684800;
         let timestamp = Date.now();
-        if (tx.date) {
+        if (typeof tx.date === 'number') {
           timestamp = (tx.date + XRP_EPOCH_OFFSET) * 1000;
         }
 
@@ -396,12 +426,12 @@ export class XRPExplorer {
           hash,
           from,
           to,
-          value: deliveredDrops,
-          valueXrp: dropsToXrp(parseInt(deliveredDrops, 10)),
+          value: deliveredDrops.toString(),
+          valueXrp: dropsToXrp(deliveredDrops),
           timestamp,
           ledgerIndex: ledgerIndex || 0,
-          fee: feeDrops,
-          feeXrp: dropsToXrp(parseInt(feeDrops, 10)),
+          fee: feeDropsNum.toString(),
+          feeXrp: dropsToXrp(feeDropsNum),
           status,
           type,
           destinationTag,
