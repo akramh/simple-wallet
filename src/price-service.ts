@@ -93,6 +93,18 @@ const SOLANA_NETWORK_TO_ID: Record<string, string> = {
 /** Solana price cache (separate from EVM chain cache) */
 let solanaPriceCache: { price: number; lastUpdated: number } | null = null;
 
+/**
+ * Maps XRP network keys to CoinGecko IDs
+ */
+const XRP_NETWORK_TO_ID: Record<string, string> = {
+  'xrp-mainnet': 'ripple',
+  'xrp-testnet': 'ripple', // Use mainnet price for testnet display
+  'xrp-devnet': 'ripple',  // Use mainnet price for devnet display
+};
+
+/** XRP price cache (separate from other chain caches) */
+let xrpPriceCache: { price: number; lastUpdated: number } | null = null;
+
 // ============================================================================
 // Price Cache (per network)
 // ============================================================================
@@ -242,6 +254,13 @@ export function isSolanaNetworkKey(networkKey: string): boolean {
 }
 
 /**
+ * Check if a network key is an XRP network.
+ */
+export function isXRPNetworkKey(networkKey: string): boolean {
+  return networkKey in XRP_NETWORK_TO_ID;
+}
+
+/**
  * Fetches the Solana price.
  * Works for both solana-mainnet and solana-devnet (uses mainnet price).
  *
@@ -276,6 +295,50 @@ export async function getSolanaPrice(networkKey?: string): Promise<number | null
     return null;
   } catch (error) {
     console.warn('[PriceService] Failed to fetch Solana price:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetches the XRP price.
+ * Works for xrp-mainnet, xrp-testnet, and xrp-devnet (uses mainnet price).
+ *
+ * @param networkKey - XRP network key (e.g., 'xrp-mainnet')
+ * @returns XRP price in USD, or null if unavailable
+ */
+export async function getXRPPrice(networkKey?: string): Promise<number | null> {
+  // Check cache first
+  if (xrpPriceCache && Date.now() - xrpPriceCache.lastUpdated < CACHE_TTL) {
+    return xrpPriceCache.price;
+  }
+
+  const key = networkKey ?? 'xrp-mainnet';
+  if (!isXRPNetworkKey(key)) {
+    return null;
+  }
+
+  const coinId = XRP_NETWORK_TO_ID[key] ?? 'ripple';
+
+  try {
+    const url = `${COINGECKO_BASE}/simple/price?ids=${coinId}&vs_currencies=usd`;
+    const response = await fetchWithTimeout(url);
+
+    if (!response.ok) {
+      console.warn(`[PriceService] XRP API error: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json() as Record<string, { usd?: number } | undefined>;
+    const price = data[coinId]?.usd;
+
+    if (typeof price === 'number') {
+      xrpPriceCache = { price, lastUpdated: Date.now() };
+      return price;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('[PriceService] Failed to fetch XRP price:', error);
     return null;
   }
 }
@@ -432,9 +495,10 @@ export function clearPriceCache(): void {
   for (const key of Object.keys(priceCache)) {
     delete priceCache[Number(key)];
   }
-  // Also clear Bitcoin cache
+  // Also clear non-EVM caches
   bitcoinPriceCache = null;
   solanaPriceCache = null;
+  xrpPriceCache = null;
 }
 
 // ============================================================================

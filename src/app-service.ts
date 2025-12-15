@@ -18,7 +18,7 @@
  */
 
 import type { Config, Token, TokenRegistry, TokenMetadata } from './types/index.js';
-import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig } from './types/config.js';
+import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig } from './types/config.js';
 import { Wallet } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
@@ -47,6 +47,15 @@ import {
   type BitcoinAddressInfo,
   type NormalizedBitcoinTransaction,
 } from './bitcoin/index.js';
+import {
+  XRPProvider,
+  getXRPProvider,
+  isXRPNetwork,
+  dropsToXrp,
+  isValidXRPAddress,
+  type XRPAddressInfo,
+  type NormalizedXRPTransaction,
+} from './xrp/index.js';
 
 /**
  * Gas estimation result for transaction cost display.
@@ -132,6 +141,8 @@ export class WalletAppService {
   private solanaProvider: SolanaProvider | null = null;
   /** Solana explorer for Solana transaction history */
   private solanaExplorer: SolanaExplorer | null = null;
+  /** XRP provider for XRP Ledger operations */
+  private xrpProvider: XRPProvider | null = null;
 
   /**
    * Create a new WalletAppService instance.
@@ -322,6 +333,60 @@ export class WalletAppService {
   }
 
   /**
+   * Check if the current network is an XRP Ledger network.
+   */
+  isCurrentNetworkXRP(): boolean {
+    return isXRPNetwork(this.config.network);
+  }
+
+  /**
+   * Check if a specific network is an XRP Ledger network.
+   */
+  isNetworkXRP(networkKey: string): boolean {
+    return isXRPNetwork(networkKey);
+  }
+
+  /**
+   * Get or create the XRP provider for a network.
+   * @private
+   */
+  private getXRPProviderForNetwork(networkKey: string): XRPProvider {
+    const netConfig = this.config.networks[networkKey];
+    if (!netConfig || !isXRPNetworkConfig(netConfig)) {
+      throw new Error('Not an XRP network');
+    }
+
+    // Get RPC URLs from config or use defaults
+    const rpcUrls = netConfig.wsUrl
+      ? (Array.isArray(netConfig.wsUrl) ? netConfig.wsUrl : [netConfig.wsUrl])
+      : undefined;
+
+    if (!this.xrpProvider || this.xrpProvider.getNetworkKey() !== networkKey) {
+      this.xrpProvider = getXRPProvider(networkKey, rpcUrls);
+    }
+
+    return this.xrpProvider;
+  }
+
+  /**
+   * Get the XRP address for the current account.
+   */
+  getXRPAddress(): XRPAddressInfo | null {
+    if (!this.isCurrentNetworkXRP()) {
+      return null;
+    }
+
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+
+    try {
+      return this.wallet.getXRPAddress(accountIndex);
+    } catch (error) {
+      console.warn('[WalletAppService] Failed to get XRP address:', error);
+      return null;
+    }
+  }
+
+  /**
    * Create a new HD wallet with random mnemonic.
    * @param password - Master password for encryption
    * @returns Wallet info including address and mnemonic
@@ -426,7 +491,7 @@ export class WalletAppService {
 
   /**
    * Get the current wallet address.
-   * Returns the appropriate address for the current network (EVM or Bitcoin).
+   * Returns the appropriate address for the current network (EVM, Bitcoin, Solana, or XRP).
    * @returns Address string
    */
   getAddress(): string {
@@ -437,6 +502,10 @@ export class WalletAppService {
     if (this.isCurrentNetworkSolana()) {
       const solInfo = this.getSolanaAddress();
       return solInfo?.address || '';
+    }
+    if (this.isCurrentNetworkXRP()) {
+      const xrpInfo = this.getXRPAddress();
+      return xrpInfo?.address || '';
     }
     return this.wallet.getAddress();
   }
@@ -451,7 +520,7 @@ export class WalletAppService {
 
   /**
    * Get native currency balance.
-   * @returns Balance in native currency (ETH for EVM, BTC for Bitcoin)
+   * @returns Balance in native currency (ETH for EVM, BTC for Bitcoin, SOL for Solana, XRP for XRP Ledger)
    */
   async getBalance(): Promise<string> {
     if (this.isCurrentNetworkBitcoin()) {
@@ -470,6 +539,14 @@ export class WalletAppService {
       const provider = this.getSolanaProviderForNetwork(this.config.network);
       return provider.getBalanceFormatted(solInfo.address);
     }
+    if (this.isCurrentNetworkXRP()) {
+      const xrpInfo = this.getXRPAddress();
+      if (!xrpInfo) {
+        return '0';
+      }
+      const provider = this.getXRPProviderForNetwork(this.config.network);
+      return provider.getBalanceFormatted(xrpInfo.address);
+    }
     return this.wallet.getBalance();
   }
 
@@ -478,7 +555,15 @@ export class WalletAppService {
    * @param networkKey - Network identifier
    * @returns Array of token balances
    */
-  async getPortfolioForNetwork(networkKey: string): Promise<{ token: Token; balance: string; error?: string }[]> {
+  async getPortfolioForNetwork(networkKey: string): Promise<Array<{
+    token: Token;
+    balance: string;
+    error?: string;
+    // Non-EVM networks may expose additional metadata (UI can ignore if unused).
+    availableBalance?: string;
+    reservedBalance?: string;
+    isActivated?: boolean;
+  }>> {
     // Handle Bitcoin networks
     if (this.isNetworkBitcoin(networkKey)) {
       const btcNetwork = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
@@ -517,6 +602,29 @@ export class WalletAppService {
           token: this.getNativeToken(networkKey),
           balance,
         }];
+      } catch (error) {
+        return [{
+          token: this.getNativeToken(networkKey),
+          balance: 'Error',
+          error: (error as Error).message,
+        }];
+      }
+    }
+
+    // Handle XRP Ledger networks
+    if (this.isNetworkXRP(networkKey)) {
+      try {
+        const xrpInfo = this.wallet.getXRPAddress(this.wallet.getCurrentAccountIndex());
+        const provider = this.getXRPProviderForNetwork(networkKey);
+        const portfolio = await provider.getPortfolio(xrpInfo.address);
+        return portfolio.map(p => ({
+          token: p.token,
+          balance: p.balance,
+          availableBalance: p.availableBalance,
+          reservedBalance: p.reservedBalance,
+          isActivated: p.isActivated,
+          error: p.error,
+        }));
       } catch (error) {
         return [{
           token: this.getNativeToken(networkKey),
@@ -660,6 +768,43 @@ export class WalletAppService {
           maxPriorityFeePerGas: null,
           estimatedCostWei: '5000',
           estimatedCostNative: '0.000005',
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey
+        };
+      }
+    }
+
+    // XRP Ledger networks: estimate fee using XRP Ledger fee API
+    if (this.isCurrentNetworkXRP()) {
+      const networkKey = this.config.network;
+      const netConfig = this.config.networks[networkKey];
+      const nativeSymbol = netConfig?.nativeSymbol || 'XRP';
+
+      try {
+        const provider = this.getXRPProviderForNetwork(networkKey);
+        const feeEstimate = await provider.getFeeEstimates();
+
+        return {
+          gasLimit: '1', // 1 transaction
+          gasPrice: feeEstimate.openLedgerFee.toString(), // drops
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: feeEstimate.openLedgerFee.toString(), // drops
+          estimatedCostNative: dropsToXrp(feeEstimate.openLedgerFee),
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey
+        };
+      } catch (error: any) {
+        return {
+          error: error.message || 'Failed to estimate XRP fee',
+          gasLimit: '1',
+          gasPrice: '12', // Base fee fallback (12 drops)
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: '12',
+          estimatedCostNative: '0.000012',
           nativeSymbol,
           supportsEIP1559: false,
           network: networkKey
@@ -1183,6 +1328,191 @@ export class WalletAppService {
       feeSats: result.feeSats,
       feeBtc: result.feeBtc,
       vbytes: result.vbytes
+    };
+  }
+
+  // ============================================================================
+  // XRP-Specific Methods
+  // ============================================================================
+
+  /**
+   * Get XRP transaction history for the current address.
+   * Only works when current network is XRP.
+   *
+   * @param limit - Maximum number of transactions to return
+   * @returns Array of normalized XRP transactions
+   */
+  async getXRPTransactionHistory(limit: number = 25): Promise<NormalizedXRPTransaction[]> {
+    if (!this.isCurrentNetworkXRP()) {
+      return [];
+    }
+
+    const xrpInfo = this.getXRPAddress();
+    if (!xrpInfo) {
+      return [];
+    }
+
+    const provider = this.getXRPProviderForNetwork(this.config.network);
+    return provider.getTransactionHistory(xrpInfo.address, limit);
+  }
+
+  /**
+   * Get XRP transaction history for a specific address and network.
+   * Useful for extension UIs that need to query the currently-selected network/address.
+   *
+   * @param address - XRP classic address (r...)
+   * @param limit - Maximum number of transactions to return
+   * @param networkKey - XRP network key (defaults to current)
+   */
+  async getXRPTransactionHistoryForAddress(
+    address: string,
+    limit: number = 25,
+    networkKey: string = this.config.network
+  ): Promise<NormalizedXRPTransaction[]> {
+    if (!this.isNetworkXRP(networkKey)) {
+      return [];
+    }
+    const provider = this.getXRPProviderForNetwork(networkKey);
+    return provider.getTransactionHistory(address, limit);
+  }
+
+  /**
+   * Get block explorer URL for an XRP transaction.
+   *
+   * @param hash - Transaction hash
+   * @returns URL to XRPL explorer
+   */
+  getXRPTransactionUrl(hash: string): string {
+    const provider = this.getXRPProviderForNetwork(this.config.network);
+    return provider.getTransactionUrl(hash);
+  }
+
+  /**
+   * Get block explorer URL for an XRP address.
+   *
+   * @param address - XRP address (optional, uses current if not provided)
+   * @returns URL to XRPL explorer
+   */
+  getXRPAddressUrl(address?: string): string {
+    const addr = address || this.getXRPAddress()?.address;
+    if (!addr) {
+      return '';
+    }
+    const provider = this.getXRPProviderForNetwork(this.config.network);
+    return provider.getAddressUrl(addr);
+  }
+
+  /**
+   * Get XRP private key (hex format).
+   * Requires password verification.
+   *
+   * @param password - Master password
+   * @returns Private key as hex string
+   */
+  getXRPPrivateKey(password: string): string {
+    return this.wallet.getXRPPrivateKey(password);
+  }
+
+  /**
+   * Send an XRP transaction.
+   *
+   * @param toAddress - Recipient XRP address (r...)
+   * @param amountXrp - Amount in XRP string (e.g., "10" or "10.5")
+   * @param password - Master password for signing
+   * @param destinationTag - Optional destination tag (for exchange deposits)
+   * @returns Transaction result with hash and fee info
+   */
+  async sendXRPTransaction(
+    toAddress: string,
+    amountXrp: string,
+    password: string,
+    destinationTag?: number
+  ): Promise<{ hash: string; feeDrops: number; feeXrp: string }> {
+    if (!this.isCurrentNetworkXRP()) {
+      throw new Error('Not on an XRP network');
+    }
+
+    // Validate recipient address
+    if (!isValidXRPAddress(toAddress)) {
+      throw new Error('Invalid XRP recipient address');
+    }
+
+    const xrpInfo = this.getXRPAddress();
+    if (!xrpInfo) {
+      throw new Error('No XRP address available');
+    }
+
+    // Get mnemonic for signing
+    const mnemonic = this.wallet.getMnemonic(password);
+
+    // Get provider and send transaction
+    const provider = this.getXRPProviderForNetwork(this.config.network);
+    const result = await provider.sendTransaction(
+      xrpInfo.address,
+      toAddress,
+      amountXrp,
+      mnemonic,
+      destinationTag
+    );
+
+    return {
+      hash: result.hash,
+      feeDrops: result.feeDrops,
+      feeXrp: result.feeXrp,
+    };
+  }
+
+  /**
+   * Estimate an XRP send and surface reserve/spendable constraints.
+   * Intended for UI preflight checks (CLI/extension) before prompting for password.
+   *
+   * @param toAddress - Recipient XRP classic address (r...)
+   * @param amountXrp - Amount in XRP string
+   * @param destinationTag - Optional destination tag
+   */
+  async estimateXRPTransaction(
+    toAddress: string,
+    amountXrp: string,
+    destinationTag?: number
+  ): Promise<{
+    feeXrp: string;
+    maxSendableXrp: string;
+    sender: { totalXrp: string; availableXrp: string; reservedXrp: string; isActivated: boolean };
+    recipient: { isActivated: boolean };
+  }> {
+    if (!this.isCurrentNetworkXRP()) {
+      throw new Error('Not on an XRP network');
+    }
+
+    if (!isValidXRPAddress(toAddress)) {
+      throw new Error('Invalid XRP recipient address');
+    }
+
+    const xrpInfo = this.getXRPAddress();
+    if (!xrpInfo) {
+      throw new Error('No XRP address available');
+    }
+
+    const provider = this.getXRPProviderForNetwork(this.config.network);
+    const estimate = await provider.estimateSendTransaction(
+      xrpInfo.address,
+      toAddress,
+      amountXrp,
+      destinationTag
+    );
+
+    return {
+      feeXrp: estimate.feeXrpStr,
+      maxSendableXrp: estimate.maxSendableXrp,
+      sender: {
+        totalXrp: dropsToXrp(estimate.senderBalance.total),
+        availableXrp: dropsToXrp(estimate.senderBalance.available),
+        reservedXrp: dropsToXrp(estimate.senderBalance.reserved),
+        isActivated: estimate.senderBalance.isActivated,
+      },
+      recipient: {
+        isActivated: estimate.recipientBalance.isActivated,
+      },
     };
   }
 }

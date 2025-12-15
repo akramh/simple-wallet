@@ -93,6 +93,8 @@ export interface Transaction {
   tokenSymbol?: string;
   /** Token contract address for token transfers */
   tokenAddress?: string;
+  /** XRP destination tag (if present) */
+  destinationTag?: number;
   /** Error message if transaction failed */
   error?: string;
 }
@@ -357,7 +359,9 @@ export class TransactionHistoryManager {
       'bitcoin-mainnet': 'https://mempool.space/tx/',
       'bitcoin-testnet': 'https://mempool.space/testnet/tx/',
       'solana-mainnet': 'https://solscan.io/tx/',
-      'solana-devnet': 'https://solscan.io/tx/'
+      'solana-devnet': 'https://solscan.io/tx/',
+      'xrp-mainnet': 'https://xrpscan.com/tx/',
+      'xrp-testnet': 'https://testnet.xrpscan.com/tx/'
     };
 
     const baseUrl = explorers[network] || explorers.mainnet;

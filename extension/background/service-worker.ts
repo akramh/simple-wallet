@@ -48,8 +48,8 @@ import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
-import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, isBitcoinNetworkKey, isSolanaNetworkKey, type TokenInfo } from '../../src/price-service.js';
-import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig } from '../../src/types/config.js';
+import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, type TokenInfo } from '../../src/price-service.js';
+import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
 import { getBitcoinExplorer, getBitcoinProvider, satoshisToBtc } from '../../src/bitcoin/index.js';
@@ -428,7 +428,7 @@ async function refreshBalancesForCurrentNetwork(): Promise<void> {
   const network = walletService.config.network;
   const networkConfig = walletService.config.networks[network];
 
-  if (isBitcoinNetworkConfig(networkConfig) || isSolanaNetworkConfig(networkConfig)) {
+  if (isBitcoinNetworkConfig(networkConfig) || isSolanaNetworkConfig(networkConfig) || isXRPNetworkConfig(networkConfig)) {
     const portfolio = await walletService.getPortfolioForNetwork(network);
 
     for (const item of portfolio) {
@@ -1405,6 +1405,35 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         }
       }
 
+      // Handle XRP networks (native XRP only)
+      if (isXRPNetworkKey(priceNetwork)) {
+        try {
+          const xrpPrice = await getXRPPrice(priceNetwork);
+          const cached = getCachedBalance(priceNetwork, { type: 'native' });
+          const balance = cached?.balance || '0';
+          const xrpAmount = parseFloat(balance);
+          const totalValue = xrpPrice ? xrpAmount * xrpPrice : 0;
+
+          return {
+            prices: { native: xrpPrice },
+            totalValue,
+            formattedTotal: formatUSDValue(totalValue),
+            network: priceNetwork,
+            isXrp: true
+          };
+        } catch (error) {
+          console.warn('[GET_TOKEN_PRICES] XRP price error:', error);
+          return {
+            prices: {},
+            totalValue: 0,
+            formattedTotal: '$0.00',
+            network: priceNetwork,
+            isXrp: true,
+            error: 'Failed to fetch XRP price'
+          };
+        }
+      }
+
       // EVM networks
       const chainId = 'chainId' in networkConfig ? networkConfig.chainId : 1;
 
@@ -1558,6 +1587,49 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
           };
         }
 
+        // XRP send path (broadcast + pending)
+        if (isXRPNetworkConfig(sendNetworkConfig)) {
+          const xrpPassword = getSessionPassword();
+          if (!xrpPassword) {
+            throw new Error('Session password not available. Please unlock wallet again.');
+          }
+
+          const result = await walletService!.sendXRPTransaction(
+            payload.toAddress,
+            payload.amount,
+            xrpPassword,
+            payload.destinationTag
+          );
+
+          // Track transaction in history as pending
+          if (transactionHistory && result.hash) {
+            transactionHistory.addTransaction({
+              hash: result.hash,
+              from: fromAddress,
+              to: payload.toAddress,
+              value: payload.amount,
+              network: network,
+              status: TransactionStatus.PENDING,
+              type: TransactionType.SEND,
+              timestamp: Date.now(),
+              tokenSymbol: sendNetworkConfig.nativeSymbol || 'XRP',
+              tokenAddress: '',
+              destinationTag: payload.destinationTag
+            });
+          }
+
+          broadcastTransactionStatus(result.hash, 'pending', network);
+
+          return {
+            result: {
+              hash: result.hash,
+              status: 'pending',
+              feeXrp: result.feeXrp,
+              feeDrops: result.feeDrops
+            }
+          };
+        }
+
         // EVM path: call sendToken - this waits for confirmation
         const result = await walletService!.sendToken(payload.token, payload.toAddress, payload.amount);
 
@@ -1609,14 +1681,17 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const netConfigData = walletService.config.networks[netConfigNetwork];
       const isBitcoin = isBitcoinNetworkConfig(netConfigData);
       const isSolana = isSolanaNetworkConfig(netConfigData);
+      const isXrp = isXRPNetworkConfig(netConfigData);
       return {
         network: netConfigNetwork,
         blockExplorer: netConfigData?.blockExplorer || null,
         chainId: isEVMNetworkConfig(netConfigData) ? netConfigData.chainId : undefined,
         isBitcoin,
         isSolana,
+        isXrp,
         bitcoinNetwork: isBitcoin ? (netConfigData as any).bitcoinNetwork : undefined,
-        solanaCluster: isSolana ? (netConfigData as any).solanaCluster : undefined
+        solanaCluster: isSolana ? (netConfigData as any).solanaCluster : undefined,
+        xrpNetwork: isXrp ? (netConfigData as any).xrpNetwork : undefined
       };
     }
 
@@ -1712,6 +1787,29 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             blockNumber: tx.slot || undefined,
             tokenSymbol: nativeSymbol,
             fee: tx.feeSol
+          }));
+
+          return { transactions, supported: true };
+        }
+
+        // XRP explorer fetching
+        if (isXRPNetworkConfig(explorerNetworkConfig)) {
+          const limit = payload.pageSize || 25;
+          const xrpTxs = await walletService!.getXRPTransactionHistoryForAddress(explorerAddress, limit, explorerNetwork);
+          const nativeSymbol = explorerNetworkConfig.nativeSymbol || 'XRP';
+
+          const transactions = xrpTxs.map((tx) => ({
+            hash: tx.hash,
+            from: tx.from,
+            to: tx.to || null,
+            value: tx.valueXrp, // already formatted XRP string
+            network: explorerNetwork,
+            status: tx.status,
+            type: tx.type === 'other' ? 'contract_interaction' : tx.type,
+            timestamp: tx.timestamp,
+            tokenSymbol: nativeSymbol,
+            fee: tx.feeXrp,
+            destinationTag: tx.destinationTag
           }));
 
           return { transactions, supported: true };

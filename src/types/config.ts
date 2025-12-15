@@ -12,8 +12,10 @@
  * Network type discriminator.
  * - 'evm': Ethereum and EVM-compatible chains (Polygon, BSC, etc.)
  * - 'bitcoin': Bitcoin mainnet and testnet
+ * - 'solana': Solana mainnet and devnet
+ * - 'xrp': XRP Ledger mainnet and testnet
  */
-export type NetworkType = 'evm' | 'bitcoin' | 'solana';
+export type NetworkType = 'evm' | 'bitcoin' | 'solana' | 'xrp';
 
 /**
  * Base configuration shared by all network types.
@@ -71,10 +73,24 @@ export interface SolanaNetworkConfig extends BaseNetworkConfig {
 }
 
 /**
- * Configuration for a single blockchain network.
- * Union type supporting both EVM and Bitcoin networks.
+ * Configuration for XRP Ledger networks.
  */
-export type NetworkConfig = EVMNetworkConfig | BitcoinNetworkConfig | SolanaNetworkConfig;
+export interface XRPNetworkConfig extends BaseNetworkConfig {
+  /** Network type discriminator */
+  type: 'xrp';
+  /** XRP network variant */
+  xrpNetwork: 'mainnet' | 'testnet' | 'devnet';
+  /** JSON-RPC URL(s) for XRP Ledger */
+  rpcUrl?: string | string[];
+  /** WebSocket URL(s) for XRP Ledger */
+  wsUrl?: string | string[];
+}
+
+/**
+ * Configuration for a single blockchain network.
+ * Union type supporting EVM, Bitcoin, Solana, and XRP networks.
+ */
+export type NetworkConfig = EVMNetworkConfig | BitcoinNetworkConfig | SolanaNetworkConfig | XRPNetworkConfig;
 
 /**
  * Type guard to check if a network config is for Bitcoin.
@@ -91,10 +107,17 @@ export function isSolanaNetworkConfig(config: NetworkConfig): config is SolanaNe
 }
 
 /**
+ * Type guard to check if a network config is for XRP.
+ */
+export function isXRPNetworkConfig(config: NetworkConfig): config is XRPNetworkConfig {
+  return config.type === 'xrp';
+}
+
+/**
  * Type guard to check if a network config is for EVM.
  */
 export function isEVMNetworkConfig(config: NetworkConfig): config is EVMNetworkConfig {
-  return config.type !== 'bitcoin' && config.type !== 'solana';
+  return config.type !== 'bitcoin' && config.type !== 'solana' && config.type !== 'xrp';
 }
 
 /**

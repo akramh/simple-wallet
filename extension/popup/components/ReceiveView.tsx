@@ -10,6 +10,7 @@ interface Props {
 
 function ReceiveView({ address, network, networks }: Props) {
   const { showToast } = useToast();
+  const isXrp = network.startsWith('xrp-');
 
   const handleCopyAddress = async () => {
     try {
@@ -84,6 +85,15 @@ function ReceiveView({ address, network, networks }: Props) {
           <strong>Important:</strong> Only send {nativeSymbol} and tokens on the <strong>{networkName}</strong> network to this address. Sending assets from other networks may result in permanent loss.
         </div>
       </div>
+
+      {isXrp && (
+        <div className="receive-warning" style={{ marginTop: 12 }}>
+          <div className="warning-icon">ℹ️</div>
+          <div className="warning-content">
+            <strong>XRP note:</strong> Some exchanges require a destination tag for deposits. Personal wallets typically do not.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

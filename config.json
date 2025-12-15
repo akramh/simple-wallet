@@ -45,6 +45,30 @@
       "blockExplorer": "https://solscan.io",
       "explorerApiKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3NjU2NTE0NjA5NDMsImVtYWlsIjoiYWtyYW1oQGdtYWlsLmNvbSIsImFjdGlvbiI6InRva2VuLWFwaSIsImFwaVZlcnNpb24iOiJ2MiIsImlhdCI6MTc2NTY1MTQ2MH0.1LeH9hM6x838txbuLEmhh3EJpHE_etLAplyaSBm_ZI8"
     },
+    "xrp-mainnet": {
+      "type": "xrp",
+      "name": "XRP Ledger Mainnet",
+      "xrpNetwork": "mainnet",
+      "wsUrl": [
+        "wss://xrplcluster.com",
+        "wss://s1.ripple.com",
+        "wss://s2.ripple.com"
+      ],
+      "nativeSymbol": "XRP",
+      "nativeName": "XRP",
+      "blockExplorer": "https://xrpscan.com",
+      "explorerApiKey": ""
+    },
+    "xrp-testnet": {
+      "type": "xrp",
+      "name": "XRP Ledger Testnet",
+      "xrpNetwork": "testnet",
+      "wsUrl": "wss://s.altnet.rippletest.net:51233",
+      "nativeSymbol": "XRP",
+      "nativeName": "XRP Testnet",
+      "blockExplorer": "https://testnet.xrpscan.com",
+      "explorerApiKey": ""
+    },
     "sepolia": {
       "name": "Sepolia Testnet",
       "rpcUrl": [

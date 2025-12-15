@@ -65,6 +65,8 @@ import {
 } from './price-service.js';
 import type { Config, Token, TokenMetadata } from './types/index.js';
 import { isBitcoinNetwork, isValidBitcoinAddress, satoshisToBtc } from './bitcoin/index.js';
+import { isXRPNetwork, isValidXRPAddress, dropsToXrp, isValidDestinationTag } from './xrp/index.js';
+import { getXRPPrice } from './price-service.js';
 
 // ============================================================================
 // Configuration and Global State
@@ -839,6 +841,10 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
       // Solana network - get SOL price
       const solPrice = await getSolanaPrice(config.network);
       prices = new Map([['native', solPrice]]);
+    } else if (isXRPNetwork(config.network)) {
+      // XRP network - get XRP price
+      const xrpPrice = await getXRPPrice(config.network);
+      prices = new Map([['native', xrpPrice]]);
     } else {
       // EVM network - get token prices
       const chainId = currentNetConfig && 'chainId' in currentNetConfig ? currentNetConfig.chainId : 1;
@@ -889,13 +895,17 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
 
   } catch (error) {
     const err = error as Error;
+    let apiHint = 'Verify the network RPC endpoint in config.json';
+    if (isBitcoinNetwork(config.network)) {
+      apiHint = 'Verify the Mempool.space API is accessible';
+    } else if (isXRPNetwork(config.network)) {
+      apiHint = 'Verify the XRP Ledger WebSocket is accessible';
+    }
     ui.showError(
       err.message,
       [
         'Check your internet connection',
-        isBitcoinNetwork(config.network)
-          ? 'Verify the Mempool.space API is accessible'
-          : 'Verify the network RPC endpoint in config.json',
+        apiHint,
         'Try switching to a different network'
       ]
     );
@@ -954,6 +964,10 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
         } else if (config.networks[net]?.type === 'solana') {
           const solPrice = await getSolanaPrice(net);
           prices = new Map([['native', solPrice]]);
+        } else if (isXRPNetwork(net)) {
+          // XRP network - get XRP price
+          const xrpPrice = await getXRPPrice(net);
+          prices = new Map([['native', xrpPrice]]);
         } else {
           // EVM network - get token prices
           const netConfig = config.networks[net];
@@ -1159,6 +1173,68 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
         }
 
         ui.showSeparator();
+      }
+    } catch (error) {
+      const err = error as Error;
+      ui.showError('Failed to fetch transactions', [err.message]);
+    }
+
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  // XRP history via XRP Ledger
+  if (isXRPNetwork(config.network)) {
+    ui.showLoading('Fetching transactions from XRP Ledger...');
+    try {
+      const txs = await walletService.getXRPTransactionHistory(15);
+      console.log('');
+
+      if (txs.length === 0) {
+        ui.showInfo('No transactions found for this address.');
+      } else {
+        ui.showSuccess(`Found ${txs.length} recent transactions`);
+        console.log('');
+        ui.showSeparator();
+
+        const symbol = config.networks[config.network].nativeSymbol || 'XRP';
+        for (const tx of txs) {
+          const isSent = tx.type === 'send';
+          const direction = isSent ? chalk.red('↑ SENT') : tx.type === 'receive' ? chalk.green('↓ RECEIVED') : chalk.gray('• OTHER');
+          const otherAddress = isSent ? tx.to : tx.from;
+          const shortAddr = otherAddress ? `${otherAddress.slice(0, 10)}...${otherAddress.slice(-8)}` : 'Unknown';
+
+          const xrpValue = tx.valueXrp;
+          const valueStr = `${parseFloat(xrpValue).toFixed(6)} ${symbol}`;
+
+          const date = new Date(tx.timestamp);
+          const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          const statusIcon = tx.status === 'confirmed' ? '✓' : tx.status === 'failed' ? '✗' : '○';
+          const statusColor = tx.status === 'confirmed' ? chalk.green : tx.status === 'failed' ? chalk.red : chalk.yellow;
+
+          console.log(`${statusColor(statusIcon)} ${direction}  ${chalk.white(valueStr.padEnd(20))} ${chalk.gray(dateStr)}`);
+          console.log(`  ${chalk.gray(isSent ? 'To:' : 'From:')} ${chalk.cyan(shortAddr)}`);
+          console.log(`  ${chalk.gray('Hash:')} ${chalk.gray(tx.hash.slice(0, 18))}...`);
+          if (tx.destinationTag !== undefined) {
+            console.log(`  ${chalk.gray('Dest Tag:')} ${chalk.yellow(tx.destinationTag.toString())}`);
+          }
+          console.log(`  ${chalk.gray('Fee:')} ${chalk.gray(`${tx.feeXrp} ${symbol}`)}`);
+          console.log('');
+        }
+
+        ui.showSeparator();
+        const addrUrl = walletService.getXRPAddressUrl(address);
+        if (addrUrl) {
+          console.log(chalk.gray(`View all: ${addrUrl}`));
+          console.log('');
+        }
       }
     } catch (error) {
       const err = error as Error;
@@ -1510,6 +1586,186 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
 
     const txUrl = `${solNetConfig.blockExplorer}/tx/${result.signature}${config.network === 'solana-devnet' ? '?cluster=devnet' : ''}`;
     console.log(chalk.gray('View:      ') + chalk.cyan(txUrl));
+    console.log('');
+
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  // XRP send flow
+  if (isXRPNetwork(config.network)) {
+    const xrpNetConfig = config.networks[config.network];
+    const nativeSymbol = xrpNetConfig.nativeSymbol || 'XRP';
+
+    ui.showSection('Send XRP');
+    ui.showInfo('Press Ctrl+C to cancel at any time');
+    console.log('');
+
+    const answers = await inquirer.prompt<{
+      toAddress?: string;
+      amount?: string;
+      destinationTag?: string;
+    }>([
+      {
+        type: 'input',
+        name: 'toAddress',
+        message: 'Recipient XRP address (or leave empty to cancel):',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          if (!isValidXRPAddress(input.trim())) {
+            return 'Please enter a valid XRP address (r... or X...)';
+          }
+          return true;
+        }
+      },
+      {
+        type: 'input',
+        name: 'amount',
+        message: `Amount (in ${nativeSymbol}):`,
+        when: (a) => !!a.toAddress && a.toAddress.trim() !== '',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
+          const num = parseFloat(input);
+          if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
+          if (input.includes('.') && input.split('.')[1].length > 6) return 'XRP supports up to 6 decimals';
+          return true;
+        }
+      },
+      {
+        type: 'input',
+        name: 'destinationTag',
+        message: 'Destination tag (optional, for exchanges):',
+        when: (a) => !!a.toAddress && a.toAddress.trim() !== '' && !!a.amount && a.amount.trim() !== '',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          if (!isValidDestinationTag(input.trim())) {
+            return 'Destination tag must be a non-negative integer (0 to 4294967295)';
+          }
+          return true;
+        }
+      }
+    ]);
+
+    if (!answers.toAddress || answers.toAddress.trim() === '' || !answers.amount || answers.amount.trim() === '') {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    const destTag = answers.destinationTag?.trim();
+    const destTagNum = destTag ? parseInt(destTag, 10) : undefined;
+
+    // Preflight: reserve/spendable validation before confirmation + password prompt
+    let xrpPreflight: Awaited<ReturnType<typeof walletService.estimateXRPTransaction>> | null = null;
+    try {
+      ui.showLoading('Checking XRP reserves and spendable balance...');
+      xrpPreflight = await walletService.estimateXRPTransaction(
+        answers.toAddress.trim(),
+        answers.amount.trim(),
+        destTagNum
+      );
+    } catch (error) {
+      const err = error as Error;
+      ui.showError('XRP send preflight failed', [err.message]);
+      await inquirer.prompt<{ continue: string }>([{
+        type: 'input',
+        name: 'continue',
+        message: 'Press Enter to continue...'
+      }]);
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Estimating network fee...');
+    const xrpToken = walletService.getNativeToken(config.network);
+    const gasEstimate = await walletService.getGasEstimate(xrpToken, answers.toAddress.trim(), answers.amount.trim());
+
+    let xrpPrice: number | null = null;
+    try {
+      xrpPrice = await getXRPPrice(config.network);
+    } catch {
+      xrpPrice = null;
+    }
+
+    const { amountUsd, gasCostUsd, totalUsd } = calculateTransactionCosts(
+      answers.amount.trim(),
+      xrpPrice,
+      gasEstimate.estimatedCostNative,
+      xrpPrice
+    );
+
+    ui.clearScreen();
+    ui.showHeader(currentWalletName, wallet.currentAccountIndex, xrpNetConfig.name || config.network, address);
+
+    ui.showTransactionConfirmation({
+      tokenSymbol: nativeSymbol,
+      amount: answers.amount.trim(),
+      recipient: answers.toAddress.trim(),
+      networkName: xrpNetConfig.name || config.network,
+      amountUsd,
+      gasCostNative: gasEstimate.estimatedCostNative,
+      nativeSymbol: gasEstimate.nativeSymbol,
+      gasCostUsd,
+      totalUsd,
+      gasEstimateFailed: !!gasEstimate.error
+    });
+
+    // Show destination tag if provided
+    if (destTag) {
+      console.log(chalk.gray('Destination Tag:     ') + chalk.yellow(destTag));
+      console.log('');
+    }
+
+    // Reserve/spendable warnings (XRP-specific)
+    if (xrpPreflight) {
+      console.log(chalk.gray('Spendable Balance:   ') + chalk.white(`${xrpPreflight.sender.availableXrp} ${nativeSymbol}`));
+      console.log(chalk.gray('Reserved (min):      ') + chalk.gray(`${xrpPreflight.sender.reservedXrp} ${nativeSymbol}`));
+      if (!xrpPreflight.sender.isActivated) {
+        console.log(chalk.yellow('Warning: Your XRP account is not activated on-ledger yet.'));
+      }
+      console.log('');
+    }
+
+    if (!gasEstimate.error) {
+      console.log(chalk.gray('Fee:                 ') + chalk.white(`${gasEstimate.estimatedCostNative} ${nativeSymbol}`));
+      console.log('');
+    }
+
+    const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: 'Confirm & Send?',
+        default: false
+      }
+    ]);
+
+    if (!confirm) {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Broadcasting transaction to XRP Ledger...');
+    const password = await ensureMasterPassword();
+    const result = await walletService.sendXRPTransaction(answers.toAddress.trim(), answers.amount.trim(), password, destTagNum);
+
+    ui.showSuccess('Transaction broadcasted (pending validation)');
+    console.log('');
+    console.log(chalk.gray('Hash: ') + chalk.magenta(result.hash));
+    console.log(chalk.gray('Fee:  ') + chalk.white(`${result.feeXrp} ${nativeSymbol}`));
+
+    const txUrl = walletService.getXRPTransactionUrl(result.hash);
+    if (txUrl) {
+      console.log(chalk.gray('View: ') + chalk.cyan(txUrl));
+    }
     console.log('');
 
     await inquirer.prompt<{ continue: string }>([{

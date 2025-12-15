@@ -9,6 +9,7 @@ interface Transaction {
   to: string | null;
   value: string;
   fee?: string;
+  destinationTag?: number;
   network: string;
   status: 'pending' | 'confirmed' | 'failed';
   type: 'send' | 'receive' | 'contract_interaction';
@@ -101,8 +102,8 @@ function ActivityView({ currentAddress, network, networks }: Props) {
   };
 
   const formatValue = (value: string, tokenSymbol?: string) => {
-    // Explorer API returns value in wei for ETH, raw for tokens
-    if (!tokenSymbol || tokenSymbol === 'ETH') {
+    // Explorer API returns value in wei for EVM native tokens. Other networks already return native units.
+    if (!tokenSymbol || tokenSymbol === 'ETH' || tokenSymbol === 'tETH') {
       // Convert wei to ETH
       const ethValue = parseFloat(value) / 1e18;
       if (ethValue === 0) return '0 ETH';
