@@ -15,3 +15,7 @@ dist-extension/
 *.tsbuildinfo
 .github/
 .npm-cache/
+
+# Mobile app figma and plan
+mobile-app/
+MOBILE_APP_PLAN.md

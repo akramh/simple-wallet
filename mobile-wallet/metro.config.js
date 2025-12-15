@@ -1,0 +1,86 @@
+const { getDefaultConfig } = require('expo/metro-config');
+const { withNativeWind } = require('nativewind/metro');
+const path = require('path');
+
+const projectRoot = __dirname;
+const workspaceRoot = path.resolve(projectRoot, '..');
+
+const config = getDefaultConfig(projectRoot);
+
+// Watch the shared wallet code in the parent directory
+config.watchFolders = [workspaceRoot];
+
+// Let Metro know where to resolve packages from
+config.resolver.nodeModulesPaths = [
+  path.resolve(projectRoot, 'node_modules'),
+  path.resolve(workspaceRoot, 'node_modules'),
+];
+
+// Resolve .js extensions for ESM imports from shared code
+// Order matters: .ts/.tsx first so Metro finds the source files
+config.resolver.sourceExts = ['ts', 'tsx', 'js', 'jsx', 'json', 'cjs', 'mjs'];
+
+// Handle .js extension in imports pointing to .ts files (ESM compatibility)
+// Also stub problematic modules that use WebAssembly
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Stub the entire Bitcoin module (depends on WebAssembly crypto)
+  // This intercepts imports from wallet.ts like './bitcoin/index.js'
+  if (moduleName.includes('/bitcoin/index') || moduleName.includes('/bitcoin/address') || 
+      moduleName.includes('/bitcoin/transaction') || moduleName.includes('/bitcoin/explorer') ||
+      moduleName.includes('/bitcoin/provider') || moduleName.includes('/bitcoin/types')) {
+    return {
+      filePath: path.resolve(projectRoot, 'stubs/bitcoin-index.js'),
+      type: 'sourceFile',
+    };
+  }
+  
+  // Stub bip32 (depends on tiny-secp256k1 WebAssembly)
+  if (moduleName === 'bip32') {
+    return {
+      filePath: path.resolve(projectRoot, 'stubs/bip32.js'),
+      type: 'sourceFile',
+    };
+  }
+  
+  // Stub ecpair (depends on tiny-secp256k1 WebAssembly)
+  if (moduleName === 'ecpair') {
+    return {
+      filePath: path.resolve(projectRoot, 'stubs/ecpair.js'),
+      type: 'sourceFile',
+    };
+  }
+  
+  // Stub tiny-secp256k1 (uses WebAssembly not supported in React Native)
+  if (moduleName === 'tiny-secp256k1' || moduleName.includes('tiny-secp256k1')) {
+    return {
+      filePath: path.resolve(projectRoot, 'stubs/tiny-secp256k1.js'),
+      type: 'sourceFile',
+    };
+  }
+  
+  // If importing from @wallet or src/, strip .js and try .ts
+  if (moduleName.startsWith('.') && moduleName.endsWith('.js')) {
+    const tsModuleName = moduleName.slice(0, -3);
+    try {
+      return context.resolveRequest(context, tsModuleName, platform);
+    } catch {
+      // Fall through to default resolution
+    }
+  }
+  // Default resolution
+  return context.resolveRequest(context, moduleName, platform);
+};
+
+// Handle the shared src/ folder and Node.js module stubs
+config.resolver.extraNodeModules = {
+  '@wallet': path.resolve(workspaceRoot, 'src'),
+  // Stub Node.js built-in modules for React Native compatibility
+  'fs': path.resolve(projectRoot, 'stubs/fs.js'),
+  'crypto': path.resolve(projectRoot, 'stubs/crypto.js'),
+  'path': path.resolve(projectRoot, 'stubs/path.js'),
+  'stream': path.resolve(projectRoot, 'stubs/stream.js'),
+  // Stub packages that use WebAssembly (not supported in React Native)
+  'tiny-secp256k1': path.resolve(projectRoot, 'stubs/tiny-secp256k1.js'),
+};
+
+module.exports = withNativeWind(config, { input: './global.css' });
