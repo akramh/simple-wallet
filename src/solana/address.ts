@@ -9,10 +9,10 @@
  * @module solana/address
  */
 
-import * as bip39 from 'bip39';
 import { Keypair } from '@solana/web3.js';
 import * as asmcrypto from 'asmcrypto.js';
 import type { SolanaAddressInfo } from './types.js';
+import { validateMnemonic, mnemonicToSeed } from '../crypto-utils.js';
 
 export function getSolanaDerivationPath(accountIndex: number = 0): string {
   return `m/44'/501'/${accountIndex}'/0'`;
@@ -69,11 +69,11 @@ function deriveSlip10Ed25519HardenedPath(seed: Uint8Array, path: string): Uint8A
 }
 
 export function deriveSolanaKeypair(mnemonic: string, accountIndex: number = 0): Keypair {
-  if (!bip39.validateMnemonic(mnemonic)) {
+  if (!validateMnemonic(mnemonic)) {
     throw new Error('Invalid mnemonic phrase');
   }
 
-  const seed = bip39.mnemonicToSeedSync(mnemonic);
+  const seed = mnemonicToSeed(mnemonic);
   const path = getSolanaDerivationPath(accountIndex);
   const seedBytes = seed instanceof Uint8Array ? seed : new Uint8Array(seed as any);
   const key = deriveSlip10Ed25519HardenedPath(seedBytes, path);

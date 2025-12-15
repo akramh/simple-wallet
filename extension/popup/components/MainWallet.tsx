@@ -574,9 +574,18 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       {view !== 'settings' && view !== 'send' && view !== 'receive' && (
         <>
           <div className="account-row">
-            <button
-              className="account-button wide"
+            <div
+              className="account-button wide account-selector"
+              role="button"
+              tabIndex={0}
               onClick={() => setShowAccountMenu(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setShowAccountMenu(true);
+                }
+              }}
+              aria-label="Open account menu"
             >
               <div className="account-avatar">
                 {/* Bitcoin addresses start with bc1/tb1, Ethereum with 0x */}
@@ -588,24 +597,61 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 <div className="account-name">
                   {currentWalletName} : Account {currentAccountIndex + 1}
                 </div>
-                <div 
-                  className="account-address"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigator.clipboard.writeText(address);
-                    showToast('Address copied!');
-                  }}
-                  title="Click to copy"
-                  style={{ cursor: 'pointer' }}
-                >
-                  {/* Bitcoin addresses are longer, show more characters */}
-                  {isBitcoinNetwork(network)
-                    ? `${address.substring(0, 8)}...${address.substring(address.length - 6)}`
-                    : `${address.substring(0, 6)}...${address.substring(address.length - 4)}`}
+                <div className="account-address-row">
+                  <button
+                    type="button"
+                    className="account-address-link"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await navigator.clipboard.writeText(address);
+                        showToast('Address copied!');
+                      } catch {
+                        showToast('Failed to copy address');
+                      }
+                    }}
+                    title="Copy address"
+                  >
+                    {/* Bitcoin addresses are longer, show more characters */}
+                    {isBitcoinNetwork(network)
+                      ? `${address.substring(0, 8)}...${address.substring(address.length - 6)}`
+                      : `${address.substring(0, 6)}...${address.substring(address.length - 4)}`}
+                  </button>
+                  <button
+                    type="button"
+                    className="account-copy-btn"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        await navigator.clipboard.writeText(address);
+                        showToast('Address copied!');
+                      } catch {
+                        showToast('Failed to copy address');
+                      }
+                    }}
+                    aria-label="Copy address"
+                    title="Copy address"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
+                  </button>
                 </div>
               </div>
-              <span className="dropdown-arrow">▼</span>
-            </button>
+              <button
+                type="button"
+                className="account-chevron-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowAccountMenu(true);
+                }}
+                aria-label="Open account menu"
+                title="Open account menu"
+              >
+                <span className="dropdown-arrow">▼</span>
+              </button>
+            </div>
           </div>
 
           {/* Balance + Actions always above tabs */}

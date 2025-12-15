@@ -15,14 +15,11 @@
  */
 
 import * as bitcoin from 'bitcoinjs-lib';
-import BIP32Factory from 'bip32';
-import * as ecc from 'tiny-secp256k1';
-import * as bip39 from 'bip39';
 import { ECPairFactory } from 'ecpair';
+import * as ecc from 'tiny-secp256k1';
 import type { BitcoinAddressInfo } from './types.js';
-
-// Initialize BIP32 with secp256k1 implementation
-const bip32 = BIP32Factory(ecc);
+import { bip32 } from '../bip32-utils.js';
+import { validateMnemonic, mnemonicToSeed } from '../crypto-utils.js';
 
 /**
  * Bitcoin network configurations.
@@ -74,12 +71,12 @@ export function deriveBitcoinAddress(
   addressIndex: number = 0
 ): BitcoinAddressInfo {
   // Validate mnemonic
-  if (!bip39.validateMnemonic(mnemonic)) {
+  if (!validateMnemonic(mnemonic)) {
     throw new Error('Invalid mnemonic phrase');
   }
 
   // Convert mnemonic to seed
-  const seed = bip39.mnemonicToSeedSync(mnemonic);
+  const seed = mnemonicToSeed(mnemonic);
 
   // Get the appropriate network configuration
   const btcNetwork = BITCOIN_NETWORKS[network];
@@ -170,12 +167,12 @@ export function getBitcoinPrivateKey(
   addressIndex: number = 0
 ): string {
   // Validate mnemonic
-  if (!bip39.validateMnemonic(mnemonic)) {
+  if (!validateMnemonic(mnemonic)) {
     throw new Error('Invalid mnemonic phrase');
   }
 
   // Convert mnemonic to seed
-  const seed = bip39.mnemonicToSeedSync(mnemonic);
+  const seed = mnemonicToSeed(mnemonic);
 
   // Get the appropriate network configuration
   const btcNetwork = BITCOIN_NETWORKS[network];

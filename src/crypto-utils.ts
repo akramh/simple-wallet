@@ -19,6 +19,7 @@
 
 import crypto from 'crypto';
 import fs from 'fs';
+import * as bip39 from 'bip39';
 import type { EncryptionResult } from './types/index.js';
 import type { CryptoAdapter } from './crypto-adapter.js';
 import { createNodeCryptoAdapter } from './crypto-adapter.js';
@@ -316,38 +317,30 @@ export function needsMigration(): boolean {
 }
 
 /**
- * Validate a BIP-39 mnemonic phrase format.
- * Checks word count and basic structure (does not verify checksum).
- * 
- * Valid word counts per BIP-39:
- * - 12 words: 128-bit entropy
- * - 15 words: 160-bit entropy
- * - 18 words: 192-bit entropy
- * - 21 words: 224-bit entropy
- * - 24 words: 256-bit entropy
+ * Validate a BIP-39 mnemonic phrase using the official library.
+ * Checks word count, word validity, and checksum.
  * 
  * @param mnemonic - Space-separated mnemonic phrase
- * @returns True if mnemonic has valid format
+ * @returns True if mnemonic is valid (including checksum)
  */
 export function validateMnemonic(mnemonic: string): boolean {
   if (!mnemonic || typeof mnemonic !== 'string') {
     return false;
   }
+  // Normalize whitespace: trim and replace multiple spaces with single space
+  const normalized = mnemonic.trim().replace(/\s+/g, ' ');
+  return bip39.validateMnemonic(normalized);
+}
 
-  const words = mnemonic.trim().split(/\s+/);
-
-  // BIP39 supports 12, 15, 18, 21, or 24 word mnemonics
-  const validLengths = [12, 15, 18, 21, 24];
-  if (!validLengths.includes(words.length)) {
-    return false;
-  }
-
-  // Check for empty words
-  if (words.some(word => !word || word.length === 0)) {
-    return false;
-  }
-
-  return true;
+/**
+ * Convert a mnemonic phrase to a binary seed.
+ * Used for deriving keys for various blockchains.
+ * 
+ * @param mnemonic - Valid BIP-39 mnemonic phrase
+ * @returns 64-byte seed buffer
+ */
+export function mnemonicToSeed(mnemonic: string): Buffer {
+  return bip39.mnemonicToSeedSync(mnemonic);
 }
 
 // ============================================================================

@@ -14,6 +14,7 @@ import moonIcon from '../../assets/icons/moon.svg';
 import sunIcon from '../../assets/icons/sun.svg';
 import logoIcon from '../../assets/img/logo.svg';
 import { applyTheme, getStoredTheme, setStoredTheme, type UiTheme } from '../theme';
+import { useToast } from '../context/ToastContext';
 
 interface Props {
   network: string;
@@ -37,6 +38,7 @@ function Header({
   showAccountButton = true
 }: Props) {
   const [uiTheme, setUiTheme] = useState<UiTheme>('light');
+  const { showToast } = useToast();
 
   useEffect(() => {
     getStoredTheme()
@@ -104,19 +106,76 @@ function Header({
       {showAccountButton && (
         <div className="header-controls">
           {/* Account Button */}
-          <button 
-            className="account-button"
+          <div
+            className="account-button account-selector"
+            role="button"
+            tabIndex={0}
             onClick={onAccountMenuClick}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onAccountMenuClick();
+              }
+            }}
+            aria-label="Open account menu"
           >
             <div className="account-avatar">
               {currentAddress.substring(2, 4).toUpperCase()}
             </div>
             <div className="account-info">
               <div className="account-name">{currentWalletName} : Account {currentAccountIndex + 1}</div>
-              <div className="account-address">{formatAddress(currentAddress)}</div>
+              <div className="account-address-row">
+                <button
+                  type="button"
+                  className="account-address-link"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      await navigator.clipboard.writeText(currentAddress);
+                      showToast('Address copied!');
+                    } catch {
+                      showToast('Failed to copy address');
+                    }
+                  }}
+                  title="Copy address"
+                >
+                  {formatAddress(currentAddress)}
+                </button>
+                <button
+                  type="button"
+                  className="account-copy-btn"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      await navigator.clipboard.writeText(currentAddress);
+                      showToast('Address copied!');
+                    } catch {
+                      showToast('Failed to copy address');
+                    }
+                  }}
+                  aria-label="Copy address"
+                  title="Copy address"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                  </svg>
+                </button>
+              </div>
             </div>
-            <span className="dropdown-arrow">▼</span>
-          </button>
+            <button
+              type="button"
+              className="account-chevron-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAccountMenuClick();
+              }}
+              aria-label="Open account menu"
+              title="Open account menu"
+            >
+              <span className="dropdown-arrow">▼</span>
+            </button>
+          </div>
         </div>
       )}
     </div>
