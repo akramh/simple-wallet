@@ -1,5 +1,9 @@
 /**
  * @fileoverview Hook for clipboard operations with feedback.
+ *
+ * @responsibilities
+ * - Provide a consistent clipboard helper for the UI
+ * - Offer optional haptic feedback on copy for improved UX
  */
 
 import { useState, useCallback } from 'react';
@@ -13,6 +17,8 @@ interface ClipboardState {
 
 /**
  * Hook for clipboard operations with visual feedback.
+ *
+ * @returns Clipboard state (`copied`, `value`) plus `copy/paste/hasContent` helpers.
  */
 export function useClipboard() {
   const [state, setState] = useState<ClipboardState>({
@@ -22,6 +28,9 @@ export function useClipboard() {
 
   /**
    * Copy text to clipboard with haptic feedback.
+   *
+   * @param text - Text to copy.
+   * @returns True if copied successfully; false otherwise.
    */
   const copy = useCallback(async (text: string): Promise<boolean> => {
     try {
@@ -50,6 +59,8 @@ export function useClipboard() {
 
   /**
    * Read text from clipboard.
+   *
+   * @returns Clipboard string or null if empty/unavailable.
    */
   const paste = useCallback(async (): Promise<string | null> => {
     try {
@@ -63,6 +74,8 @@ export function useClipboard() {
 
   /**
    * Check if clipboard has content.
+   *
+   * @returns True if clipboard currently contains a string.
    */
   const hasContent = useCallback(async (): Promise<boolean> => {
     try {

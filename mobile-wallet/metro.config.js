@@ -1,3 +1,25 @@
+/**
+ * @file metro.config.js
+ * @description Metro bundler configuration for the Simple Wallet mobile app (Expo).
+ *
+ * This config is the mobile equivalent of the extension/CLI runtime setup:
+ * it ensures React Native can consume the shared wallet core (`../src/*`) and
+ * that incompatible Node/WASM dependencies are redirected to pure-JS stubs.
+ *
+ * @responsibilities
+ * - Watch the monorepo workspace so changes in `../src/*` are picked up by Metro
+ * - Resolve `@wallet/*` imports to the shared wallet core sources
+ * - Strip `.js` extensions in imports so ESM-style paths resolve to `.ts` sources
+ * - Stub modules that depend on WebAssembly or Node built-ins (not supported in RN)
+ *
+ * @security
+ * - This file does not handle secrets directly, but it can affect which crypto
+ *   implementations are bundled. Keep stubs reviewed and minimal.
+ *
+ * @notes
+ * - Bitcoin + tiny-secp256k1 + bip32 in the shared core rely on WASM/Node patterns;
+ *   mobile uses `mobile-wallet/stubs/*` to provide compatible replacements.
+ */
 const { getDefaultConfig } = require('expo/metro-config');
 const { withNativeWind } = require('nativewind/metro');
 const path = require('path');

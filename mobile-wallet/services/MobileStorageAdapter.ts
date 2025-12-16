@@ -7,6 +7,16 @@
  *
  * Note: expo-secure-store has a ~2KB limit per key, so we use it only for
  * wallet data and fall back to AsyncStorage for larger datasets.
+ *
+ * @responsibilities
+ * - Provide a synchronous read interface (required by the shared SDK) via an in-memory cache
+ * - Persist changes asynchronously to the appropriate mobile storage backend
+ * - Centralize the “what is sensitive?” policy for mobile (SecureStore vs AsyncStorage)
+ *
+ * @security
+ * - `wallets.json` contains encrypted mnemonic material and wallet metadata; store it in SecureStore.
+ * - Never log persisted wallet contents (even if encrypted), as it may contain metadata.
+ * - This adapter does not encrypt data itself; encryption is handled by the shared SDK crypto layer.
  */
 
 import * as SecureStore from 'expo-secure-store';

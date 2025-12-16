@@ -1,3 +1,9 @@
+/**
+ * @fileoverview Components barrel export.
+ *
+ * Central export surface for reusable UI components used throughout the mobile app.
+ * This is intentionally lightweight; component-level docs live in each component file.
+ */
 export { Button } from './Button';
 export { Input } from './Input';
 export { TokenCard } from './TokenCard';

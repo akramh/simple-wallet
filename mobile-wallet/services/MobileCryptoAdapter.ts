@@ -6,6 +6,15 @@
  *
  * Note: For production, consider using react-native-quick-crypto for
  * better performance. This implementation uses the built-in WebCrypto API.
+ *
+ * @responsibilities
+ * - Provide a CryptoAdapter implementation compatible with the shared SDK
+ * - Support synchronous-looking primitives expected by the SDK's storage/encryption layer
+ *
+ * @security
+ * - Do not log secrets (passwords, derived keys, auth tags). If debug logs are present,
+ *   they must be treated as development-only and removed/guarded before production release.
+ * - This adapter is an environment bridge; the shared SDK defines encryption parameters.
  */
 
 // @ts-ignore - asmcrypto.js types

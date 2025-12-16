@@ -9,6 +9,15 @@
  *
  * The store integrates with WalletBridge for all wallet operations
  * and provides a reactive interface for UI components.
+ *
+ * @responsibilities
+ * - Provide a single source of truth for wallet session state (unlocked/network/address)
+ * - Coordinate refresh flows (balances, prices, transactions) and their loading/error state
+ * - Reset derived state on wallet/network/account switches to avoid cross-context leakage
+ *
+ * @security
+ * - This store intentionally does NOT persist the master password.
+ * - Sensitive secrets are accessed via WalletBridge and require password confirmation.
  */
 
 import { create } from 'zustand';
@@ -79,27 +88,52 @@ interface WalletStore {
   error: string | null;
 
   // Actions
+  /**
+   * Initialize WalletBridge + load persisted state (network, wallets).
+   * Safe to call multiple times.
+   */
   initialize: () => Promise<void>;
+  /** Create a new wallet and unlock it for the current session. */
   createWallet: (password: string, name?: string) => Promise<{ mnemonic: string; address: string }>;
+  /** Import a wallet from mnemonic and unlock it for the current session. */
   importWallet: (mnemonic: string, password: string, name?: string) => Promise<{ address: string }>;
+  /** Unlock an existing wallet; refreshes accounts and balances on success. */
   unlock: (password: string, name?: string) => Promise<void>;
+  /** Lock the current wallet and clear all in-memory derived state. */
   lock: () => Promise<void>;
+  /** Refresh portfolio balances for the active network/account. */
   refreshBalances: () => Promise<void>;
+  /** Refresh fiat prices and derived portfolio totals. */
   refreshPrices: () => Promise<void>;
+  /**
+   * Switch the active network.
+   *
+   * Resets cached balances/transactions and triggers refresh for the new context.
+   */
   switchNetwork: (networkKey: string) => Promise<void>;
+  /** Get an estimated network fee for a proposed transaction. */
   getGasEstimate: (token: Token, to: string, amount: string) => Promise<GasEstimate>;
+  /** Send a transaction and schedule follow-up refreshes. */
   sendTransaction: (token: Token, to: string, amount: string, destinationTag?: number) => Promise<{ hash: string }>;
+  /** Load the list of persisted wallets from secure storage. */
   loadWalletList: () => Promise<void>;
+  /** Switch to a different wallet (locks current wallet first). */
   switchWallet: (name: string, password: string) => Promise<void>;
   
   // Account actions
+  /** Load persisted accounts for the current wallet. */
   loadAccounts: () => Promise<void>;
+  /** Create a new derived account and persist it to storage. */
   createAccount: () => Promise<{ address: string; index: number }>;
+  /** Switch to a different derived account and refresh data for it. */
   switchAccount: (index: number) => Promise<void>;
   
   // Transaction actions
+  /** Fetch transaction history for the active network/account. */
   loadTransactions: () => Promise<void>;
+  /** Update the in-memory UI filter for transaction list views. */
   setTransactionFilter: (filter: 'all' | 'sent' | 'received') => void;
+  /** Get the current transaction list after applying the active filter. */
   getFilteredTransactions: () => Transaction[];
   
   clearError: () => void;
@@ -109,6 +143,13 @@ interface WalletStore {
 // Store Implementation
 // ============================================================================
 
+/**
+ * Global Zustand store hook for the mobile wallet.
+ *
+ * @remarks
+ * - This store is UI-facing and should only expose normalized, presentation-ready data.
+ * - It delegates all wallet logic to `walletBridge` and intentionally avoids storing secrets.
+ */
 export const useWalletStore = create<WalletStore>((set, get) => ({
   // Initial state
   isLoading: true,

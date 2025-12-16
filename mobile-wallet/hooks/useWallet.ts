@@ -1,5 +1,16 @@
 /**
  * @fileoverview Hook for wallet operations and state.
+ *
+ * This hook is the recommended UI entry point for screens/components that need
+ * wallet session state (unlocked/network/address) and high-level actions.
+ *
+ * @responsibilities
+ * - Present a stable, UI-friendly interface over `useWalletStore`
+ * - Derive common presentation values (e.g. truncated address)
+ * - Provide safe convenience helpers (e.g. clipboard copy)
+ *
+ * @notes
+ * - This hook does not store secrets; it delegates to the store/bridge.
  */
 
 import { useCallback } from 'react';
@@ -7,6 +18,8 @@ import { useWalletStore } from '../store';
 
 /**
  * Hook providing wallet state and actions.
+ *
+ * @returns Aggregated wallet state and store actions used across screens.
  */
 export function useWallet() {
   const {

@@ -10,6 +10,20 @@
  * - Handle session state (unlock, lock, auto-lock timer)
  * - Provide typed async methods for all wallet operations
  * - Manage password session securely in memory
+ *
+ * @responsibilities
+ * - Provide a single, typed entry point for mobile UI operations (create/import/unlock/send/etc.)
+ * - Adapt the shared SDK to React Native constraints (Metro resolution, dynamic requires)
+ * - Normalize chain-specific data (e.g., transaction history shapes) for the UI layer
+ *
+ * @security
+ * - Session password is stored in memory only (`sessionPassword`) and cleared on lock
+ * - Auto-lock timer clears the in-memory session after inactivity (default: 15 minutes)
+ * - Secret phrase / private key retrieval requires password confirmation (compares to session password)
+ *
+ * @notes
+ * - `initialize()` must be called before most operations; `requireUnlocked()` guards unlocked-only calls.
+ * - Imports from `@wallet/*` are resolved by `mobile-wallet/metro.config.js` (including `.js` → `.ts`).
  */
 
 import { mobileStorage, MobileStorageAdapter } from './MobileStorageAdapter';
@@ -130,6 +144,9 @@ class WalletBridge {
   /**
    * Initialize the wallet bridge.
    * Must be called before any other methods.
+   *
+   * @returns Resolves when storage is initialized and config is loaded.
+   * @throws If storage initialization or config loading fails.
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
@@ -172,6 +189,8 @@ class WalletBridge {
 
   /**
    * Get current wallet state.
+   *
+   * @returns Current session state including `hasWallet` and derived `address` (if unlocked).
    */
   async getState(): Promise<WalletState> {
     await this.ensureInitialized();
@@ -191,6 +210,8 @@ class WalletBridge {
   /**
    * Check if session is active and return session password for adding wallets.
    * Returns null if not unlocked.
+   *
+   * @security Session password is kept in memory only; do not persist this value.
    */
   getSessionPassword(): string | null {
     return this._isUnlocked ? this.sessionPassword : null;
@@ -198,6 +219,12 @@ class WalletBridge {
 
   /**
    * Create a new wallet.
+   *
+   * @param password - Master password used to encrypt the wallet mnemonic.
+   * @param name - Wallet name to save under (`wallets.json` key).
+   * @param showMnemonic - If true, returns the mnemonic in the result for display once.
+   * @returns Wallet address and (optionally) mnemonic.
+   * @throws If the wallet name is invalid or SDK initialization fails.
    */
   async createWallet(
     password: string,
@@ -246,6 +273,12 @@ class WalletBridge {
 
   /**
    * Import an existing wallet from mnemonic.
+   *
+   * @param mnemonic - BIP39 mnemonic phrase to import.
+   * @param password - Master password used to encrypt the imported mnemonic.
+   * @param name - Wallet name to save under (`wallets.json` key).
+   * @returns Imported wallet address.
+   * @throws If mnemonic is invalid, wallet name invalid, or load fails.
    */
   async importWallet(
     mnemonic: string,
@@ -287,6 +320,11 @@ class WalletBridge {
 
   /**
    * Unlock an existing wallet.
+   *
+   * @param password - Master password for decrypting the stored mnemonic.
+   * @param name - Wallet name to unlock (defaults to `default`).
+   * @returns Unlocked wallet address and wallet name.
+   * @throws If password is invalid or wallet is not found.
    */
   async unlockWallet(password: string, name: string = 'default'): Promise<UnlockWalletResult> {
     await this.ensureInitialized();
@@ -323,6 +361,11 @@ class WalletBridge {
 
   /**
    * Lock the wallet.
+   *
+   * Clears all in-memory session state. Does not delete persisted wallet data.
+   *
+   * @security This clears `sessionPassword` and releases SDK instances to reduce
+   * risk of secret material lingering in memory.
    */
   async lockWallet(): Promise<void> {
     this._isUnlocked = false;
@@ -338,6 +381,8 @@ class WalletBridge {
 
   /**
    * Clear all storage and reset to fresh state (for debugging).
+   *
+   * @security This irreversibly deletes wallet data stored on-device.
    */
   async clearAllData(): Promise<void> {
     console.log('[WalletBridge] Clearing all data...');
@@ -350,6 +395,8 @@ class WalletBridge {
 
   /**
    * Get tokens for the current network.
+   *
+   * @returns Token list with placeholder balances; call `refreshBalances()` to populate.
    */
   async getTokens(): Promise<TokenBalance[]> {
     this.requireUnlocked();
@@ -365,6 +412,9 @@ class WalletBridge {
 
   /**
    * Refresh balances for the current network.
+   *
+   * @returns Token balances for the active network.
+   * @throws If portfolio fetch fails.
    */
   async refreshBalances(): Promise<TokenBalance[]> {
     this.requireUnlocked();
@@ -412,6 +462,8 @@ class WalletBridge {
 
   /**
    * Get token prices with rate limiting protection.
+   *
+   * @returns Prices keyed by token symbol and derived total portfolio value.
    */
   async getTokenPrices(): Promise<{
     prices: Record<string, number | null>;
@@ -484,6 +536,11 @@ class WalletBridge {
 
   /**
    * Get gas estimate for a transaction.
+   *
+   * @param token - Token being sent.
+   * @param toAddress - Recipient address.
+   * @param amount - Amount in display units (token decimals handled by SDK).
+   * @returns Gas estimate result for display.
    */
   async getGasEstimate(
     token: Token,
@@ -497,6 +554,15 @@ class WalletBridge {
 
   /**
    * Send a transaction.
+   *
+   * Routes to the appropriate chain-specific send method in the shared SDK.
+   *
+   * @param token - Token to send (native or ERC-20 on EVM).
+   * @param toAddress - Recipient address.
+   * @param amount - Amount in display units.
+   * @param destinationTag - XRP destination tag (optional; XRP-only).
+   * @returns Transaction hash/signature.
+   * @throws If wallet is locked or SDK send fails.
    */
   async sendTransaction(
     token: Token,
@@ -552,6 +618,10 @@ class WalletBridge {
    * 
    * @param limit - Maximum number of transactions to return (default: 25)
    * @returns Array of normalized transactions
+   *
+   * @remarks
+   * - Returns an empty array on fetch errors (errors are logged).
+   * - Normalization is performed here so the UI consumes a single `Transaction` shape.
    */
   async getTransactions(limit: number = 25): Promise<Transaction[]> {
     this.requireUnlocked();
@@ -736,6 +806,9 @@ class WalletBridge {
   /**
    * Switch network.
    * @returns The address for the new network
+   *
+   * @param networkKey - Key from `config.networks` (e.g., 'sepolia', 'bitcoin-mainnet').
+   * @throws If network key is unknown or wallet is locked.
    */
   async switchNetwork(networkKey: string): Promise<{ address: string }> {
     this.requireUnlocked();
@@ -757,6 +830,8 @@ class WalletBridge {
 
   /**
    * Get available networks.
+   *
+   * @returns Map of network key → network configuration.
    */
   async getNetworks(): Promise<Record<string, NetworkConfig>> {
     await this.ensureInitialized();
@@ -765,6 +840,8 @@ class WalletBridge {
 
   /**
    * Get all wallets.
+   *
+   * @returns Raw `wallets.json` contents (wallet metadata + accounts).
    */
   async getAllWallets(): Promise<Record<string, any>> {
     await this.ensureInitialized();
@@ -773,6 +850,8 @@ class WalletBridge {
 
   /**
    * Get accounts for current wallet.
+   *
+   * @returns Current wallet accounts and the persisted selected account index.
    */
   async getAccounts(): Promise<{ accounts: Record<number, any>; currentIndex: number }> {
     this.requireUnlocked();
@@ -789,6 +868,8 @@ class WalletBridge {
   /**
    * Create new account in current wallet.
    * Accounts are HD derivation paths (m/44'/60'/0'/0/index).
+   *
+   * @returns The new account address and its index.
    */
   async createAccount(): Promise<{ address: string; accountIndex: number }> {
     this.requireUnlocked();
@@ -816,6 +897,11 @@ class WalletBridge {
 
   /**
    * Switch to a different account.
+   *
+   * Persists the selected account index in `wallets.json` by saving the wallet.
+   *
+   * @param index - HD account index to select.
+   * @returns The address for the selected account (network-specific).
    */
   async switchAccount(index: number): Promise<{ address: string }> {
     this.requireUnlocked();
@@ -830,6 +916,12 @@ class WalletBridge {
 
   /**
    * Get secret recovery phrase (requires password confirmation).
+   *
+   * @param password - Must match the current in-memory session password.
+   * @returns Mnemonic phrase for the current wallet.
+   * @throws If wallet locked or password does not match session.
+   *
+   * @security Never persist or log the returned mnemonic.
    */
   async getSecretPhrase(password: string): Promise<string> {
     this.requireUnlocked();
@@ -843,6 +935,12 @@ class WalletBridge {
 
   /**
    * Get private key for current account (requires password confirmation).
+   *
+   * @param password - Must match the current in-memory session password.
+   * @returns Private key for the current account.
+   * @throws If wallet locked or password does not match session.
+   *
+   * @security Never persist or log the returned private key.
    */
   async getPrivateKey(password: string): Promise<string> {
     this.requireUnlocked();
@@ -856,6 +954,8 @@ class WalletBridge {
 
   /**
    * Set auto-lock timeout.
+   *
+   * @param minutes - Minutes of inactivity before lock.
    */
   setAutoLockTimeout(minutes: number): void {
     this.autoLockTimeoutMs = minutes * 60 * 1000;

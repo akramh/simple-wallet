@@ -1,5 +1,15 @@
 /**
  * @fileoverview Hook for biometric authentication.
+ *
+ * @responsibilities
+ * - Detect biometric capability + enrollment state on device
+ * - Manage “biometric unlock enabled” setting
+ * - Provide authenticate/enable/disable helpers used by the unlock screen
+ *
+ * @security
+ * - This hook currently stores a user password in SecureStore to support biometric unlock.
+ *   This is a convenience trade-off; consider migrating to OS-backed key material / keystore
+ *   wrapping if stronger guarantees are required.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -19,6 +29,8 @@ interface BiometricState {
 
 /**
  * Hook for managing biometric authentication.
+ *
+ * @returns Biometric state and helper actions for auth/enable/disable flows.
  */
 export function useBiometrics() {
   const [state, setState] = useState<BiometricState>({
@@ -29,7 +41,7 @@ export function useBiometrics() {
     error: null,
   });
 
-  // Check biometric availability on mount
+  /** Check biometric availability and enabled state on mount. */
   useEffect(() => {
     checkBiometrics();
   }, []);
@@ -67,6 +79,10 @@ export function useBiometrics() {
   /**
    * Authenticate using biometrics.
    * Returns the stored password if successful, null otherwise.
+   *
+   * @returns Stored password string (if available) or null on failure/cancel.
+   *
+   * @security Never log the returned password.
    */
   const authenticate = useCallback(async (): Promise<string | null> => {
     if (!state.isAvailable || !state.isEnabled) {
@@ -111,6 +127,11 @@ export function useBiometrics() {
 
   /**
    * Enable biometric authentication and store password securely.
+   *
+   * @param password - Current wallet password to store for biometric unlock.
+   * @returns True if enabled and stored successfully; false otherwise.
+   *
+   * @security Storing the password is sensitive; keep usage tightly scoped.
    */
   const enable = useCallback(async (password: string): Promise<boolean> => {
     if (!state.isAvailable) {
@@ -144,6 +165,8 @@ export function useBiometrics() {
 
   /**
    * Disable biometric authentication.
+   *
+   * Clears any stored password for biometric unlock.
    */
   const disable = useCallback(async (): Promise<void> => {
     try {
@@ -164,6 +187,8 @@ export function useBiometrics() {
 
   /**
    * Get human-readable biometric type name.
+   *
+   * @returns Display name (Face ID / Touch ID / Iris Scan).
    */
   const getBiometricName = useCallback(() => {
     switch (state.biometricType) {

@@ -1,5 +1,13 @@
 /**
  * @fileoverview Hook for transaction operations.
+ *
+ * @responsibilities
+ * - Provide UI state for gas estimation + sending flows
+ * - Delegate all wallet operations to `useWalletStore` / `WalletBridge`
+ * - Normalize error handling for screens (returns null on failure)
+ *
+ * @notes
+ * - This hook does not sign transactions directly; signing happens in the shared SDK.
  */
 
 import { useState, useCallback } from 'react';
@@ -15,6 +23,8 @@ interface SendState {
 
 /**
  * Hook for sending transactions.
+ *
+ * @returns Send state + helpers for estimation and sending.
  */
 export function useTransaction() {
   const { getGasEstimate, sendTransaction, refreshBalances } = useWalletStore();
@@ -26,6 +36,14 @@ export function useTransaction() {
     error: null,
   });
 
+  /**
+   * Estimate gas/network fee for a proposed send.
+   *
+   * @param token - Token being sent.
+   * @param to - Recipient address.
+   * @param amount - Amount in display units.
+   * @returns Gas estimate or null if inputs invalid or estimation failed.
+   */
   const estimateGas = useCallback(
     async (token: Token, to: string, amount: string) => {
       if (!to || !amount || parseFloat(amount) <= 0) {
@@ -64,7 +82,10 @@ export function useTransaction() {
         const result = await sendTransaction(token, to, amount, destinationTag);
         setState((prev) => ({ ...prev, isSending: false }));
 
-        // Refresh balances after transaction
+        /**
+         * Refresh balances after transaction.
+         * The store also schedules follow-up refreshes; this provides a quick UX update.
+         */
         setTimeout(() => refreshBalances(), 2000);
 
         return result;
@@ -77,10 +98,12 @@ export function useTransaction() {
     [sendTransaction, refreshBalances]
   );
 
+  /** Clear the current error (if any). */
   const clearError = useCallback(() => {
     setState((prev) => ({ ...prev, error: null }));
   }, []);
 
+  /** Reset the send state to its initial values. */
   const reset = useCallback(() => {
     setState({
       isEstimating: false,
