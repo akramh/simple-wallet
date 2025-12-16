@@ -16,6 +16,25 @@ dist-extension/
 .github/
 .npm-cache/
 
-# Mobile app figma and plan
-mobile-app/
-MOBILE_APP_PLAN.md
+# -----------------------------------------------------------------------------
+# Cursor / IDE local artifacts
+# -----------------------------------------------------------------------------
+.cursor/agent-tools/
+.cursor/plans/
+.cursor/projects/
+.cursor/**/cache/
+.cursor/**/state/
+
+# Keep team-shared Cursor rules committed
+!.cursor/rules.md
+!.cursor/rules/
+
+# -----------------------------------------------------------------------------
+# Plan / design docs location policy
+# -----------------------------------------------------------------------------
+# Store project plans in the top-level `plans/` folder.
+# Ignore plan-like markdown elsewhere to avoid scattered docs.
+**/*PLAN*.md
+**/*.plan.md
+!plans/
+!plans/**
