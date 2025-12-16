@@ -177,7 +177,9 @@ class WalletBridge {
     const storedConfig = mobileStorage.readJSON<Partial<Config>>('config.json', {});
 
     // Load bundled config from parent directory
-    const { getBundledConfig } = await import('../config/bundled-config');
+    // Use require() for Metro/Jest compatibility (avoids Node dynamic import edge cases in tests)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getBundledConfig } = require('../config/bundled-config');
     const bundledConfig = getBundledConfig();
 
     // Merge stored config with bundled (user preferences override defaults)
@@ -239,7 +241,8 @@ class WalletBridge {
 
     // Import wallet modules dynamically
     const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
-    const { getBundledTokens } = await import('../config/bundled-config');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getBundledTokens } = require('../config/bundled-config');
 
     // Set up crypto adapter
     setCryptoAdapter(mobileCrypto);
@@ -292,7 +295,8 @@ class WalletBridge {
     }
 
     const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
-    const { getBundledTokens } = await import('../config/bundled-config');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getBundledTokens } = require('../config/bundled-config');
 
     setCryptoAdapter(mobileCrypto);
 
@@ -330,7 +334,8 @@ class WalletBridge {
     await this.ensureInitialized();
 
     const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
-    const { getBundledTokens } = await import('../config/bundled-config');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getBundledTokens } = require('../config/bundled-config');
 
     setCryptoAdapter(mobileCrypto);
 
