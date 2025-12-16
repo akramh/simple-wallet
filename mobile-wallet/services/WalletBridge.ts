@@ -92,12 +92,18 @@ export interface SendTransactionResult {
 
 export interface NetworkConfig {
   name: string;
-  rpcUrl: string | string[];
+  rpcUrl?: string | string[];
+  wsUrl?: string | string[];
   chainId?: number;
   nativeSymbol: string;
-  nativeName: string;
+  nativeName?: string;
   blockExplorer?: string;
+  explorerApiUrl?: string;
+  explorerApiKey?: string;
   type?: 'evm' | 'bitcoin' | 'solana' | 'xrp';
+  bitcoinNetwork?: 'mainnet' | 'testnet';
+  solanaCluster?: 'mainnet-beta' | 'devnet' | 'testnet';
+  xrpNetwork?: 'mainnet' | 'testnet' | 'devnet';
 }
 
 export interface Config {
@@ -541,14 +547,190 @@ class WalletBridge {
   }
 
   /**
-   * Get transaction history.
+   * Get transaction history for the current network and address.
+   * Routes to the appropriate explorer API based on network type.
+   * 
+   * @param limit - Maximum number of transactions to return (default: 25)
+   * @returns Array of normalized transactions
    */
-  async getTransactions(): Promise<Transaction[]> {
+  async getTransactions(limit: number = 25): Promise<Transaction[]> {
     this.requireUnlocked();
 
-    // This would integrate with the explorer API
-    // For now, return empty array
-    return [];
+    const network = this.config!.network;
+    const networkConfig = this.config!.networks[network];
+    const address = this.service.getAddress();
+
+    if (!address) {
+      return [];
+    }
+
+    try {
+      // Route based on network type
+      if (networkConfig.type === 'bitcoin') {
+        return await this.getBitcoinTransactions(address, network, limit);
+      }
+
+      if (networkConfig.type === 'solana') {
+        return await this.getSolanaTransactions(address, network, limit);
+      }
+
+      if (networkConfig.type === 'xrp') {
+        return await this.getXRPTransactions(address, network, limit);
+      }
+
+      // Default: EVM networks
+      return await this.getEVMTransactions(address, network, limit);
+    } catch (error) {
+      console.error('[WalletBridge] Failed to fetch transactions:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get Bitcoin transaction history.
+   */
+  private async getBitcoinTransactions(
+    address: string,
+    network: string,
+    limit: number
+  ): Promise<Transaction[]> {
+    const networkConfig = this.config!.networks[network];
+    const nativeSymbol = networkConfig.nativeSymbol || 'BTC';
+
+    const txs = await this.service.getBitcoinTransactionHistory(limit);
+    
+    return txs.map((tx: any) => ({
+      hash: tx.hash,
+      from: tx.from,
+      to: tx.to || null,
+      // Convert satoshis to BTC string for display
+      value: tx.valueBtc || String(Number(tx.value) / 100000000),
+      network,
+      status: tx.status as 'pending' | 'confirmed' | 'failed',
+      type: tx.type as 'send' | 'receive' | 'contract_interaction',
+      timestamp: tx.timestamp,
+      blockNumber: tx.blockNumber,
+      tokenSymbol: nativeSymbol,
+      fee: tx.feeBtc || (tx.fee ? String(Number(tx.fee) / 100000000) : undefined),
+    }));
+  }
+
+  /**
+   * Get Solana transaction history.
+   */
+  private async getSolanaTransactions(
+    address: string,
+    network: string,
+    limit: number
+  ): Promise<Transaction[]> {
+    const networkConfig = this.config!.networks[network];
+    const nativeSymbol = networkConfig.nativeSymbol || 'SOL';
+
+    const txs = await this.service.getSolanaTransactionHistory(limit);
+    
+    return txs.map((tx: any) => ({
+      hash: tx.signature,
+      from: tx.from,
+      to: tx.to || null,
+      value: tx.valueSol,
+      network,
+      status: tx.status as 'pending' | 'confirmed' | 'failed',
+      type: tx.type as 'send' | 'receive' | 'contract_interaction',
+      timestamp: tx.timestamp,
+      blockNumber: tx.slot,
+      tokenSymbol: nativeSymbol,
+      fee: tx.feeSol,
+    }));
+  }
+
+  /**
+   * Get XRP transaction history.
+   */
+  private async getXRPTransactions(
+    address: string,
+    network: string,
+    limit: number
+  ): Promise<Transaction[]> {
+    const networkConfig = this.config!.networks[network];
+    const nativeSymbol = networkConfig.nativeSymbol || 'XRP';
+
+    const txs = await this.service.getXRPTransactionHistory(limit);
+    
+    return txs.map((tx: any) => ({
+      hash: tx.hash,
+      from: tx.from,
+      to: tx.to || null,
+      value: tx.valueXrp,
+      network,
+      status: tx.status as 'pending' | 'confirmed' | 'failed',
+      type: tx.type === 'other' ? 'contract_interaction' : tx.type,
+      timestamp: tx.timestamp,
+      tokenSymbol: nativeSymbol,
+      fee: tx.feeXrp,
+    }));
+  }
+
+  /**
+   * Get EVM transaction history via explorer API.
+   */
+  private async getEVMTransactions(
+    address: string,
+    network: string,
+    limit: number
+  ): Promise<Transaction[]> {
+    const networkConfig = this.config!.networks[network];
+    const nativeSymbol = networkConfig.nativeSymbol || 'ETH';
+
+    // Import explorer API
+    const { explorerAPI } = require('@wallet/explorer-api');
+
+    // Check if network is supported
+    if (!explorerAPI.isSupported(network)) {
+      // Register the network if it has explorer config
+      if (networkConfig.explorerApiUrl && networkConfig.chainId) {
+        explorerAPI.registerNetwork(
+          network,
+          networkConfig.explorerApiUrl,
+          networkConfig.chainId,
+          networkConfig.explorerApiKey
+        );
+      } else {
+        console.warn(`[WalletBridge] Network ${network} not supported for transaction history`);
+        return [];
+      }
+    }
+
+    const txs = await explorerAPI.getAllTransactions(address, network, 1, limit);
+    
+    return txs.map((tx: any) => ({
+      hash: tx.hash,
+      from: tx.from,
+      to: tx.to || null,
+      // EVM explorer returns value in wei - convert to ETH for display
+      value: this.formatWeiToEth(tx.value),
+      network,
+      status: tx.status as 'pending' | 'confirmed' | 'failed',
+      type: tx.type as 'send' | 'receive' | 'contract_interaction',
+      timestamp: tx.timestamp,
+      blockNumber: tx.blockNumber,
+      tokenSymbol: tx.tokenSymbol || nativeSymbol,
+      fee: tx.gasUsed && tx.gasPrice 
+        ? this.formatWeiToEth(String(BigInt(tx.gasUsed) * BigInt(tx.gasPrice)))
+        : undefined,
+    }));
+  }
+
+  /**
+   * Convert wei string to ETH string for display.
+   */
+  private formatWeiToEth(weiValue: string): string {
+    try {
+      const wei = BigInt(weiValue);
+      const eth = Number(wei) / 1e18;
+      return eth.toString();
+    } catch {
+      return weiValue;
+    }
   }
 
   /**

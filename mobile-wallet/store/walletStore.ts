@@ -69,6 +69,8 @@ interface WalletStore {
   // Transactions
   transactions: Transaction[];
   isLoadingTransactions: boolean;
+  transactionFilter: 'all' | 'sent' | 'received';
+  transactionsLastUpdated: number | null;
 
   // Networks
   networks: Record<string, NetworkConfig>;
@@ -94,6 +96,11 @@ interface WalletStore {
   loadAccounts: () => Promise<void>;
   createAccount: () => Promise<{ address: string; index: number }>;
   switchAccount: (index: number) => Promise<void>;
+  
+  // Transaction actions
+  loadTransactions: () => Promise<void>;
+  setTransactionFilter: (filter: 'all' | 'sent' | 'received') => void;
+  getFilteredTransactions: () => Transaction[];
   
   clearError: () => void;
 }
@@ -129,6 +136,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
   transactions: [],
   isLoadingTransactions: false,
+  transactionFilter: 'all',
+  transactionsLastUpdated: null,
 
   networks: {},
 
@@ -361,9 +370,12 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         isLoading: false,
         balances: [],
         balancesLastUpdated: null,
+        transactions: [],
+        transactionsLastUpdated: null,
       });
 
       get().refreshBalances();
+      get().loadTransactions();
     } catch (error) {
       console.error('[WalletStore] Switch network failed:', error);
       set({
@@ -388,6 +400,9 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
       // Refresh balances after successful transaction
       setTimeout(() => get().refreshBalances(), 2000);
+      
+      // Refresh transactions after a short delay to include the new one
+      setTimeout(() => get().loadTransactions(), 5000);
 
       return { hash: result.hash };
     } catch (error) {
@@ -397,6 +412,50 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       });
       throw error;
     }
+  },
+
+  loadTransactions: async () => {
+    if (!get().isUnlocked) return;
+
+    try {
+      set({ isLoadingTransactions: true });
+
+      const transactions = await walletBridge.getTransactions(50);
+
+      set({
+        transactions,
+        isLoadingTransactions: false,
+        transactionsLastUpdated: Date.now(),
+      });
+    } catch (error) {
+      console.error('[WalletStore] Load transactions failed:', error);
+      set({
+        isLoadingTransactions: false,
+        error: error instanceof Error ? error.message : 'Failed to load transactions',
+      });
+    }
+  },
+
+  setTransactionFilter: (filter: 'all' | 'sent' | 'received') => {
+    set({ transactionFilter: filter });
+  },
+
+  getFilteredTransactions: () => {
+    const { transactions, transactionFilter } = get();
+    
+    if (transactionFilter === 'all') {
+      return transactions;
+    }
+    
+    if (transactionFilter === 'sent') {
+      return transactions.filter(tx => tx.type === 'send');
+    }
+    
+    if (transactionFilter === 'received') {
+      return transactions.filter(tx => tx.type === 'receive');
+    }
+    
+    return transactions;
   },
 
   // ============================================================================
@@ -440,11 +499,14 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         currentWalletName: result.walletName,
         balances: [],
         balancesLastUpdated: null,
+        transactions: [],
+        transactionsLastUpdated: null,
       });
 
       // Load accounts and refresh data
       get().loadAccounts();
       get().refreshBalances();
+      get().loadTransactions();
     } catch (error) {
       console.error('[WalletStore] Switch wallet failed:', error);
       set({
@@ -514,10 +576,13 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         currentAccountIndex: index,
         balances: [],
         balancesLastUpdated: null,
+        transactions: [],
+        transactionsLastUpdated: null,
       });
 
-      // Refresh balances for new account
+      // Refresh balances and transactions for new account
       get().refreshBalances();
+      get().loadTransactions();
     } catch (error) {
       console.error('[WalletStore] Switch account failed:', error);
       set({
