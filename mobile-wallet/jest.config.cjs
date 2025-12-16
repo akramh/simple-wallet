@@ -20,7 +20,7 @@ module.exports = {
   },
   // Keep RN/Expo dependencies transformed when required by the preset.
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native|@react-navigation|expo(nent)?|expo-.*|@expo|expo-router|nativewind)/)',
+    'node_modules/(?!((jest-)?react-native|@react-native|@react-navigation|expo(nent)?|expo-.*|@expo|expo-router|nativewind|react-native-css-interop)/)',
   ],
 };
 

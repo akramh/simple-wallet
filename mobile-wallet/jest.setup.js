@@ -11,6 +11,28 @@
 require('@testing-library/jest-native/extend-expect');
 
 // -----------------------------------------------------------------------------
+// SafeAreaView mock (keeps layout wrappers from causing test env issues)
+// -----------------------------------------------------------------------------
+jest.mock('react-native-safe-area-context', () => {
+  return {
+    __esModule: true,
+    // Avoid importing `react-native` here to keep Jest mock hoisting stable under NativeWind transforms.
+    SafeAreaView: ({ children }) => children,
+  };
+});
+
+// -----------------------------------------------------------------------------
+// Vector icons mock (avoid native font loading)
+// -----------------------------------------------------------------------------
+jest.mock('@expo/vector-icons', () => {
+  return {
+    __esModule: true,
+    // Render nothing; tests should not depend on icon glyph rendering.
+    Ionicons: () => null,
+  };
+});
+
+// -----------------------------------------------------------------------------
 // AsyncStorage mock (used by MobileStorageAdapter)
 // -----------------------------------------------------------------------------
 jest.mock('@react-native-async-storage/async-storage', () => {
