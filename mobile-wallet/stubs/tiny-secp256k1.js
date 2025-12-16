@@ -1,163 +1,286 @@
 /**
  * @file tiny-secp256k1.js
- * @description Stub for tiny-secp256k1 WebAssembly module in React Native
+ * @description Pure JS implementation for React Native using @noble/secp256k1
  * 
- * The Bitcoin module uses tiny-secp256k1 for elliptic curve operations.
- * In React Native, we need to use a pure JS implementation or native module.
- * 
- * This stub provides implementations that pass validation checks from
- * bitcoinjs-lib's initEccLib() and BIP32Factory().
+ * This replaces the WebAssembly-based tiny-secp256k1 with a pure JavaScript
+ * implementation that works in React Native environments.
  */
 
-// Validation functions that return true to pass checks
-const isPoint = (p) => {
-  if (!p || !Buffer.isBuffer(p) && !(p instanceof Uint8Array)) return false;
-  if (p.length === 33) return p[0] === 0x02 || p[0] === 0x03;
-  if (p.length === 65) return p[0] === 0x04;
-  return false;
+const secp = require('@noble/secp256k1');
+const { sha256 } = require('@noble/hashes/sha256');
+const { hmac } = require('@noble/hashes/hmac');
+
+// Configure noble/secp256k1 to use noble/hashes for sync operations
+secp.etc.hmacSha256Sync = (key, ...msgs) => {
+  const h = hmac.create(sha256, key);
+  msgs.forEach(m => h.update(m));
+  return h.digest();
 };
 
+// Curve order for secp256k1
+const CURVE_ORDER = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141');
+
+/**
+ * Check if a buffer is a valid compressed or uncompressed public key point.
+ */
+const isPoint = (p) => {
+  if (!p || (!Buffer.isBuffer(p) && !(p instanceof Uint8Array))) return false;
+  try {
+    secp.ProjectivePoint.fromHex(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Check if a buffer is a valid compressed public key (33 bytes, starts with 02 or 03).
+ */
 const isPointCompressed = (p) => {
   if (!p || p.length !== 33) return false;
   return p[0] === 0x02 || p[0] === 0x03;
 };
 
+/**
+ * Check if a buffer is a valid private key (32 bytes, non-zero, less than curve order).
+ */
 const isPrivate = (d) => {
   if (!d || d.length !== 32) return false;
-  // Check it's not zero and less than curve order (simplified check)
-  let isZero = true;
-  for (let i = 0; i < 32; i++) {
-    if (d[i] !== 0) isZero = false;
+  try {
+    const n = BigInt('0x' + Buffer.from(d).toString('hex'));
+    return n > 0n && n < CURVE_ORDER;
+  } catch {
+    return false;
   }
-  return !isZero;
 };
 
+/**
+ * Check if a buffer is a valid x-only point (32 bytes).
+ */
 const isXOnlyPoint = (p) => {
-  return p && p.length === 32;
+  if (!p || p.length !== 32) return false;
+  try {
+    const hex = Buffer.from(p).toString('hex');
+    secp.ProjectivePoint.fromHex('02' + hex);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
-// Dummy implementations that pass validation but warn when used
+/**
+ * Derive public key from private key.
+ */
 const pointFromScalar = (d, compressed = true) => {
-  if (!d || d.length !== 32) return null;
-  // Return a valid-looking compressed public key
-  const result = Buffer.alloc(compressed ? 33 : 65);
-  result[0] = compressed ? 0x02 : 0x04;
-  // Copy some bytes from private key to make it look like a derived key
-  for (let i = 0; i < Math.min(32, result.length - 1); i++) {
-    result[i + 1] = d[i] ^ 0x42; // XOR to make it different
+  if (!isPrivate(d)) return null;
+  try {
+    const pubKey = secp.getPublicKey(d, compressed);
+    return Buffer.from(pubKey);
+  } catch {
+    return null;
   }
-  return result;
 };
 
+/**
+ * Derive x-only public key from private key.
+ */
 const xOnlyPointFromScalar = (d) => {
-  if (!d || d.length !== 32) return null;
-  const result = Buffer.alloc(32);
-  for (let i = 0; i < 32; i++) {
-    result[i] = d[i] ^ 0x42;
+  if (!isPrivate(d)) return null;
+  try {
+    const pubKey = secp.getPublicKey(d, true);
+    return Buffer.from(pubKey.slice(1));
+  } catch {
+    return null;
   }
-  return result;
 };
 
+/**
+ * Compress or decompress a public key point.
+ */
 const pointCompress = (p, compressed = true) => {
   if (!isPoint(p)) return null;
-  if (compressed) {
-    if (p.length === 33) return Buffer.from(p);
-    // Convert uncompressed to compressed
-    const result = Buffer.alloc(33);
-    result[0] = (p[64] & 1) === 0 ? 0x02 : 0x03;
-    p.copy ? p.copy(result, 1, 1, 33) : result.set(p.slice(1, 33), 1);
-    return result;
+  try {
+    const point = secp.ProjectivePoint.fromHex(p);
+    return Buffer.from(point.toRawBytes(compressed));
+  } catch {
+    return null;
   }
-  return Buffer.from(p);
 };
 
-const sign = (h, d, e) => {
-  console.warn('tiny-secp256k1.sign is stubbed - Bitcoin signing not available');
-  return Buffer.alloc(64);
+/**
+ * Add a scalar to a point (for BIP32 child key derivation).
+ */
+const pointAddScalar = (p, tweak, compressed = true) => {
+  if (!isPoint(p) || !tweak || tweak.length !== 32) return null;
+  try {
+    const point = secp.ProjectivePoint.fromHex(p);
+    const tweakPoint = secp.ProjectivePoint.fromPrivateKey(tweak);
+    const result = point.add(tweakPoint);
+    return Buffer.from(result.toRawBytes(compressed));
+  } catch {
+    return null;
+  }
 };
 
-const signSchnorr = (h, d, e) => {
-  console.warn('tiny-secp256k1.signSchnorr is stubbed');
-  return Buffer.alloc(64);
+/**
+ * Add two points together.
+ */
+const pointAdd = (a, b, compressed = true) => {
+  if (!isPoint(a) || !isPoint(b)) return null;
+  try {
+    const pointA = secp.ProjectivePoint.fromHex(a);
+    const pointB = secp.ProjectivePoint.fromHex(b);
+    const result = pointA.add(pointB);
+    return Buffer.from(result.toRawBytes(compressed));
+  } catch {
+    return null;
+  }
 };
 
-const verify = (h, Q, signature, strict) => {
-  console.warn('tiny-secp256k1.verify is stubbed');
-  return false;
+/**
+ * Multiply a point by a scalar.
+ */
+const pointMultiply = (p, tweak, compressed = true) => {
+  if (!isPoint(p) || !tweak || tweak.length !== 32) return null;
+  try {
+    const point = secp.ProjectivePoint.fromHex(p);
+    const n = BigInt('0x' + Buffer.from(tweak).toString('hex'));
+    const result = point.multiply(n);
+    return Buffer.from(result.toRawBytes(compressed));
+  } catch {
+    return null;
+  }
 };
 
-const verifySchnorr = (h, Q, signature) => {
-  console.warn('tiny-secp256k1.verifySchnorr is stubbed');
-  return false;
-};
-
-const pointAdd = (a, b, compressed) => {
-  console.warn('tiny-secp256k1.pointAdd is stubbed');
-  return pointFromScalar(Buffer.alloc(32).fill(1), compressed);
-};
-
-const pointAddScalar = (p, tweak, compressed) => {
-  console.warn('tiny-secp256k1.pointAddScalar is stubbed');
-  return p ? Buffer.from(p) : null;
-};
-
-const pointMultiply = (p, tweak, compressed) => {
-  console.warn('tiny-secp256k1.pointMultiply is stubbed');
-  return p ? Buffer.from(p) : null;
-};
-
+/**
+ * Add a tweak to a private key (for BIP32 child key derivation).
+ */
 const privateAdd = (d, tweak) => {
-  console.warn('tiny-secp256k1.privateAdd is stubbed');
-  if (!d) return null;
-  const result = Buffer.alloc(32);
-  for (let i = 0; i < 32; i++) {
-    result[i] = (d[i] + (tweak ? tweak[i] : 0)) & 0xff;
+  if (!isPrivate(d) || !tweak || tweak.length !== 32) return null;
+  try {
+    const dNum = BigInt('0x' + Buffer.from(d).toString('hex'));
+    const tweakNum = BigInt('0x' + Buffer.from(tweak).toString('hex'));
+    const sum = (dNum + tweakNum) % CURVE_ORDER;
+    if (sum === 0n) return null;
+    const hexSum = sum.toString(16).padStart(64, '0');
+    return Buffer.from(hexSum, 'hex');
+  } catch {
+    return null;
   }
-  return result;
 };
 
+/**
+ * Subtract a tweak from a private key.
+ */
 const privateSub = (d, tweak) => {
-  console.warn('tiny-secp256k1.privateSub is stubbed');
-  return privateAdd(d, tweak);
+  if (!isPrivate(d) || !tweak || tweak.length !== 32) return null;
+  try {
+    const dNum = BigInt('0x' + Buffer.from(d).toString('hex'));
+    const tweakNum = BigInt('0x' + Buffer.from(tweak).toString('hex'));
+    let diff = (dNum - tweakNum) % CURVE_ORDER;
+    if (diff < 0n) diff += CURVE_ORDER;
+    if (diff === 0n) return null;
+    const hexDiff = diff.toString(16).padStart(64, '0');
+    return Buffer.from(hexDiff, 'hex');
+  } catch {
+    return null;
+  }
 };
 
-const xOnlyPointAddTweak = (p, tweak) => {
-  console.warn('tiny-secp256k1.xOnlyPointAddTweak is stubbed');
-  return p ? { parity: 0, xOnlyPubkey: Buffer.from(p) } : null;
-};
-
+/**
+ * Negate a private key.
+ */
 const privateNegate = (d) => {
-  if (!d) return null;
-  return Buffer.from(d);
+  if (!isPrivate(d)) return null;
+  try {
+    const dNum = BigInt('0x' + Buffer.from(d).toString('hex'));
+    const neg = (CURVE_ORDER - dNum) % CURVE_ORDER;
+    const hexNeg = neg.toString(16).padStart(64, '0');
+    return Buffer.from(hexNeg, 'hex');
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Sign a message hash with a private key (ECDSA).
+ */
+const sign = (h, d, e) => {
+  if (!h || h.length !== 32 || !isPrivate(d)) return null;
+  try {
+    const sig = secp.signSync(h, d, { lowS: true });
+    return Buffer.from(sig);
+  } catch (err) {
+    console.error('secp256k1 sign error:', err);
+    return null;
+  }
+};
+
+/**
+ * Sign a message hash with a private key (Schnorr).
+ */
+const signSchnorr = (h, d, e) => {
+  console.warn('Schnorr signing not implemented');
+  return null;
+};
+
+/**
+ * Verify an ECDSA signature.
+ */
+const verify = (h, Q, signature, strict = false) => {
+  if (!h || h.length !== 32 || !isPoint(Q) || !signature) return false;
+  try {
+    return secp.verify(signature, h, Q);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Verify a Schnorr signature.
+ */
+const verifySchnorr = (h, Q, signature) => {
+  console.warn('Schnorr verification not implemented');
+  return false;
+};
+
+/**
+ * x-only point add tweak (for Taproot).
+ */
+const xOnlyPointAddTweak = (p, tweak) => {
+  if (!p || p.length !== 32 || !tweak || tweak.length !== 32) return null;
+  try {
+    const hex = Buffer.from(p).toString('hex');
+    const point = secp.ProjectivePoint.fromHex('02' + hex);
+    const tweakPoint = secp.ProjectivePoint.fromPrivateKey(tweak);
+    const result = point.add(tweakPoint);
+    const resultBytes = result.toRawBytes(true);
+    return {
+      parity: resultBytes[0] === 0x03 ? 1 : 0,
+      xOnlyPubkey: Buffer.from(resultBytes.slice(1)),
+    };
+  } catch {
+    return null;
+  }
 };
 
 module.exports = {
-  // Validation functions (must work for initialization)
   isPoint,
   isPointCompressed,
   isPrivate,
   isXOnlyPoint,
-  
-  // Point operations
   pointFromScalar,
   xOnlyPointFromScalar,
   pointCompress,
   pointAdd,
   pointAddScalar,
   pointMultiply,
-  
-  // Private key operations
   privateAdd,
   privateSub,
   privateNegate,
-  
-  // Signing/verification (stubbed)
   sign,
   signSchnorr,
   verify,
   verifySchnorr,
-  
-  // Taproot
   xOnlyPointAddTweak,
 };
-

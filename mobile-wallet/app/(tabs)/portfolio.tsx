@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../../store';
 
 export default function PortfolioScreen() {
-  const { balances, formattedTotal, totalValue } = useWalletStore();
+  const { balances, formattedTotal, totalValue, prices } = useWalletStore();
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
@@ -43,17 +43,23 @@ export default function PortfolioScreen() {
               </Text>
             </View>
           ) : (
-            balances.map((item, index) => (
-              <HoldingRow
-                key={`${item.token.symbol}-${index}`}
-                symbol={item.token.symbol}
-                name={item.token.name}
-                balance={item.balance || '0'}
-                value={0} // TODO: Calculate from prices
-                percentage={0}
-                change24h={0}
-              />
-            ))
+            balances.map((item, index) => {
+              const price = prices[item.token.symbol] ?? null;
+              const balance = parseFloat(item.balance || '0');
+              const usdValue = price !== null ? balance * price : 0;
+              const percentage = totalValue > 0 ? (usdValue / totalValue) * 100 : 0;
+              return (
+                <HoldingRow
+                  key={`${item.token.symbol}-${index}`}
+                  symbol={item.token.symbol}
+                  name={item.token.name}
+                  balance={item.balance || '0'}
+                  value={usdValue}
+                  percentage={percentage}
+                  change24h={0}
+                />
+              );
+            })
           )}
         </View>
       </ScrollView>

@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../../store';
+import { walletBridge } from '../../services';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -28,6 +29,28 @@ export default function ProfileScreen() {
         },
       },
     ]);
+  };
+
+  const handleClearData = () => {
+    Alert.alert(
+      'Clear All Data',
+      'This will permanently delete ALL wallets and reset the app. Make sure you have backed up your recovery phrases!\n\nThis action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Everything',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await walletBridge.clearAllData();
+              router.replace('/(auth)/welcome');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to clear data');
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -66,9 +89,15 @@ export default function ProfileScreen() {
 
           <SettingsItem
             icon="wallet-outline"
+            title="Wallets"
+            subtitle="Manage and switch wallets"
+            onPress={() => router.push('/wallet-manage')}
+          />
+          <SettingsItem
+            icon="people-outline"
             title="Accounts"
-            subtitle="Manage wallet accounts"
-            onPress={() => {}}
+            subtitle="HD accounts (derivation paths)"
+            onPress={() => router.push('/account-manage')}
           />
           <SettingsItem
             icon="globe-outline"
@@ -131,6 +160,18 @@ export default function ProfileScreen() {
             icon="information-circle-outline"
             title="About"
             onPress={() => {}}
+          />
+        </View>
+
+        {/* Danger Zone */}
+        <View className="px-5 mt-6">
+          <Text className="text-gray-400 text-sm mb-3 uppercase">Danger Zone</Text>
+
+          <SettingsItem
+            icon="trash-outline"
+            title="Clear All Data"
+            subtitle="Delete all wallets and reset app"
+            onPress={handleClearData}
           />
         </View>
 

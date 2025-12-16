@@ -26,6 +26,9 @@ export default function WalletScreen() {
     isRefreshingBalances,
     formattedTotal,
     refreshBalances,
+    prices,
+    accounts,
+    currentAccountIndex,
   } = useWalletStore();
 
   // Refresh balances on mount
@@ -41,20 +44,34 @@ export default function WalletScreen() {
   const truncatedAddress = address
     ? `${address.slice(0, 8)}...${address.slice(-6)}`
     : '';
+  const hasMultipleAccounts = accounts.length > 1;
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
       <View className="px-5 pt-4 pb-6">
-        {/* Network Selector */}
-        <Pressable
-          onPress={() => router.push('/network-select')}
-          className="flex-row items-center self-start bg-gray-900 px-3 py-2 rounded-full mb-4"
-        >
-          <View className="w-2.5 h-2.5 rounded-full bg-green-500 mr-2" />
-          <Text className="text-gray-300 text-sm">{networkConfig?.name || network}</Text>
-          <Ionicons name="chevron-down" size={16} color="#9ca3af" className="ml-1" />
-        </Pressable>
+        {/* Network & Account Selectors */}
+        <View className="flex-row items-center mb-4">
+          <Pressable
+            onPress={() => router.push('/network-select')}
+            className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full mr-2"
+          >
+            <View className="w-2.5 h-2.5 rounded-full bg-green-500 mr-2" />
+            <Text className="text-gray-300 text-sm">{networkConfig?.name || network}</Text>
+            <Ionicons name="chevron-down" size={16} color="#9ca3af" className="ml-1" />
+          </Pressable>
+          
+          {hasMultipleAccounts && (
+            <Pressable
+              onPress={() => router.push('/account-manage')}
+              className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full"
+            >
+              <Ionicons name="person" size={12} color="#9ca3af" />
+              <Text className="text-gray-300 text-sm ml-1">#{currentAccountIndex + 1}</Text>
+              <Ionicons name="chevron-down" size={16} color="#9ca3af" className="ml-1" />
+            </Pressable>
+          )}
+        </View>
 
         {/* Total Balance */}
         <Text className="text-gray-400 text-sm mb-1">Total Balance</Text>
@@ -119,15 +136,21 @@ export default function WalletScreen() {
               </Text>
             </View>
           ) : (
-            balances.map((item, index) => (
-              <TokenRow
-                key={`${item.token.symbol}-${index}`}
-                symbol={item.token.symbol}
-                name={item.token.name}
-                balance={item.balance || '0'}
-                isLoading={item.isLoading}
-              />
-            ))
+            balances.map((item, index) => {
+              const price = prices[item.token.symbol] ?? null;
+              const balance = parseFloat(item.balance || '0');
+              const usdValue = price !== null ? balance * price : null;
+              return (
+                <TokenRow
+                  key={`${item.token.symbol}-${index}`}
+                  symbol={item.token.symbol}
+                  name={item.token.name}
+                  balance={item.balance || '0'}
+                  usdValue={usdValue}
+                  isLoading={item.isLoading}
+                />
+              );
+            })
           )}
         </ScrollView>
       </View>
@@ -168,11 +191,13 @@ function TokenRow({
   symbol,
   name,
   balance,
+  usdValue,
   isLoading,
 }: {
   symbol: string;
   name: string;
   balance: string;
+  usdValue: number | null;
   isLoading: boolean;
 }) {
   return (
@@ -197,7 +222,9 @@ function TokenRow({
             <Text className="text-white font-medium">
               {parseFloat(balance).toFixed(4)}
             </Text>
-            <Text className="text-gray-500 text-sm">${(0).toFixed(2)}</Text>
+            <Text className="text-gray-500 text-sm">
+              {usdValue !== null ? `$${usdValue.toFixed(2)}` : '--'}
+            </Text>
           </>
         )}
       </View>

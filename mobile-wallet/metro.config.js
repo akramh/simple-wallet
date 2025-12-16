@@ -67,6 +67,17 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       // Fall through to default resolution
     }
   }
+  
+  // Handle @wallet/*.js imports - strip .js extension for TypeScript source
+  if (moduleName.startsWith('@wallet/') && moduleName.endsWith('.js')) {
+    const tsModuleName = moduleName.slice(0, -3); // Remove .js
+    try {
+      return context.resolveRequest(context, tsModuleName, platform);
+    } catch {
+      // Fall through to default resolution
+    }
+  }
+  
   // Default resolution
   return context.resolveRequest(context, moduleName, platform);
 };
@@ -79,6 +90,9 @@ config.resolver.extraNodeModules = {
   'crypto': path.resolve(projectRoot, 'stubs/crypto.js'),
   'path': path.resolve(projectRoot, 'stubs/path.js'),
   'stream': path.resolve(projectRoot, 'stubs/stream.js'),
+  // Node.js polyfills from npm packages
+  'events': path.resolve(projectRoot, 'node_modules/events'),
+  'buffer': path.resolve(projectRoot, 'node_modules/buffer'),
   // Stub packages that use WebAssembly (not supported in React Native)
   'tiny-secp256k1': path.resolve(projectRoot, 'stubs/tiny-secp256k1.js'),
 };

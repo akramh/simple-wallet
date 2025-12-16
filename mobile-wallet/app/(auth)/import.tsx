@@ -1,8 +1,10 @@
 /**
  * @fileoverview Import existing wallet screen.
+ * If user is already unlocked (adding a wallet), uses session password.
+ * Otherwise, prompts for a new master password.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,10 +18,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../../store';
+import { walletBridge } from '../../services/WalletBridge';
 
 export default function ImportWalletScreen() {
   const router = useRouter();
-  const { importWallet, isLoading, error, clearError } = useWalletStore();
+  const { importWallet, isLoading, error, clearError, isUnlocked } = useWalletStore();
 
   const [walletName, setWalletName] = useState('');
   const [mnemonic, setMnemonic] = useState('');
@@ -27,16 +30,30 @@ export default function ImportWalletScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
+  // Check if we're adding a wallet while already unlocked
+  const [sessionPassword, setSessionPassword] = useState<string | null>(null);
+  const isAddingWallet = isUnlocked && sessionPassword !== null;
+
+  useEffect(() => {
+    // If already unlocked, get the session password
+    if (isUnlocked) {
+      const pwd = walletBridge.getSessionPassword();
+      setSessionPassword(pwd);
+    }
+  }, [isUnlocked]);
+
   // Validate mnemonic has 12 or 24 words
   const wordCount = mnemonic.trim().split(/\s+/).filter(Boolean).length;
   const isValidMnemonic = wordCount === 12 || wordCount === 24;
 
-  const isValid =
-    walletName.length >= 1 &&
-    walletName.length <= 12 &&
-    isValidMnemonic &&
-    password.length >= 8 &&
-    password === confirmPassword;
+  // Different validation based on whether we're adding or creating first wallet
+  const isValid = isAddingWallet
+    ? walletName.length >= 1 && walletName.length <= 12 && isValidMnemonic
+    : walletName.length >= 1 &&
+      walletName.length <= 12 &&
+      isValidMnemonic &&
+      password.length >= 8 &&
+      password === confirmPassword;
 
   const handleImport = async () => {
     if (!isValid) return;
@@ -44,7 +61,9 @@ export default function ImportWalletScreen() {
     try {
       clearError();
       const normalizedMnemonic = mnemonic.trim().toLowerCase().replace(/\s+/g, ' ');
-      await importWallet(normalizedMnemonic, password, walletName || 'default');
+      // Use session password if adding wallet, otherwise use entered password
+      const passwordToUse = isAddingWallet ? sessionPassword! : password;
+      await importWallet(normalizedMnemonic, passwordToUse, walletName || 'default');
 
       // Navigate to main app
       router.replace('/(tabs)/wallet');
@@ -61,12 +80,17 @@ export default function ImportWalletScreen() {
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
-          <Text className="text-white text-xl font-bold ml-4">Import Wallet</Text>
+          <Text className="text-white text-xl font-bold ml-4">
+            {isAddingWallet ? 'Import Wallet' : 'Import Wallet'}
+          </Text>
         </View>
 
         {/* Instructions */}
         <Text className="text-gray-400 mb-6">
-          Enter your 12 or 24 word recovery phrase to restore your wallet.
+          {isAddingWallet
+            ? 'Enter your 12 or 24 word recovery phrase. It will use your existing master password.'
+            : 'Enter your 12 or 24 word recovery phrase to restore your wallet.'
+          }
         </Text>
 
         {/* Wallet Name */}
@@ -103,55 +127,70 @@ export default function ImportWalletScreen() {
           </Text>
         </View>
 
-        {/* Password */}
-        <View className="mb-4">
-          <Text className="text-white mb-2">New Password</Text>
-          <View className="flex-row bg-gray-900 rounded-xl items-center">
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Enter password"
-              placeholderTextColor="#6b7280"
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              className="flex-1 px-4 py-4 text-white"
-            />
-            <TouchableOpacity
-              onPress={() => setShowPassword(!showPassword)}
-              className="px-4"
-            >
-              <Ionicons
-                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                size={20}
-                color="#6b7280"
-              />
-            </TouchableOpacity>
-          </View>
-          {password.length > 0 && password.length < 8 && (
-            <Text className="text-red-400 text-xs mt-1">
-              Password must be at least 8 characters
-            </Text>
-          )}
-        </View>
+        {/* Only show password fields if creating first wallet */}
+        {!isAddingWallet && (
+          <>
+            {/* Password */}
+            <View className="mb-4">
+              <Text className="text-white mb-2">New Password</Text>
+              <View className="flex-row bg-gray-900 rounded-xl items-center">
+                <TextInput
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Enter password"
+                  placeholderTextColor="#6b7280"
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  className="flex-1 px-4 py-4 text-white"
+                />
+                <TouchableOpacity
+                  onPress={() => setShowPassword(!showPassword)}
+                  className="px-4"
+                >
+                  <Ionicons
+                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                    color="#6b7280"
+                  />
+                </TouchableOpacity>
+              </View>
+              {password.length > 0 && password.length < 8 && (
+                <Text className="text-red-400 text-xs mt-1">
+                  Password must be at least 8 characters
+                </Text>
+              )}
+            </View>
 
-        {/* Confirm Password */}
-        <View className="mb-6">
-          <Text className="text-white mb-2">Confirm Password</Text>
-          <TextInput
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder="Confirm password"
-            placeholderTextColor="#6b7280"
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-            className="bg-gray-900 rounded-xl px-4 py-4 text-white"
-          />
-          {confirmPassword.length > 0 && password !== confirmPassword && (
-            <Text className="text-red-400 text-xs mt-1">
-              Passwords don't match
+            {/* Confirm Password */}
+            <View className="mb-6">
+              <Text className="text-white mb-2">Confirm Password</Text>
+              <TextInput
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="Confirm password"
+                placeholderTextColor="#6b7280"
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                className="bg-gray-900 rounded-xl px-4 py-4 text-white"
+              />
+              {confirmPassword.length > 0 && password !== confirmPassword && (
+                <Text className="text-red-400 text-xs mt-1">
+                  Passwords don't match
+                </Text>
+              )}
+            </View>
+          </>
+        )}
+
+        {/* Info banner when using master password */}
+        {isAddingWallet && (
+          <View className="bg-purple-900/30 rounded-xl p-4 mb-6 flex-row items-center">
+            <Ionicons name="lock-closed" size={20} color="#a78bfa" />
+            <Text className="text-purple-300 ml-3 flex-1">
+              This wallet will be encrypted with your master password
             </Text>
-          )}
-        </View>
+          </View>
+        )}
 
         {/* Warning */}
         <View className="bg-yellow-500/10 rounded-xl p-4 mb-6">

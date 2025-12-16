@@ -26,6 +26,18 @@ import {
 // Store Types
 // ============================================================================
 
+interface WalletInfo {
+  name: string;
+  address: string;
+  createdAt?: string;
+}
+
+interface AccountInfo {
+  index: number;
+  address: string;
+  createdAt?: string;
+}
+
 interface WalletStore {
   // Core state
   isLoading: boolean;
@@ -35,6 +47,13 @@ interface WalletStore {
   network: string;
   address: string | null;
   currentWalletName: string | null;
+
+  // Wallet list
+  walletList: WalletInfo[];
+
+  // Accounts (HD derivation paths)
+  accounts: AccountInfo[];
+  currentAccountIndex: number;
 
   // Token balances
   balances: TokenBalance[];
@@ -68,6 +87,14 @@ interface WalletStore {
   switchNetwork: (networkKey: string) => Promise<void>;
   getGasEstimate: (token: Token, to: string, amount: string) => Promise<GasEstimate>;
   sendTransaction: (token: Token, to: string, amount: string, destinationTag?: number) => Promise<{ hash: string }>;
+  loadWalletList: () => Promise<void>;
+  switchWallet: (name: string, password: string) => Promise<void>;
+  
+  // Account actions
+  loadAccounts: () => Promise<void>;
+  createAccount: () => Promise<{ address: string; index: number }>;
+  switchAccount: (index: number) => Promise<void>;
+  
   clearError: () => void;
 }
 
@@ -84,6 +111,12 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   network: 'sepolia',
   address: null,
   currentWalletName: null,
+
+  walletList: [],
+
+  // Accounts
+  accounts: [],
+  currentAccountIndex: 0,
 
   balances: [],
   isRefreshingBalances: false,
@@ -115,6 +148,14 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       const state = await walletBridge.getState();
       const networks = await walletBridge.getNetworks();
 
+      // Load wallet list
+      const wallets = await walletBridge.getAllWallets();
+      const walletList = Object.entries(wallets).map(([name, data]: [string, any]) => ({
+        name,
+        address: data.accounts?.[0]?.address || data.address || 'Unknown',
+        createdAt: data.createdAt,
+      }));
+
       set({
         isInitialized: true,
         isLoading: false,
@@ -124,6 +165,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         address: state.address,
         currentWalletName: state.currentWalletName,
         networks,
+        walletList,
       });
     } catch (error) {
       console.error('[WalletStore] Initialization failed:', error);
@@ -211,7 +253,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         currentWalletName: result.walletName,
       });
 
-      // Refresh data
+      // Load accounts and refresh data
+      get().loadAccounts();
       get().refreshBalances();
     } catch (error) {
       console.error('[WalletStore] Unlock failed:', error);
@@ -236,6 +279,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         prices: {},
         totalValue: 0,
         formattedTotal: '$0.00',
+        accounts: [],
+        currentAccountIndex: 0,
       });
     } catch (error) {
       console.error('[WalletStore] Lock failed:', error);
@@ -255,7 +300,9 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     try {
       set({ isRefreshingBalances: true });
 
+      console.log('[WalletStore] refreshBalances - calling walletBridge...');
       const balances = await walletBridge.refreshBalances();
+      console.log('[WalletStore] refreshBalances - received balances:', JSON.stringify(balances, null, 2));
 
       set({
         balances,
@@ -306,10 +353,11 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
-      await walletBridge.switchNetwork(networkKey);
+      const result = await walletBridge.switchNetwork(networkKey);
 
       set({
         network: networkKey,
+        address: result.address,
         isLoading: false,
         balances: [],
         balancesLastUpdated: null,
@@ -356,4 +404,127 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   // ============================================================================
 
   clearError: () => set({ error: null }),
+
+  // ============================================================================
+  // Wallet Management
+  // ============================================================================
+
+  loadWalletList: async () => {
+    try {
+      const wallets = await walletBridge.getAllWallets();
+      const walletList = Object.entries(wallets).map(([name, data]: [string, any]) => ({
+        name,
+        address: data.accounts?.[0]?.address || data.address || 'Unknown',
+        createdAt: data.createdAt,
+      }));
+      set({ walletList });
+    } catch (error) {
+      console.error('[WalletStore] Load wallet list failed:', error);
+    }
+  },
+
+  switchWallet: async (name: string, password: string) => {
+    try {
+      set({ isLoading: true, error: null });
+
+      // Lock current wallet first
+      await walletBridge.lockWallet();
+
+      // Unlock the new wallet
+      const result = await walletBridge.unlockWallet(password, name);
+
+      set({
+        isLoading: false,
+        isUnlocked: true,
+        address: result.address,
+        currentWalletName: result.walletName,
+        balances: [],
+        balancesLastUpdated: null,
+      });
+
+      // Load accounts and refresh data
+      get().loadAccounts();
+      get().refreshBalances();
+    } catch (error) {
+      console.error('[WalletStore] Switch wallet failed:', error);
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to switch wallet',
+      });
+      throw error;
+    }
+  },
+
+  // ============================================================================
+  // Account Management (HD Derivation)
+  // ============================================================================
+
+  loadAccounts: async () => {
+    try {
+      const { accounts, currentIndex } = await walletBridge.getAccounts();
+      const accountList = Object.entries(accounts).map(([index, data]: [string, any]) => ({
+        index: parseInt(index),
+        address: data.address,
+        createdAt: data.createdAt,
+      }));
+      
+      // Sort by index
+      accountList.sort((a, b) => a.index - b.index);
+      
+      set({
+        accounts: accountList,
+        currentAccountIndex: currentIndex,
+      });
+    } catch (error) {
+      console.error('[WalletStore] Load accounts failed:', error);
+    }
+  },
+
+  createAccount: async () => {
+    try {
+      set({ isLoading: true, error: null });
+
+      const result = await walletBridge.createAccount();
+
+      // Reload accounts
+      await get().loadAccounts();
+
+      set({ isLoading: false });
+
+      return { address: result.address, index: result.accountIndex };
+    } catch (error) {
+      console.error('[WalletStore] Create account failed:', error);
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to create account',
+      });
+      throw error;
+    }
+  },
+
+  switchAccount: async (index: number) => {
+    try {
+      set({ isLoading: true, error: null });
+
+      const result = await walletBridge.switchAccount(index);
+
+      set({
+        isLoading: false,
+        address: result.address,
+        currentAccountIndex: index,
+        balances: [],
+        balancesLastUpdated: null,
+      });
+
+      // Refresh balances for new account
+      get().refreshBalances();
+    } catch (error) {
+      console.error('[WalletStore] Switch account failed:', error);
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to switch account',
+      });
+      throw error;
+    }
+  },
 }));

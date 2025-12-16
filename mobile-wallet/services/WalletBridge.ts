@@ -150,67 +150,17 @@ class WalletBridge {
    * Load configuration from bundled assets or storage.
    */
   private async loadConfig(): Promise<Config> {
-    // Try to load from storage first (user overrides)
+    // Try to load from storage first (user overrides like selected network)
     const storedConfig = mobileStorage.readJSON<Partial<Config>>('config.json', {});
 
-    // Default config - in production, this would be bundled with the app
-    const defaultConfig: Config = {
-      network: 'sepolia',
-      networks: {
-        mainnet: {
-          name: 'Ethereum',
-          rpcUrl: 'https://eth.llamarpc.com',
-          chainId: 1,
-          nativeSymbol: 'ETH',
-          nativeName: 'Ether',
-          blockExplorer: 'https://etherscan.io',
-          type: 'evm',
-        },
-        sepolia: {
-          name: 'Sepolia Testnet',
-          rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com',
-          chainId: 11155111,
-          nativeSymbol: 'ETH',
-          nativeName: 'Sepolia Ether',
-          blockExplorer: 'https://sepolia.etherscan.io',
-          type: 'evm',
-        },
-        polygon: {
-          name: 'Polygon',
-          rpcUrl: 'https://polygon-rpc.com',
-          chainId: 137,
-          nativeSymbol: 'POL',
-          nativeName: 'POL',
-          blockExplorer: 'https://polygonscan.com',
-          type: 'evm',
-        },
-        'bitcoin-mainnet': {
-          name: 'Bitcoin',
-          rpcUrl: 'https://mempool.space/api',
-          nativeSymbol: 'BTC',
-          nativeName: 'Bitcoin',
-          blockExplorer: 'https://mempool.space',
-          type: 'bitcoin',
-        },
-        'solana-mainnet': {
-          name: 'Solana',
-          rpcUrl: 'https://api.mainnet-beta.solana.com',
-          nativeSymbol: 'SOL',
-          nativeName: 'Solana',
-          blockExplorer: 'https://solscan.io',
-          type: 'solana',
-        },
-      },
-    };
+    // Load bundled config from parent directory
+    const { getBundledConfig } = await import('../config/bundled-config');
+    const bundledConfig = getBundledConfig();
 
-    // Merge stored config with defaults
+    // Merge stored config with bundled (user preferences override defaults)
     return {
-      ...defaultConfig,
-      ...storedConfig,
-      networks: {
-        ...defaultConfig.networks,
-        ...(storedConfig.networks || {}),
-      },
+      ...bundledConfig,
+      network: storedConfig.network || bundledConfig.network || 'sepolia',
     };
   }
 
@@ -233,6 +183,14 @@ class WalletBridge {
   }
 
   /**
+   * Check if session is active and return session password for adding wallets.
+   * Returns null if not unlocked.
+   */
+  getSessionPassword(): string | null {
+    return this._isUnlocked ? this.sessionPassword : null;
+  }
+
+  /**
    * Create a new wallet.
    */
   async createWallet(
@@ -248,6 +206,7 @@ class WalletBridge {
 
     // Import wallet modules dynamically
     const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
+    const { getBundledTokens } = await import('../config/bundled-config');
 
     // Set up crypto adapter
     setCryptoAdapter(mobileCrypto);
@@ -256,9 +215,10 @@ class WalletBridge {
     this.wallet = new Wallet(this.config!, mobileStorage);
     const result = this.wallet.createNewWallet(password);
 
-    // Create service
+    // Create service with bundled tokens
     this.service = new WalletAppService(this.wallet, this.config!, {
       storage: mobileStorage,
+      builtInTokens: getBundledTokens(),
     });
     await this.service.initialize();
 
@@ -293,6 +253,7 @@ class WalletBridge {
     }
 
     const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
+    const { getBundledTokens } = await import('../config/bundled-config');
 
     setCryptoAdapter(mobileCrypto);
 
@@ -301,6 +262,7 @@ class WalletBridge {
 
     this.service = new WalletAppService(this.wallet, this.config!, {
       storage: mobileStorage,
+      builtInTokens: getBundledTokens(),
     });
     await this.service.initialize();
 
@@ -324,12 +286,14 @@ class WalletBridge {
     await this.ensureInitialized();
 
     const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
+    const { getBundledTokens } = await import('../config/bundled-config');
 
     setCryptoAdapter(mobileCrypto);
 
     this.wallet = new Wallet(this.config!, mobileStorage);
     this.service = new WalletAppService(this.wallet, this.config!, {
       storage: mobileStorage,
+      builtInTokens: getBundledTokens(),
     });
 
     const loaded = this.service.loadWallet(name, password);
@@ -367,6 +331,18 @@ class WalletBridge {
   }
 
   /**
+   * Clear all storage and reset to fresh state (for debugging).
+   */
+  async clearAllData(): Promise<void> {
+    console.log('[WalletBridge] Clearing all data...');
+    await this.lockWallet();
+    await mobileStorage.clear();
+    this.config = null;
+    this.isInitialized = false;
+    console.log('[WalletBridge] All data cleared');
+  }
+
+  /**
    * Get tokens for the current network.
    */
   async getTokens(): Promise<TokenBalance[]> {
@@ -387,17 +363,49 @@ class WalletBridge {
   async refreshBalances(): Promise<TokenBalance[]> {
     this.requireUnlocked();
 
-    const portfolio = await this.service.getPortfolioForNetwork(this.config!.network);
-    return portfolio.map((item: any) => ({
-      token: item.token,
-      balance: item.balance || '0',
-      lastUpdated: Date.now(),
-      isLoading: false,
-    }));
+    console.log('[WalletBridge] refreshBalances() - network:', this.config!.network);
+    try {
+      const portfolio = await this.service.getPortfolioForNetwork(this.config!.network);
+      console.log('[WalletBridge] refreshBalances() - portfolio:', JSON.stringify(portfolio));
+      return portfolio.map((item: any) => ({
+        token: item.token,
+        balance: item.balance || '0',
+        lastUpdated: Date.now(),
+        isLoading: false,
+      }));
+    } catch (error) {
+      console.error('[WalletBridge] refreshBalances() - error:', error);
+      throw error;
+    }
   }
 
   /**
    * Get token prices.
+   */
+  // Local price cache to minimize API calls
+  private priceCache: Record<string, { price: number; timestamp: number }> = {};
+  private readonly PRICE_CACHE_TTL = 60 * 1000; // 60 seconds
+
+  /**
+   * Get cached price or null if expired/not found.
+   */
+  private getCachedPrice(key: string): number | null {
+    const cached = this.priceCache[key];
+    if (cached && Date.now() - cached.timestamp < this.PRICE_CACHE_TTL) {
+      return cached.price;
+    }
+    return null;
+  }
+
+  /**
+   * Set price in cache.
+   */
+  private setCachedPrice(key: string, price: number): void {
+    this.priceCache[key] = { price, timestamp: Date.now() };
+  }
+
+  /**
+   * Get token prices with rate limiting protection.
    */
   async getTokenPrices(): Promise<{
     prices: Record<string, number | null>;
@@ -406,12 +414,65 @@ class WalletBridge {
   }> {
     this.requireUnlocked();
 
-    // This would integrate with the price service
-    // For now, return placeholder
+    const { getSolanaPrice, getBitcoinPrice, getXRPPrice, getNativeTokenPrice } = await import('./price-service');
+    
+    const network = this.config!.network;
+    const networkConfig = this.config!.networks[network];
+    const prices: Record<string, number | null> = {};
+    let totalValue = 0;
+
+    // Get balances to calculate total value
+    const balances = await this.refreshBalances();
+
+    // Determine the price key and fetch function based on network type
+    let nativePrice: number | null = null;
+    const cacheKey = `native_${network}`;
+
+    // Check cache first
+    const cachedPrice = this.getCachedPrice(cacheKey);
+    if (cachedPrice !== null) {
+      nativePrice = cachedPrice;
+    } else {
+      // Fetch price based on network type
+      try {
+        if (network.startsWith('solana')) {
+          nativePrice = await getSolanaPrice(network);
+        } else if (network.startsWith('bitcoin')) {
+          nativePrice = await getBitcoinPrice(network);
+        } else if (network.startsWith('xrp')) {
+          nativePrice = await getXRPPrice(network);
+        } else if (networkConfig?.chainId) {
+          nativePrice = await getNativeTokenPrice(networkConfig.chainId);
+        }
+        
+        if (nativePrice !== null) {
+          this.setCachedPrice(cacheKey, nativePrice);
+        }
+      } catch (error) {
+        console.warn('[WalletBridge] Failed to fetch price:', error);
+      }
+    }
+
+    // Apply prices to balances
+    for (const item of balances) {
+      const balance = parseFloat(item.balance || '0');
+
+      if (item.token.type === 'native') {
+        prices[item.token.symbol] = nativePrice;
+        if (nativePrice !== null && !isNaN(balance)) {
+          totalValue += balance * nativePrice;
+        }
+      } else {
+        // For ERC-20 tokens, skip individual API calls to avoid rate limiting
+        // In production, you'd want to batch these or use a paid API
+        prices[item.token.symbol] = null;
+      }
+    }
+
     return {
-      prices: {},
-      totalValue: 0,
-      formattedTotal: '$0.00',
+      prices,
+      totalValue,
+      formattedTotal: `$${totalValue.toFixed(2)}`,
     };
   }
 
@@ -492,8 +553,9 @@ class WalletBridge {
 
   /**
    * Switch network.
+   * @returns The address for the new network
    */
-  async switchNetwork(networkKey: string): Promise<void> {
+  async switchNetwork(networkKey: string): Promise<{ address: string }> {
     this.requireUnlocked();
 
     if (!this.config!.networks[networkKey]) {
@@ -505,6 +567,10 @@ class WalletBridge {
 
     // Persist network preference
     mobileStorage.writeJSON('config.json', { network: networkKey });
+
+    // Return the address for the new network
+    const address = this.service.getAddress();
+    return { address };
   }
 
   /**
@@ -540,11 +606,26 @@ class WalletBridge {
 
   /**
    * Create new account in current wallet.
+   * Accounts are HD derivation paths (m/44'/60'/0'/0/index).
    */
   async createAccount(): Promise<{ address: string; accountIndex: number }> {
     this.requireUnlocked();
 
-    const result = this.service.addAccount();
+    // Get current accounts to find the next available index
+    const wallets = mobileStorage.readJSON<Record<string, any>>('wallets.json', {});
+    const currentWallet = wallets[this.currentWalletName];
+    const existingAccounts = currentWallet?.accounts || {};
+    
+    // Find the next account index
+    const existingIndices = Object.keys(existingAccounts).map(k => parseInt(k));
+    const nextIndex = existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 1;
+
+    // Switch to the new account (this creates it)
+    const result = this.service.switchAccount(nextIndex);
+    
+    // Save the wallet to persist the new account
+    this.service.saveWallet(this.currentWalletName);
+
     return {
       address: result.address,
       accountIndex: result.accountIndex,
@@ -558,6 +639,10 @@ class WalletBridge {
     this.requireUnlocked();
 
     const result = this.service.switchAccount(index);
+    
+    // Persist the current account selection
+    this.service.saveWallet(this.currentWalletName);
+    
     return { address: result.address };
   }
 

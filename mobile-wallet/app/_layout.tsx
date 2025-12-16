@@ -8,6 +8,10 @@
  * - Wallet initialization
  */
 
+// IMPORTANT: Import crypto polyfill FIRST before any other imports
+// This sets up global.crypto.getRandomValues for ethers.js
+import '../services/crypto-polyfill';
+
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
