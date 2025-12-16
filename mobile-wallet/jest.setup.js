@@ -11,6 +11,19 @@
 require('@testing-library/jest-native/extend-expect');
 
 // -----------------------------------------------------------------------------
+// NativeWind mock (must come before react-native imports to avoid CSS interop issues)
+// -----------------------------------------------------------------------------
+jest.mock('nativewind', () => ({
+  styled: (component) => component,
+  useColorScheme: () => ({ colorScheme: 'dark', setColorScheme: jest.fn() }),
+}));
+
+jest.mock('react-native-css-interop', () => ({
+  cssInterop: jest.fn(),
+  remapProps: jest.fn(),
+}));
+
+// -----------------------------------------------------------------------------
 // SafeAreaView mock (keeps layout wrappers from causing test env issues)
 // -----------------------------------------------------------------------------
 jest.mock('react-native-safe-area-context', () => {
@@ -18,6 +31,8 @@ jest.mock('react-native-safe-area-context', () => {
     __esModule: true,
     // Avoid importing `react-native` here to keep Jest mock hoisting stable under NativeWind transforms.
     SafeAreaView: ({ children }) => children,
+    SafeAreaProvider: ({ children }) => children,
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
   };
 });
 

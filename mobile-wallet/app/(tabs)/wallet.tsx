@@ -110,11 +110,8 @@ export default function WalletScreen() {
 
       {/* Token List */}
       <View className="flex-1 bg-gray-900/50 rounded-t-3xl px-5 pt-5">
-        <View className="flex-row justify-between items-center mb-4">
+        <View className="mb-4">
           <Text className="text-white text-lg font-semibold">Tokens</Text>
-          <TouchableOpacity>
-            <Text className="text-purple-400 text-sm">+ Add Token</Text>
-          </TouchableOpacity>
         </View>
 
         <ScrollView

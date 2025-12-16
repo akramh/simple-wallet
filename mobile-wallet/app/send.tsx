@@ -13,10 +13,13 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Modal,
+  StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useWalletStore } from '../store';
 import type { Token, GasEstimate } from '../services';
 
@@ -38,7 +41,16 @@ export default function SendScreen() {
   const [isSending, setIsSending] = useState(false);
   const [step, setStep] = useState<'select-token' | 'enter-details' | 'confirm'>('select-token');
 
+  // QR Scanner state
+  const [showScanner, setShowScanner] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const [hasScanned, setHasScanned] = useState(false);
+
+  // XRP destination tag state
+  const [destinationTag, setDestinationTag] = useState('');
+
   const networkConfig = networks[network];
+  const isXRPNetwork = networkConfig?.type === 'xrp';
 
   // Set default token on mount
   useEffect(() => {
@@ -79,6 +91,62 @@ export default function SendScreen() {
     setStep('enter-details');
   };
 
+  // Handle QR code scanning
+  const handleOpenScanner = async () => {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) {
+        Alert.alert(
+          'Camera Permission Required',
+          'Please enable camera access in your device settings to scan QR codes.'
+        );
+        return;
+      }
+    }
+    setHasScanned(false);
+    setShowScanner(true);
+  };
+
+  const handleBarCodeScanned = ({ data }: { data: string }) => {
+    if (hasScanned) return;
+    setHasScanned(true);
+
+    // Parse the scanned data - could be a plain address or a URI
+    let address = data;
+    let scannedDestinationTag: string | undefined;
+
+    // Handle various URI formats:
+    // - ethereum:0x... 
+    // - bitcoin:bc1...
+    // - solana:...
+    // - ripple:rAddress?dt=123 or xrpl:rAddress?dt=123
+    if (data.includes(':')) {
+      const [scheme, rest] = data.split(':');
+      const [addressPart, queryString] = rest.split('?');
+      address = addressPart;
+
+      // Parse query parameters for destination tag (XRP)
+      if (queryString) {
+        const params = new URLSearchParams(queryString);
+        const dt = params.get('dt') || params.get('tag') || params.get('destination_tag');
+        if (dt) {
+          scannedDestinationTag = dt;
+        }
+        // Also check for amount
+        const scannedAmount = params.get('amount');
+        if (scannedAmount) {
+          setAmount(scannedAmount);
+        }
+      }
+    }
+
+    setRecipient(address);
+    if (scannedDestinationTag && isXRPNetwork) {
+      setDestinationTag(scannedDestinationTag);
+    }
+    setShowScanner(false);
+  };
+
   const handleContinue = () => {
     if (!selectedToken || !recipient || !amount) {
       Alert.alert('Error', 'Please fill in all fields');
@@ -96,7 +164,13 @@ export default function SendScreen() {
 
     try {
       setIsSending(true);
-      const result = await sendTransaction(selectedToken, recipient, amount);
+      
+      // Parse destination tag for XRP transactions
+      const tag = isXRPNetwork && destinationTag 
+        ? parseInt(destinationTag, 10) 
+        : undefined;
+      
+      const result = await sendTransaction(selectedToken, recipient, amount, tag);
 
       Alert.alert(
         'Transaction Sent',
@@ -187,16 +261,49 @@ export default function SendScreen() {
             {/* Recipient */}
             <View className="mb-4">
               <Text className="text-white mb-2">Recipient Address</Text>
-              <TextInput
-                value={recipient}
-                onChangeText={setRecipient}
-                placeholder="0x... or ENS name"
-                placeholderTextColor="#6b7280"
-                autoCapitalize="none"
-                autoCorrect={false}
-                className="bg-gray-900 rounded-xl px-4 py-4 text-white font-mono"
-              />
+              <View className="flex-row bg-gray-900 rounded-xl items-center">
+                <TextInput
+                  value={recipient}
+                  onChangeText={setRecipient}
+                  placeholder={isXRPNetwork ? 'rAddress...' : '0x... or ENS name'}
+                  placeholderTextColor="#6b7280"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  className="flex-1 px-4 py-4 text-white font-mono"
+                />
+                <TouchableOpacity
+                  onPress={handleOpenScanner}
+                  className="px-4 py-4"
+                >
+                  <Ionicons name="qr-code-outline" size={24} color="#a855f7" />
+                </TouchableOpacity>
+              </View>
             </View>
+
+            {/* XRP Destination Tag */}
+            {isXRPNetwork && (
+              <View className="mb-4">
+                <View className="flex-row justify-between items-center mb-2">
+                  <Text className="text-white">Destination Tag</Text>
+                  <Text className="text-gray-500 text-sm">(Optional)</Text>
+                </View>
+                <TextInput
+                  value={destinationTag}
+                  onChangeText={(text) => {
+                    // Only allow numeric input
+                    const numericValue = text.replace(/[^0-9]/g, '');
+                    setDestinationTag(numericValue);
+                  }}
+                  placeholder="Enter destination tag (if required)"
+                  placeholderTextColor="#6b7280"
+                  keyboardType="number-pad"
+                  className="bg-gray-900 rounded-xl px-4 py-4 text-white"
+                />
+                <Text className="text-gray-500 text-xs mt-1">
+                  Required by some exchanges and services to identify your deposit
+                </Text>
+              </View>
+            )}
 
             {/* Amount */}
             <View className="mb-4">
@@ -268,6 +375,9 @@ export default function SendScreen() {
               <View className="bg-gray-900 rounded-xl p-4">
                 <DetailRow label="To" value={`${recipient.slice(0, 10)}...${recipient.slice(-8)}`} />
                 <DetailRow label="Network" value={networkConfig?.name || network} />
+                {isXRPNetwork && destinationTag && (
+                  <DetailRow label="Destination Tag" value={destinationTag} />
+                )}
                 {gasEstimate && (
                   <DetailRow
                     label="Network Fee"
@@ -299,6 +409,50 @@ export default function SendScreen() {
             </View>
           </View>
         )}
+
+        {/* QR Scanner Modal */}
+        <Modal
+          visible={showScanner}
+          animationType="slide"
+          onRequestClose={() => setShowScanner(false)}
+        >
+          <SafeAreaView className="flex-1 bg-black">
+            <View className="flex-row items-center justify-between px-5 pt-4 pb-4">
+              <TouchableOpacity onPress={() => setShowScanner(false)}>
+                <Ionicons name="close" size={28} color="white" />
+              </TouchableOpacity>
+              <Text className="text-white text-xl font-bold">Scan QR Code</Text>
+              <View className="w-7" />
+            </View>
+            
+            <View className="flex-1 relative">
+              <CameraView
+                style={StyleSheet.absoluteFillObject}
+                facing="back"
+                barcodeScannerSettings={{
+                  barcodeTypes: ['qr'],
+                }}
+                onBarcodeScanned={hasScanned ? undefined : handleBarCodeScanned}
+              />
+              
+              {/* Scanner overlay */}
+              <View className="flex-1 items-center justify-center">
+                <View className="w-64 h-64 border-2 border-white/50 rounded-3xl">
+                  <View className="absolute -top-1 -left-1 w-8 h-8 border-t-4 border-l-4 border-purple-500 rounded-tl-xl" />
+                  <View className="absolute -top-1 -right-1 w-8 h-8 border-t-4 border-r-4 border-purple-500 rounded-tr-xl" />
+                  <View className="absolute -bottom-1 -left-1 w-8 h-8 border-b-4 border-l-4 border-purple-500 rounded-bl-xl" />
+                  <View className="absolute -bottom-1 -right-1 w-8 h-8 border-b-4 border-r-4 border-purple-500 rounded-br-xl" />
+                </View>
+              </View>
+              
+              <View className="absolute bottom-10 left-0 right-0 px-10">
+                <Text className="text-white text-center text-sm opacity-80">
+                  Point your camera at a wallet address QR code
+                </Text>
+              </View>
+            </View>
+          </SafeAreaView>
+        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

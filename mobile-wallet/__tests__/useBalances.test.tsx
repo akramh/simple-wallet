@@ -2,9 +2,7 @@
  * @fileoverview Hook tests for balances + pricing helpers.
  */
 
-import React, { useEffect } from 'react';
-import { Text } from 'react-native';
-import { render, waitFor } from '@testing-library/react-native';
+import { renderHook, waitFor } from '@testing-library/react-native';
 import { describe, test, expect, jest, beforeEach } from '@jest/globals';
 
 const mockRefreshBalances = jest.fn(async () => {});
@@ -28,14 +26,6 @@ jest.mock('../store', () => ({
 
 import { useBalances } from '../hooks/useBalances';
 
-function Harness({ onReady }: { onReady: (api: ReturnType<typeof useBalances>) => void }) {
-  const api = useBalances();
-  useEffect(() => {
-    onReady(api);
-  }, [api, onReady]);
-  return <Text testID="ready">ready</Text>;
-}
-
 describe('useBalances', () => {
   beforeEach(() => {
     mockRefreshBalances.mockClear();
@@ -43,12 +33,12 @@ describe('useBalances', () => {
   });
 
   test('auto-refreshes balances on mount when unlocked and no lastUpdated', async () => {
-    let api: any;
-    render(<Harness onReady={(a) => { api = a; }} />);
+    const { result } = renderHook(() => useBalances());
+    
     await waitFor(() => expect(mockRefreshBalances).toHaveBeenCalled());
-    expect(api.getBalance('ETH')).toBe('1.5');
-    expect(api.getPrice('ETH')).toBe(2000);
-    expect(api.calculateFiatValue('ETH', '1')).toContain('$2,000');
+    expect(result.current.getBalance('ETH')).toBe('1.5');
+    expect(result.current.getPrice('ETH')).toBe(2000);
+    expect(result.current.calculateFiatValue('ETH', '1')).toContain('$2,000');
   });
 });
 
