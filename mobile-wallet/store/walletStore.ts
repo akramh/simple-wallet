@@ -296,15 +296,25 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
       const result = await walletBridge.unlockWallet(password, name);
 
+      // Load accounts first to get the persisted currentAccountIndex
+      const { accounts, currentIndex } = await walletBridge.getAccounts();
+      const accountList = Object.entries(accounts).map(([index, data]: [string, any]) => ({
+        index: parseInt(index),
+        address: data.address,
+        createdAt: data.createdAt,
+      }));
+      accountList.sort((a, b) => a.index - b.index);
+
       set({
         isLoading: false,
         isUnlocked: true,
         address: result.address,
         currentWalletName: result.walletName,
+        accounts: accountList,
+        currentAccountIndex: currentIndex,
       });
 
-      // Load accounts and refresh data
-      get().loadAccounts();
+      // Refresh balances (don't await - can run in background)
       get().refreshBalances();
     } catch (error) {
       console.error('[WalletStore] Unlock failed:', error);
@@ -533,19 +543,29 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       // Unlock the new wallet
       const result = await walletBridge.unlockWallet(password, name);
 
+      // Load accounts to get the persisted currentAccountIndex
+      const { accounts, currentIndex } = await walletBridge.getAccounts();
+      const accountList = Object.entries(accounts).map(([index, data]: [string, any]) => ({
+        index: parseInt(index),
+        address: data.address,
+        createdAt: data.createdAt,
+      }));
+      accountList.sort((a, b) => a.index - b.index);
+
       set({
         isLoading: false,
         isUnlocked: true,
         address: result.address,
         currentWalletName: result.walletName,
+        accounts: accountList,
+        currentAccountIndex: currentIndex,
         balances: [],
         balancesLastUpdated: null,
         transactions: [],
         transactionsLastUpdated: null,
       });
 
-      // Load accounts and refresh data
-      get().loadAccounts();
+      // Refresh data (don't await - can run in background)
       get().refreshBalances();
       get().loadTransactions();
     } catch (error) {

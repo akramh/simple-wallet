@@ -109,7 +109,7 @@ export default function ProfileScreen() {
             icon="key-outline"
             title="Secret Recovery Phrase"
             subtitle="Backup your wallet"
-            onPress={() => {}}
+            onPress={() => router.push('/secret-phrase' as never)}
           />
           <SettingsItem
             icon="shield-outline"

@@ -241,15 +241,324 @@ const formatBtcAmount = (satoshis, decimals = 8) => {
   return satoshisToBtc(satoshis).toFixed(decimals);
 };
 
-// Explorer stub
+/**
+ * Mempool.space API base URLs for different networks.
+ */
+const MEMPOOL_API_URLS = {
+  mainnet: 'https://mempool.space/api',
+  testnet: 'https://mempool.space/testnet/api',
+  signet: 'https://mempool.space/signet/api',
+};
+
+/**
+ * Request timeout in milliseconds.
+ */
+const REQUEST_TIMEOUT = 15000;
+
+/**
+ * Cache TTL in milliseconds (30 seconds).
+ */
+const CACHE_TTL = 30000;
+
+/**
+ * Simple in-memory cache for API responses.
+ */
+const cache = new Map();
+
+/**
+ * Get cached data if still valid.
+ */
+function getCached(key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+/**
+ * Store data in cache.
+ */
+function setCache(key, data) {
+  cache.set(key, { data, timestamp: Date.now() });
+}
+
+/**
+ * Fetch with timeout helper.
+ */
+async function fetchWithTimeout(url, timeout = REQUEST_TIMEOUT) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
+/**
+ * Bitcoin explorer using Mempool.space API.
+ * Provides real balance and transaction data for Bitcoin addresses.
+ */
 class BitcoinExplorer {
-  constructor() {}
-  async getBalance() { return { total: 0, confirmed: 0, unconfirmed: 0 }; }
-  async getBalanceFormatted() { return '0'; }
-  async getTransactions() { return []; }
-  async getUTXOs() { return []; }
-  getTransactionUrl() { return ''; }
-  getAddressUrl() { return ''; }
+  constructor(network = 'mainnet', customApiUrl) {
+    this.network = network;
+    this.apiUrl = customApiUrl || MEMPOOL_API_URLS[network] || MEMPOOL_API_URLS.mainnet;
+  }
+
+  getNetwork() {
+    return this.network;
+  }
+
+  /**
+   * Get the balance for a Bitcoin address.
+   *
+   * @param {string} address - Bitcoin address (bc1q... or tb1q...)
+   * @returns {Promise<{confirmed: number, unconfirmed: number, total: number}>}
+   */
+  async getBalance(address) {
+    const cacheKey = `balance:${this.network}:${address}`;
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const url = `${this.apiUrl}/address/${address}`;
+      const response = await fetchWithTimeout(url);
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      const confirmed =
+        data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
+      const unconfirmed =
+        data.mempool_stats.funded_txo_sum - data.mempool_stats.spent_txo_sum;
+
+      const balance = {
+        confirmed,
+        unconfirmed,
+        total: confirmed + unconfirmed,
+      };
+
+      setCache(cacheKey, balance);
+      return balance;
+    } catch (error) {
+      console.warn('[BitcoinExplorer] Failed to fetch balance:', error);
+      return { confirmed: 0, unconfirmed: 0, total: 0 };
+    }
+  }
+
+  /**
+   * Get the formatted balance in BTC.
+   *
+   * @param {string} address - Bitcoin address
+   * @returns {Promise<string>} Balance in BTC as string
+   */
+  async getBalanceFormatted(address) {
+    const balance = await this.getBalance(address);
+    return satoshisToBtc(balance.total).toString();
+  }
+
+  /**
+   * Get unspent transaction outputs (UTXOs) for an address.
+   *
+   * @param {string} address - Bitcoin address
+   * @returns {Promise<Array>} Array of UTXOs
+   */
+  async getUTXOs(address) {
+    const cacheKey = `utxos:${this.network}:${address}`;
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const url = `${this.apiUrl}/address/${address}/utxo`;
+      const response = await fetchWithTimeout(url);
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const utxos = await response.json();
+      setCache(cacheKey, utxos);
+      return utxos;
+    } catch (error) {
+      console.warn('[BitcoinExplorer] Failed to fetch UTXOs:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get transaction history for an address.
+   *
+   * @param {string} address - Bitcoin address
+   * @returns {Promise<Array>} Array of transactions
+   */
+  async getTransactions(address) {
+    const cacheKey = `txs:${this.network}:${address}`;
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const url = `${this.apiUrl}/address/${address}/txs`;
+      const response = await fetchWithTimeout(url);
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const txs = await response.json();
+      setCache(cacheKey, txs);
+      return txs;
+    } catch (error) {
+      console.warn('[BitcoinExplorer] Failed to fetch transactions:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get normalized transaction history matching the app's transaction format.
+   *
+   * @param {string} address - Bitcoin address
+   * @param {number} limit - Maximum number of transactions
+   * @returns {Promise<Array>} Normalized transactions
+   */
+  async getNormalizedTransactions(address, limit = 25) {
+    const txs = await this.getTransactions(address);
+    const lowerAddress = address.toLowerCase();
+
+    return txs.slice(0, limit).map((tx) => {
+      let inputsFromMe = 0;
+      let outputsToMe = 0;
+      let outputsToOthers = 0;
+
+      for (const input of tx.vin) {
+        if (input.prevout?.scriptpubkey_address?.toLowerCase() === lowerAddress) {
+          inputsFromMe += input.prevout.value;
+        }
+      }
+
+      for (const output of tx.vout) {
+        const outAddr = output.scriptpubkey_address?.toLowerCase();
+        if (outAddr === lowerAddress) {
+          outputsToMe += output.value;
+        } else {
+          outputsToOthers += output.value;
+        }
+      }
+
+      const type = inputsFromMe > 0 ? 'send' : 'receive';
+      const displayValue = type === 'send' ? outputsToOthers : outputsToMe;
+
+      // Get the counterparty address
+      let counterparty = '';
+      if (type === 'send') {
+        const recipient = tx.vout.find(
+          (o) => o.scriptpubkey_address?.toLowerCase() !== lowerAddress
+        );
+        counterparty = recipient?.scriptpubkey_address || '';
+      } else {
+        const sender = tx.vin.find(
+          (input) => input.prevout?.scriptpubkey_address?.toLowerCase() !== lowerAddress
+        )?.prevout?.scriptpubkey_address;
+        counterparty = sender || '';
+      }
+
+      const blockHeight = tx.status.block_height || 0;
+
+      return {
+        hash: tx.txid,
+        from: type === 'send' ? address : counterparty,
+        to: type === 'send' ? counterparty : address,
+        value: displayValue.toString(),
+        timestamp: tx.status.block_time
+          ? tx.status.block_time * 1000
+          : Date.now(),
+        blockNumber: blockHeight,
+        fee: tx.fee.toString(),
+        status: tx.status.confirmed ? 'confirmed' : 'pending',
+        type,
+        network: this.network === 'mainnet' ? 'bitcoin-mainnet' : 'bitcoin-testnet',
+      };
+    });
+  }
+
+  /**
+   * Get recommended fee rates.
+   *
+   * @returns {Promise<{fastestFee: number, halfHourFee: number, hourFee: number, economyFee: number, minimumFee: number}>}
+   */
+  async getFeeEstimates() {
+    const cacheKey = `fees:${this.network}`;
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const url = `${this.apiUrl}/v1/fees/recommended`;
+      const response = await fetchWithTimeout(url);
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const fees = await response.json();
+      setCache(cacheKey, fees);
+      return fees;
+    } catch (error) {
+      console.warn('[BitcoinExplorer] Failed to fetch fee estimates:', error);
+      return {
+        fastestFee: 10,
+        halfHourFee: 5,
+        hourFee: 3,
+        economyFee: 1,
+        minimumFee: 1,
+      };
+    }
+  }
+
+  /**
+   * Generate a block explorer URL for a transaction.
+   *
+   * @param {string} txid - Transaction ID
+   * @returns {string} URL to view the transaction
+   */
+  getTransactionUrl(txid) {
+    const baseUrl = this.network === 'mainnet'
+      ? 'https://mempool.space'
+      : `https://mempool.space/${this.network}`;
+    return `${baseUrl}/tx/${txid}`;
+  }
+
+  /**
+   * Generate a block explorer URL for an address.
+   *
+   * @param {string} address - Bitcoin address
+   * @returns {string} URL to view the address
+   */
+  getAddressUrl(address) {
+    const baseUrl = this.network === 'mainnet'
+      ? 'https://mempool.space'
+      : `https://mempool.space/${this.network}`;
+    return `${baseUrl}/address/${address}`;
+  }
+
+  /**
+   * Clear the cache for this network.
+   */
+  clearCache() {
+    for (const key of cache.keys()) {
+      if (key.includes(this.network)) {
+        cache.delete(key);
+      }
+    }
+  }
 }
 
 // Provider class matching the real BitcoinProvider interface
@@ -262,7 +571,8 @@ class BitcoinProvider {
     };
     this.currentAddress = null;
     this.accountIndex = 0;
-    this.explorer = new BitcoinExplorer();
+    // Initialize explorer with the correct network
+    this.explorer = new BitcoinExplorer(this.config.network);
   }
 
   getNetwork() {
@@ -346,8 +656,12 @@ class BitcoinProvider {
     return this.explorer.getUTXOs(addr);
   }
 
-  async getTransactionHistory(address, limit = 20) {
-    return [];
+  async getTransactionHistory(address, limit = 25) {
+    const addr = address || this.currentAddress?.address;
+    if (!addr) {
+      return [];
+    }
+    return this.explorer.getNormalizedTransactions(addr, limit);
   }
 
   getTransactionUrl(txid) {
@@ -361,7 +675,9 @@ class BitcoinProvider {
 }
 
 function getBitcoinExplorer(network = 'mainnet') {
-  return new BitcoinExplorer();
+  // Handle network key format (e.g., 'bitcoin-mainnet' -> 'mainnet')
+  const normalizedNetwork = network.includes('testnet') ? 'testnet' : 'mainnet';
+  return new BitcoinExplorer(normalizedNetwork);
 }
 
 function getBitcoinProvider(config = {}) {
