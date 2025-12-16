@@ -2,6 +2,10 @@
 
 A multi-chain cryptocurrency wallet with CLI and Chrome extension interfaces, supporting Ethereum (EVM chains), Bitcoin, and Solana. Written in TypeScript with full type safety. Also provides a programmatic SDK for integration into browser extensions, mobile apps, and other applications.
 
+## Plans / design docs
+
+Plan-style docs (feature plans, rollouts, design notes) live in `plans/`.
+
 ## Features
 
 ### Multi-Chain Support

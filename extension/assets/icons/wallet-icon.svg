@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Purple circle background -->
+  <circle cx="64" cy="64" r="64" fill="#9333ea"/>
+  
+  <!-- Wallet icon (Ionicons wallet-outline style) - white, centered -->
+  <g transform="translate(32, 32) scale(0.5)">
+    <path fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" 
+      d="M112 48H48a32 32 0 0 0-32 32v48a32 32 0 0 0 32 32h64a32 32 0 0 0 32-32V80a32 32 0 0 0-32-32Z"/>
+    <path fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" 
+      d="M128 80h-32a16 16 0 0 0 0 32h32"/>
+    <circle cx="96" cy="96" r="8" fill="white"/>
+    <path fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" 
+      d="M48 48V32a16 16 0 0 1 16-16h48a16 16 0 0 1 16 16v16"/>
+  </g>
+</svg>
