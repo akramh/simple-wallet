@@ -16,7 +16,7 @@ import type {
   NormalizedXRPTransaction,
   XRPFeeEstimate,
 } from './types.js';
-import { dropsToXrp, formatXrpAmount, parseXrpToDropsExact, isValidDestinationTag } from './types.js';
+import { dropsToXrp, formatXrpAmount, parseXrpToDropsExact, isValidDestinationTag, BASE_FEE_DROPS } from './types.js';
 import {
   buildAndSignPayment,
   validateSufficientBalance,
@@ -401,7 +401,12 @@ export class XRPProvider {
 
     // Get fee estimate
     const fees = await this.getFeeEstimates();
-    const feeDrops = fees.openLedgerFee || fees.medianFee || 12;
+    // XRPL enforces a minimum fee (commonly 12 drops). Some servers may report lower values
+    // (e.g. 10) in fee stats; clamp here so tx building doesn't fail downstream.
+    const suggestedFee = Number.isFinite(fees.openLedgerFee) && fees.openLedgerFee > 0
+      ? fees.openLedgerFee
+      : (Number.isFinite(fees.medianFee) && fees.medianFee > 0 ? fees.medianFee : BASE_FEE_DROPS);
+    const feeDrops = Math.max(BASE_FEE_DROPS, Math.trunc(suggestedFee));
 
     const reserves = await this.explorer.getReserves();
 

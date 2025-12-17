@@ -1322,13 +1322,18 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       return { tokens: tokensWithCachedBalances, network: currentNetwork };
 
     case 'REFRESH_BALANCES':
-      // Trigger async balance refresh for current network
+      // Trigger balance refresh for current network.
+      // IMPORTANT (MV3): await the refresh to keep the service worker alive long enough
+      // for network calls + BALANCES_UPDATED broadcast to complete.
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
-      refreshBalancesForCurrentNetwork().catch(err => {
+      try {
+        await refreshBalancesForCurrentNetwork();
+        return { success: true, message: 'Balance refresh completed', network: walletService!.config.network };
+      } catch (err: any) {
         console.warn('[REFRESH_BALANCES] Error:', err);
-      });
-      return { success: true, message: 'Balance refresh started' };
+        return { success: false, error: err?.message || 'Balance refresh failed', network: walletService!.config.network };
+      }
 
     case 'GET_CACHED_BALANCES':
       // Returns only cached balances for a network

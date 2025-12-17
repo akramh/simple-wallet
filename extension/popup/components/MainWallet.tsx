@@ -329,13 +329,27 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    // Trigger balance refresh and wait for broadcast
-    await chrome.runtime.sendMessage({ type: 'REFRESH_BALANCES' });
-    // Also reload the full token list in case tokens changed
-    await loadTokensAndData();
-    // Fetch updated prices
-    await fetchTokenPrices();
-    setRefreshing(false);
+    try {
+      // Ask background to refresh balances (now awaited server-side to avoid MV3 worker suspend).
+      await chrome.runtime.sendMessage({ type: 'REFRESH_BALANCES' });
+
+      // Re-read cached balances immediately (in case BALANCES_UPDATED is delayed/missed).
+      const tokensResponse = await chrome.runtime.sendMessage({ type: 'GET_TOKENS' });
+      if (tokensResponse?.tokens) {
+        setPortfolio(tokensResponse.tokens.map((item: TokenWithBalance) => ({
+          token: item.token,
+          balance: item.balance || '0',
+          error: undefined
+        })));
+      }
+
+      // Fetch updated prices (uses cached balances)
+      await fetchTokenPrices();
+    } catch (error) {
+      console.warn('Refresh failed:', error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleLock = async () => {
