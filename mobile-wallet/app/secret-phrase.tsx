@@ -26,11 +26,13 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { walletBridge } from '../services';
+import { useToast } from '../contexts';
 
 type ScreenState = 'password' | 'revealed';
 
 export default function SecretPhraseScreen() {
   const router = useRouter();
+  const { showToast } = useToast();
 
   const [screenState, setScreenState] = useState<ScreenState>('password');
   const [password, setPassword] = useState('');
@@ -66,11 +68,7 @@ export default function SecretPhraseScreen() {
   const handleCopy = async () => {
     if (!mnemonic) return;
     await Clipboard.setStringAsync(mnemonic);
-    Alert.alert(
-      'Copied',
-      'Recovery phrase copied to clipboard. Make sure to store it safely and clear your clipboard after!',
-      [{ text: 'OK' }]
-    );
+    showToast('Recovery phrase copied. Clear your clipboard after!', 'info');
   };
 
   const handleBack = () => {
