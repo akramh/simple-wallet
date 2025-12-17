@@ -32,7 +32,7 @@ export interface CryptoAdapter {
   randomBytes(length: number): Buffer | Uint8Array;
 
   /**
-   * Derive encryption key from password using PBKDF2.
+   * Derive encryption key from password using PBKDF2 (synchronous).
    * @param password - User password
    * @param salt - Random salt for key derivation
    * @param iterations - Number of PBKDF2 iterations
@@ -41,6 +41,19 @@ export interface CryptoAdapter {
    * @returns Derived key as Buffer or Uint8Array
    */
   pbkdf2Sync(password: string, salt: Buffer | Uint8Array, iterations: number, keyLength: number, digest: string): Buffer | Uint8Array;
+
+  /**
+   * Derive encryption key from password using PBKDF2 (asynchronous).
+   * Optional - provides native performance in React Native via react-native-quick-crypto.
+   * Falls back to pbkdf2Sync if not implemented.
+   * @param password - User password
+   * @param salt - Random salt for key derivation
+   * @param iterations - Number of PBKDF2 iterations
+   * @param keyLength - Desired key length in bytes
+   * @param digest - Hash algorithm ('sha256')
+   * @returns Promise resolving to derived key as Uint8Array
+   */
+  pbkdf2Async?(password: string, salt: Buffer | Uint8Array, iterations: number, keyLength: number, digest: string): Promise<Uint8Array>;
 
   /**
    * Create an AES-GCM cipher for encryption.

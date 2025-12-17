@@ -14,13 +14,15 @@ module.exports = {
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
   // Map shared core imports used by the mobile app to the workspace source tree.
   // Note: many mobile modules import `@wallet/*.js` (ESM-style); Jest needs explicit mapping.
+  // Note: @noble/hashes is mocked in jest.setup.js (pure ESM not compatible with Jest CJS require)
   moduleNameMapper: {
     '^@wallet/(.*)\\.js$': '<rootDir>/../src/$1.ts',
     '^@wallet/(.*)$': '<rootDir>/../src/$1.ts',
   },
   // Keep RN/Expo dependencies transformed when required by the preset.
+  // @noble/hashes is ESM-only and needs to be transformed by Jest.
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native|@react-navigation|expo(nent)?|expo-.*|@expo|expo-router|nativewind|react-native-css-interop)/)',
+    'node_modules/(?!((jest-)?react-native|@react-native|@react-navigation|expo(nent)?|expo-.*|@expo|expo-router|nativewind|react-native-css-interop|@noble/hashes)/)',
   ],
 };
 

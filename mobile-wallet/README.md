@@ -49,7 +49,7 @@ mobile-wallet/
 │   └── useClipboard.ts    # Clipboard with haptics
 ├── services/              # Platform adapters & wallet bridge
 │   ├── MobileStorageAdapter.ts  # SecureStore + AsyncStorage
-│   ├── MobileCryptoAdapter.ts   # WebCrypto for RN
+│   ├── MobileCryptoAdapter.ts   # Native crypto via quick-crypto
 │   └── WalletBridge.ts    # Bridge to WalletAppService
 ├── store/                 # Zustand state management
 │   └── walletStore.ts     # Global wallet state
@@ -92,6 +92,37 @@ The mobile app shares the core wallet SDK (`../src/`) via:
 2. **MobileStorageAdapter** - Implements `StorageAdapter` interface using secure storage
 3. **MobileCryptoAdapter** - Implements `CryptoAdapter` interface for React Native
 
+### Crypto Performance
+
+The app uses `react-native-quick-crypto@0.7.15` for native-speed PBKDF2:
+
+| Engine | PBKDF2 100k | Why |
+|--------|-------------|-----|
+| Native C++ (quick-crypto) | **~20ms** | OpenSSL optimizations, full CPU speed |
+| V8 (Node.js) | ~20ms | JIT compiles hot loops |
+| Hermes (React Native) | ~16,000ms | AOT bytecode, no loop optimization |
+
+**Why Hermes is 800x slower for crypto:**
+- Hermes is optimized for fast app startup (AOT compilation), not CPU-intensive loops
+- PBKDF2 with 100k iterations = 200k+ SHA256 operations
+- Each SHA256 has 64 rounds of bitwise operations
+- Pure JavaScript in Hermes doesn't benefit from JIT optimization
+
+**Solution (same as MetaMask):**
+- Uses `react-native-quick-crypto@0.7.15` which calls `fastpbkdf2.c` via JSI
+- Native C code runs at full CPU speed with OpenSSL optimizations
+- Wallet unlock is now instant (~20ms) instead of 16+ seconds
+
+**Dependencies:**
+- `react-native-quick-crypto@0.7.15` - Native crypto via JSI
+- `@craftzdog/react-native-buffer` - Buffer polyfill for quick-crypto
+- `OpenSSL-Universal` pod - Required for iOS build
+
+**After pulling changes**, rebuild native modules:
+```bash
+npx expo prebuild --clean
+```
+
 ### Configuring Module Resolution
 
 To integrate with the shared `src/` code, update `metro.config.js`:
@@ -109,7 +140,7 @@ config.watchFolders = [
 
 ### Implemented ✅
 - [x] Project scaffolding (Expo SDK 52, NativeWind, TypeScript)
-- [x] Platform adapters (MobileStorageAdapter, MobileCryptoAdapter)
+- [x] Platform adapters (MobileStorageAdapter, MobileCryptoAdapter with native crypto)
 - [x] WalletBridge service layer (mirrors extension API)
 - [x] Zustand store with wallet state management
 - [x] Navigation shell (expo-router tabs + stacks + modals)

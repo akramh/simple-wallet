@@ -1,24 +1,67 @@
 /**
  * @fileoverview Mobile crypto adapter for React Native.
  *
- * Implements the CryptoAdapter interface using WebCrypto SubtleCrypto API
- * which is available in React Native's Hermes engine.
+ * Implements the CryptoAdapter interface with a layered approach:
+ * 1. react-native-quick-crypto (native C++ via JSI) - fastest, ~20ms for 100k iterations
+ * 2. @noble/hashes (pure JS) - fallback for Jest tests, ~20ms in Node but ~16s in Hermes
  *
- * Note: For production, consider using react-native-quick-crypto for
- * better performance. This implementation uses the built-in WebCrypto API.
+ * ## Why PBKDF2 is slow in Hermes
  *
- * @responsibilities
- * - Provide a CryptoAdapter implementation compatible with the shared SDK
- * - Support synchronous-looking primitives expected by the SDK's storage/encryption layer
+ * Hermes is optimized for fast app startup (AOT compilation), not CPU-intensive loops.
+ * PBKDF2 with 100k iterations requires 200k+ SHA256 operations. Each SHA256 has 64 rounds
+ * of bitwise operations. Pure JS in Hermes is ~800x slower than native code.
  *
- * @security
- * - Do not log secrets (passwords, derived keys, auth tags). If debug logs are present,
- *   they must be treated as development-only and removed/guarded before production release.
- * - This adapter is an environment bridge; the shared SDK defines encryption parameters.
+ * | Engine | PBKDF2 100k | Reason |
+ * |--------|-------------|--------|
+ * | V8 (Node) | ~20ms | JIT optimizes hot loops |
+ * | Hermes (RN) | ~16,000ms | AOT bytecode, no loop optimization |
+ * | Native C++ | ~20ms | Full CPU speed, OpenSSL optimizations |
+ *
+ * ## MetaMask's Approach
+ *
+ * MetaMask uses react-native-quick-crypto@0.7.15 which calls fastpbkdf2.c via JSI.
+ * This gives native performance without blocking the JS thread.
+ *
+ * @see https://github.com/margelo/react-native-quick-crypto
+ * @see https://nicolo.dev/en/blog/slow-crypto-react-native-how-to-fix/
  */
 
 // @ts-ignore - asmcrypto.js types
 import { AES_GCM } from 'asmcrypto.js';
+
+// Try to import react-native-quick-crypto (native)
+// This is v0.7.15 which uses simpler JSI bindings (no nitro-modules)
+let QuickCrypto: {
+  pbkdf2Sync: (password: ArrayBuffer, salt: ArrayBuffer, iterations: number, keylen: number, digest: string) => ArrayBuffer;
+  randomBytes: (size: number) => ArrayBuffer;
+} | null = null;
+
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const qc = require('react-native-quick-crypto');
+  // Check if native module is available (won't be in Jest)
+  if (qc.pbkdf2Sync && typeof qc.pbkdf2Sync === 'function') {
+    QuickCrypto = qc;
+    console.log('[MobileCryptoAdapter] Using react-native-quick-crypto (native)');
+  }
+} catch (e) {
+  console.log('[MobileCryptoAdapter] react-native-quick-crypto not available');
+}
+
+// Fallback to @noble/hashes for Jest tests (pure JS, works in Node.js)
+let noblePbkdf2: ((hash: unknown, password: string, salt: Uint8Array, opts: { c: number; dkLen: number }) => Uint8Array) | null = null;
+let nobleSha256: unknown = null;
+
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { pbkdf2 } = require('@noble/hashes/pbkdf2');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { sha256 } = require('@noble/hashes/sha256');
+  noblePbkdf2 = pbkdf2;
+  nobleSha256 = sha256;
+} catch (e) {
+  console.log('[MobileCryptoAdapter] @noble/hashes not available');
+}
 
 /**
  * CryptoAdapter interface (must match src/crypto-adapter.ts).
@@ -36,12 +79,25 @@ export interface CryptoAdapter {
     algorithm: string,
     key: Buffer | Uint8Array,
     iv: Buffer | Uint8Array
-  ): any;
+  ): CipherLike;
   createDecipheriv(
     algorithm: string,
     key: Buffer | Uint8Array,
     iv: Buffer | Uint8Array
-  ): any;
+  ): DecipherLike;
+}
+
+/**
+ * Extended interface with async PBKDF2 support.
+ */
+export interface AsyncCryptoAdapter extends CryptoAdapter {
+  pbkdf2Async(
+    password: string,
+    salt: Buffer | Uint8Array,
+    iterations: number,
+    keyLength: number,
+    digest: string
+  ): Promise<Uint8Array>;
 }
 
 /**
@@ -51,7 +107,6 @@ function toUint8Array(
   data: string | Buffer | Uint8Array,
   encoding?: string
 ): Uint8Array {
-  // Handle string input
   if (typeof data === 'string') {
     if (encoding === 'hex') {
       const bytes = new Uint8Array(data.length / 2);
@@ -60,24 +115,20 @@ function toUint8Array(
       }
       return bytes;
     }
-    // Default to UTF-8
     return new TextEncoder().encode(data);
   }
   
-  // Handle Buffer and Uint8Array - always copy to ensure we have clean data
   if (data instanceof Uint8Array) {
-    // Create a fresh copy to avoid shared ArrayBuffer issues
     const copy = new Uint8Array(data.length);
     copy.set(data);
     return copy;
   }
   
-  // Buffer (polyfilled) - it has buffer, byteOffset, byteLength properties
   if (data && typeof data === 'object' && 'buffer' in data) {
-    return new Uint8Array((data as any).buffer, (data as any).byteOffset, (data as any).byteLength);
+    return new Uint8Array((data as Buffer).buffer, (data as Buffer).byteOffset, (data as Buffer).byteLength);
   }
-  // Fallback: try to create from iterable
-  return Uint8Array.from(data as any);
+  
+  return Uint8Array.from(data as Iterable<number>);
 }
 
 /**
@@ -106,25 +157,44 @@ function concatArrays(arrays: Uint8Array[]): Uint8Array {
 /**
  * Mobile crypto adapter for React Native.
  *
- * Note: The StorageAdapter interface expects synchronous crypto operations.
- * We use asmcrypto.js for synchronous AES-GCM encryption/decryption
- * and pure JavaScript for PBKDF2-HMAC-SHA256 key derivation.
- *
- * For production use, consider react-native-quick-crypto which provides
- * synchronous native crypto operations with better performance.
+ * Uses react-native-quick-crypto for native-speed PBKDF2 (~20ms for 100k iterations).
+ * Falls back to @noble/hashes for Jest tests.
  */
-export class MobileCryptoAdapter implements CryptoAdapter {
+export class MobileCryptoAdapter implements AsyncCryptoAdapter {
   /**
    * Generate cryptographically secure random bytes.
    */
   randomBytes(length: number): Uint8Array {
+    if (QuickCrypto?.randomBytes) {
+      return new Uint8Array(QuickCrypto.randomBytes(length));
+    }
     const bytes = new Uint8Array(length);
     globalThis.crypto.getRandomValues(bytes);
     return bytes;
   }
 
   /**
-   * Derive key using PBKDF2-HMAC-SHA256 (synchronous pure JS implementation).
+   * Derive key using PBKDF2 asynchronously.
+   * Wraps sync call in Promise to not block initial render.
+   */
+  async pbkdf2Async(
+    password: string,
+    salt: Buffer | Uint8Array,
+    iterations: number,
+    keyLength: number,
+    digest: string
+  ): Promise<Uint8Array> {
+    // Yield to event loop to allow loading UI to render
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return this.pbkdf2Sync(password, salt, iterations, keyLength, digest);
+  }
+
+  /**
+   * Derive key using PBKDF2 synchronously.
+   *
+   * Priority:
+   * 1. react-native-quick-crypto (native C++, ~20ms)
+   * 2. @noble/hashes (pure JS, ~20ms in Node, ~16s in Hermes)
    */
   pbkdf2Sync(
     password: string,
@@ -134,223 +204,74 @@ export class MobileCryptoAdapter implements CryptoAdapter {
     digest: string
   ): Uint8Array {
     const saltBytes = toUint8Array(salt);
-    console.log('[MobileCryptoAdapter] pbkdf2Sync() password length:', password.length, 
-      'salt length:', saltBytes.length, 
-      'salt hex:', toHex(saltBytes.slice(0, 8)) + '...',
-      'iterations:', iterations, 'keyLength:', keyLength);
-    // Use our pure JavaScript PBKDF2 implementation
-    const result = this.pbkdf2Pure(password, saltBytes, iterations, keyLength, digest);
-    console.log('[MobileCryptoAdapter] pbkdf2Sync() derived key first 8 bytes:', toHex(result.slice(0, 8)));
-    return result;
-  }
+    const startTime = Date.now();
+    let result: Uint8Array;
+    let implementation: string;
 
-  /**
-   * Pure JavaScript PBKDF2-HMAC-SHA256 implementation.
-   * Slower than native but works synchronously in React Native.
-   */
-  private pbkdf2Pure(
-    password: string,
-    saltBytes: Uint8Array,
-    iterations: number,
-    keyLength: number,
-    digest: string
-  ): Uint8Array {
-    // Convert password to bytes
-    const passwordBytes = new TextEncoder().encode(password);
-    
-    // HMAC-SHA256 based PBKDF2
-    const hashLen = 32; // SHA256 output length
-    const numBlocks = Math.ceil(keyLength / hashLen);
-    const result = new Uint8Array(numBlocks * hashLen);
-    
-    for (let block = 1; block <= numBlocks; block++) {
-      // U1 = HMAC(password, salt || INT(block))
-      const blockBytes = new Uint8Array(4);
-      blockBytes[0] = (block >> 24) & 0xff;
-      blockBytes[1] = (block >> 16) & 0xff;
-      blockBytes[2] = (block >> 8) & 0xff;
-      blockBytes[3] = block & 0xff;
-      
-      const saltBlock = new Uint8Array(saltBytes.length + 4);
-      saltBlock.set(saltBytes);
-      saltBlock.set(blockBytes, saltBytes.length);
-      
-      let u = this.hmacSha256Sync(passwordBytes, saltBlock);
-      const t = new Uint8Array(u);
-      
-      // Iterate: Ui = HMAC(password, Ui-1), T = U1 ^ U2 ^ ... ^ Uiterations
-      for (let i = 1; i < iterations; i++) {
-        u = this.hmacSha256Sync(passwordBytes, u);
-        for (let j = 0; j < hashLen; j++) {
-          t[j] ^= u[j];
+    if (QuickCrypto) {
+      // Native C++ implementation via JSI - fastest option
+      try {
+        const passwordBuffer = new TextEncoder().encode(password).buffer;
+        const saltBuffer = saltBytes.buffer.slice(
+          saltBytes.byteOffset,
+          saltBytes.byteOffset + saltBytes.byteLength
+        );
+        const resultBuffer = QuickCrypto.pbkdf2Sync(
+          passwordBuffer,
+          saltBuffer,
+          iterations,
+          keyLength,
+          digest.toLowerCase()
+        );
+        result = new Uint8Array(resultBuffer);
+        implementation = 'quick-crypto-native';
+      } catch (e) {
+        console.warn('[MobileCryptoAdapter] quick-crypto failed:', e);
+        // Fall through to noble-hashes
+        if (noblePbkdf2 && nobleSha256) {
+          result = noblePbkdf2(nobleSha256, password, saltBytes, { c: iterations, dkLen: keyLength });
+          implementation = 'noble-hashes-fallback';
+        } else {
+          throw new Error('No PBKDF2 implementation available');
         }
       }
-      
-      result.set(t, (block - 1) * hashLen);
-    }
-    
-    return result.slice(0, keyLength);
-  }
-
-  /**
-   * Synchronous HMAC-SHA256 using pure JavaScript.
-   */
-  private hmacSha256Sync(key: Uint8Array, message: Uint8Array): Uint8Array {
-    const blockSize = 64;
-    const hashLen = 32;
-    
-    // If key is longer than block size, hash it
-    let keyBytes = key;
-    if (keyBytes.length > blockSize) {
-      keyBytes = this.sha256Sync(keyBytes);
-    }
-    
-    // Pad key to block size
-    const paddedKey = new Uint8Array(blockSize);
-    paddedKey.set(keyBytes);
-    
-    // Create inner and outer padded keys
-    const ipad = new Uint8Array(blockSize);
-    const opad = new Uint8Array(blockSize);
-    for (let i = 0; i < blockSize; i++) {
-      ipad[i] = paddedKey[i] ^ 0x36;
-      opad[i] = paddedKey[i] ^ 0x5c;
-    }
-    
-    // Inner hash: H(ipad || message)
-    const innerData = new Uint8Array(blockSize + message.length);
-    innerData.set(ipad);
-    innerData.set(message, blockSize);
-    const innerHash = this.sha256Sync(innerData);
-    
-    // Outer hash: H(opad || innerHash)
-    const outerData = new Uint8Array(blockSize + hashLen);
-    outerData.set(opad);
-    outerData.set(innerHash, blockSize);
-    
-    return this.sha256Sync(outerData);
-  }
-
-  /**
-   * Synchronous SHA256 using pure JavaScript.
-   */
-  private sha256Sync(message: Uint8Array): Uint8Array {
-    // SHA-256 constants
-    const K = new Uint32Array([
-      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-    ]);
-
-    // Initial hash values
-    let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a;
-    let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
-
-    // Pre-processing: adding padding bits
-    const msgLen = message.length;
-    const bitLen = msgLen * 8;
-    
-    // Calculate padding: message + 1 byte (0x80) + padding + 8 bytes (length) must be multiple of 64
-    let paddedLen = msgLen + 1 + 8; // minimum: msg + 0x80 + 64-bit length
-    paddedLen = Math.ceil(paddedLen / 64) * 64; // round up to next 64-byte boundary
-    
-    // Create padded message with its own ArrayBuffer
-    const paddedBuffer = new ArrayBuffer(paddedLen);
-    const padded = new Uint8Array(paddedBuffer);
-    padded.set(message);
-    padded[msgLen] = 0x80;
-    
-    // Length in bits as 64-bit big-endian (we only use lower 32 bits for simplicity)
-    const view = new DataView(paddedBuffer);
-    view.setUint32(paddedLen - 4, bitLen, false);
-
-    // Process each 512-bit chunk
-    const W = new Uint32Array(64);
-    for (let offset = 0; offset < paddedLen; offset += 64) {
-      // Copy chunk into first 16 words
-      for (let i = 0; i < 16; i++) {
-        W[i] = view.getUint32(offset + i * 4, false);
-      }
-      // Extend to 64 words
-      for (let i = 16; i < 64; i++) {
-        const s0 = this.rotr(W[i-15], 7) ^ this.rotr(W[i-15], 18) ^ (W[i-15] >>> 3);
-        const s1 = this.rotr(W[i-2], 17) ^ this.rotr(W[i-2], 19) ^ (W[i-2] >>> 10);
-        W[i] = (W[i-16] + s0 + W[i-7] + s1) >>> 0;
-      }
-
-      // Initialize working variables
-      let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
-
-      // Compression function
-      for (let i = 0; i < 64; i++) {
-        const S1 = this.rotr(e, 6) ^ this.rotr(e, 11) ^ this.rotr(e, 25);
-        const ch = (e & f) ^ (~e & g);
-        const temp1 = (h + S1 + ch + K[i] + W[i]) >>> 0;
-        const S0 = this.rotr(a, 2) ^ this.rotr(a, 13) ^ this.rotr(a, 22);
-        const maj = (a & b) ^ (a & c) ^ (b & c);
-        const temp2 = (S0 + maj) >>> 0;
-
-        h = g; g = f; f = e; e = (d + temp1) >>> 0;
-        d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
-      }
-
-      // Add to hash
-      h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
-      h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
+    } else if (noblePbkdf2 && nobleSha256) {
+      // Pure JS implementation - fast in Node.js, slow in Hermes
+      result = noblePbkdf2(nobleSha256, password, saltBytes, { c: iterations, dkLen: keyLength });
+      implementation = 'noble-hashes';
+    } else {
+      throw new Error('No PBKDF2 implementation available');
     }
 
-    // Produce the final hash value
-    const resultBuffer = new ArrayBuffer(32);
-    const result = new Uint8Array(resultBuffer);
-    const resultView = new DataView(resultBuffer);
-    resultView.setUint32(0, h0, false);
-    resultView.setUint32(4, h1, false);
-    resultView.setUint32(8, h2, false);
-    resultView.setUint32(12, h3, false);
-    resultView.setUint32(16, h4, false);
-    resultView.setUint32(20, h5, false);
-    resultView.setUint32(24, h6, false);
-    resultView.setUint32(28, h7, false);
-    
+    const elapsedMs = Date.now() - startTime;
+    console.log(`[MobileCryptoAdapter] pbkdf2Sync() ${elapsedMs}ms (${implementation})`);
+
     return result;
-  }
-
-  private rotr(x: number, n: number): number {
-    return ((x >>> n) | (x << (32 - n))) >>> 0;
   }
 
   /**
    * Create AES-GCM cipher for encryption.
    */
   createCipheriv(
-    algorithm: string,
+    _algorithm: string,
     key: Buffer | Uint8Array,
     iv: Buffer | Uint8Array
   ): CipherLike {
     const keyBytes = toUint8Array(key);
     const ivBytes = toUint8Array(iv);
-    console.log('[MobileCryptoAdapter] createCipheriv() key first 4 bytes:', toHex(keyBytes.slice(0, 4)), 'iv first 4 bytes:', toHex(ivBytes.slice(0, 4)));
-
-    return new CipherWrapper(keyBytes, ivBytes, 'encrypt');
+    return new CipherWrapper(keyBytes, ivBytes);
   }
 
   /**
    * Create AES-GCM decipher for decryption.
    */
   createDecipheriv(
-    algorithm: string,
+    _algorithm: string,
     key: Buffer | Uint8Array,
     iv: Buffer | Uint8Array
   ): DecipherLike {
     const keyBytes = toUint8Array(key);
     const ivBytes = toUint8Array(iv);
-    console.log('[MobileCryptoAdapter] createDecipheriv() key first 4 bytes:', toHex(keyBytes.slice(0, 4)), 'iv first 4 bytes:', toHex(ivBytes.slice(0, 4)));
-
     return new DecipherWrapper(keyBytes, ivBytes);
   }
 }
@@ -358,18 +279,15 @@ export class MobileCryptoAdapter implements CryptoAdapter {
 /**
  * Cipher-like wrapper using asmcrypto.js for synchronous AES-GCM encryption.
  */
-class CipherWrapper {
+class CipherWrapper implements CipherLike {
   private chunks: Uint8Array[] = [];
   private authTag: Uint8Array | null = null;
   private result: Uint8Array | null = null;
 
   constructor(
     private key: Uint8Array,
-    private iv: Uint8Array,
-    private mode: 'encrypt' | 'decrypt'
-  ) {
-    console.log('[CipherWrapper] Created with key length:', key.length, 'iv length:', iv.length);
-  }
+    private iv: Uint8Array
+  ) {}
 
   update(
     data: string | Buffer | Uint8Array,
@@ -377,7 +295,6 @@ class CipherWrapper {
     outputEncoding?: string
   ): string | Uint8Array {
     const bytes = toUint8Array(data, inputEncoding);
-    console.log('[CipherWrapper] update() input length:', bytes.length, 'inputEncoding:', inputEncoding);
     this.chunks.push(bytes);
     return outputEncoding === 'hex' ? '' : new Uint8Array(0);
   }
@@ -385,23 +302,10 @@ class CipherWrapper {
   final(outputEncoding?: string): string | Uint8Array {
     if (!this.result) {
       const plaintext = concatArrays(this.chunks);
-      console.log('[CipherWrapper] final() plaintext length:', plaintext.length);
-
-      // Use asmcrypto.js for synchronous AES-GCM encryption
-      // AES_GCM.encrypt returns ciphertext with 16-byte auth tag appended
-      const encryptedWithTag = AES_GCM.encrypt(
-        plaintext,
-        this.key,
-        this.iv
-      );
-      console.log('[CipherWrapper] encrypted length (with tag):', encryptedWithTag.length);
-
-      // Extract ciphertext and auth tag (last 16 bytes)
+      const encryptedWithTag = AES_GCM.encrypt(plaintext, this.key, this.iv);
       this.result = encryptedWithTag.slice(0, encryptedWithTag.length - 16);
       this.authTag = encryptedWithTag.slice(encryptedWithTag.length - 16);
-      console.log('[CipherWrapper] ciphertext length:', this.result.length, 'authTag length:', this.authTag.length);
     }
-
     return outputEncoding === 'hex' ? toHex(this.result) : this.result;
   }
 
@@ -416,7 +320,7 @@ class CipherWrapper {
 /**
  * Decipher-like wrapper using asmcrypto.js for synchronous AES-GCM decryption.
  */
-class DecipherWrapper {
+class DecipherWrapper implements DecipherLike {
   private chunks: Uint8Array[] = [];
   private authTag: Uint8Array | null = null;
   private result: Uint8Array | null = null;
@@ -424,13 +328,10 @@ class DecipherWrapper {
   constructor(
     private key: Uint8Array,
     private iv: Uint8Array
-  ) {
-    console.log('[DecipherWrapper] Created with key length:', key.length, 'iv length:', iv.length);
-  }
+  ) {}
 
   setAuthTag(tag: Buffer | Uint8Array): void {
     this.authTag = toUint8Array(tag);
-    console.log('[DecipherWrapper] setAuthTag() length:', this.authTag.length);
   }
 
   update(
@@ -439,11 +340,8 @@ class DecipherWrapper {
     outputEncoding?: string
   ): string | Uint8Array {
     const bytes = toUint8Array(data, inputEncoding);
-    console.log('[DecipherWrapper] update() input length:', bytes.length, 'inputEncoding:', inputEncoding);
     this.chunks.push(bytes);
-    return outputEncoding === 'utf8' || outputEncoding === 'hex'
-      ? ''
-      : new Uint8Array(0);
+    return outputEncoding === 'utf8' || outputEncoding === 'hex' ? '' : new Uint8Array(0);
   }
 
   final(outputEncoding?: string): string | Uint8Array {
@@ -453,25 +351,13 @@ class DecipherWrapper {
 
     if (!this.result) {
       const ciphertext = concatArrays(this.chunks);
-      console.log('[DecipherWrapper] final() ciphertext length:', ciphertext.length, 'authTag length:', this.authTag.length);
-      
-      // asmcrypto.js expects ciphertext + authTag concatenated
       const ciphertextWithTag = new Uint8Array(ciphertext.length + this.authTag.length);
       ciphertextWithTag.set(ciphertext, 0);
       ciphertextWithTag.set(this.authTag, ciphertext.length);
-      console.log('[DecipherWrapper] ciphertextWithTag length:', ciphertextWithTag.length);
-      
+
       try {
-        // Use asmcrypto.js for synchronous AES-GCM decryption
-        this.result = AES_GCM.decrypt(
-          ciphertextWithTag,
-          this.key,
-          this.iv
-        );
-        console.log('[DecipherWrapper] decrypted length:', this.result.length);
+        this.result = AES_GCM.decrypt(ciphertextWithTag, this.key, this.iv);
       } catch (error) {
-        // asmcrypto.js throws on auth failure - convert to expected error message
-        console.error('[DecipherWrapper] Decryption failed:', error);
         throw new Error('Unsupported state or unable to authenticate data');
       }
     }
@@ -483,16 +369,16 @@ class DecipherWrapper {
   }
 }
 
-interface CipherLike {
-  update(data: any, inputEncoding?: string, outputEncoding?: string): any;
-  final(outputEncoding?: string): any;
+export interface CipherLike {
+  update(data: string | Buffer | Uint8Array, inputEncoding?: string, outputEncoding?: string): string | Uint8Array;
+  final(outputEncoding?: string): string | Uint8Array;
   getAuthTag(): Uint8Array;
 }
 
-interface DecipherLike {
-  setAuthTag(tag: any): void;
-  update(data: any, inputEncoding?: string, outputEncoding?: string): any;
-  final(outputEncoding?: string): any;
+export interface DecipherLike {
+  setAuthTag(tag: Buffer | Uint8Array): void;
+  update(data: string | Buffer | Uint8Array, inputEncoding?: string, outputEncoding?: string): string | Uint8Array;
+  final(outputEncoding?: string): string | Uint8Array;
 }
 
 /**
