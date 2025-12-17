@@ -407,14 +407,27 @@ export class WalletAppService {
   }
 
   /**
-   * Load and decrypt a wallet from storage.
+   * Load and decrypt a wallet from storage (synchronous).
    * @param walletName - Name of saved wallet
    * @param password - Master password
    * @param accountIndex - Optional account index override
    * @returns Wallet info or null if not found
+   * @deprecated Use loadWalletAsync() for better performance in React Native
    */
   loadWallet(walletName: string, password: string, accountIndex: number | null = null): WalletInfo | null {
     return this.wallet.loadWallet(walletName, password, accountIndex);
+  }
+
+  /**
+   * Load and decrypt a wallet from storage (asynchronous).
+   * Uses native crypto when available for fast PBKDF2 key derivation.
+   * @param walletName - Name of saved wallet
+   * @param password - Master password
+   * @param accountIndex - Optional account index override
+   * @returns Promise resolving to wallet info or null if not found
+   */
+  async loadWalletAsync(walletName: string, password: string, accountIndex: number | null = null): Promise<WalletInfo | null> {
+    return this.wallet.loadWalletAsync(walletName, password, accountIndex);
   }
 
   /**

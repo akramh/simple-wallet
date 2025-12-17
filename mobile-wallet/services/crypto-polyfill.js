@@ -12,22 +12,45 @@
 import { Buffer } from 'buffer';
 import * as ExpoCrypto from 'expo-crypto';
 
+// Debug: log what's available before polyfill
+console.log('[crypto-polyfill] Starting polyfill...');
+console.log('[crypto-polyfill] typeof globalThis:', typeof globalThis);
+console.log('[crypto-polyfill] globalThis.crypto exists:', !!globalThis?.crypto);
+console.log('[crypto-polyfill] globalThis.crypto?.getRandomValues exists:', !!globalThis?.crypto?.getRandomValues);
+
 // Polyfill global.Buffer for Node.js compatibility
 if (typeof global.Buffer === 'undefined') {
   global.Buffer = Buffer;
 }
 
-// Polyfill global.crypto for ethers.js, Solana, and XRP libraries
+// Shared getRandomValues implementation using expo-crypto
+const getRandomValues = (array) => {
+  const bytes = ExpoCrypto.getRandomBytes(array.length);
+  array.set(bytes);
+  return array;
+};
+
+// Polyfill globalThis.crypto for @noble/hashes, @scure/bip39 (ECMAScript standard)
+// These libraries check: typeof globalThis === 'object' ? globalThis.crypto : null
+if (typeof globalThis.crypto === 'undefined') {
+  globalThis.crypto = {};
+}
+if (typeof globalThis.crypto.getRandomValues === 'undefined') {
+  globalThis.crypto.getRandomValues = getRandomValues;
+}
+
+// Debug: verify polyfill worked
+console.log('[crypto-polyfill] After polyfill:');
+console.log('[crypto-polyfill] globalThis.crypto exists:', !!globalThis?.crypto);
+console.log('[crypto-polyfill] globalThis.crypto?.getRandomValues exists:', !!globalThis?.crypto?.getRandomValues);
+console.log('[crypto-polyfill] globalThis.crypto?.getRandomValues is function:', typeof globalThis?.crypto?.getRandomValues === 'function');
+
+// Polyfill global.crypto for ethers.js, Solana, and XRP libraries (Node.js style)
 if (typeof global.crypto === 'undefined') {
   global.crypto = {};
 }
-
 if (typeof global.crypto.getRandomValues === 'undefined') {
-  global.crypto.getRandomValues = (array) => {
-    const bytes = ExpoCrypto.getRandomBytes(array.length);
-    array.set(bytes);
-    return array;
-  };
+  global.crypto.getRandomValues = getRandomValues;
 }
 
 // Also ensure webcrypto interface is available

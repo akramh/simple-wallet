@@ -116,4 +116,28 @@ jest.mock('expo-local-authentication', () => ({
   authenticateAsync: jest.fn(async () => ({ success: true })),
 }));
 
+// -----------------------------------------------------------------------------
+// @noble/hashes mock (ESM package not compatible with Jest require())
+// Uses Node's crypto module for PBKDF2 in tests
+// -----------------------------------------------------------------------------
+jest.mock('@noble/hashes/pbkdf2', () => ({
+  __esModule: true,
+  pbkdf2: (hash, password, salt, opts) => {
+    // Use Node's native PBKDF2 for Jest tests
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mockCrypto = require('crypto');
+    const passwordBuf = typeof password === 'string' ? Buffer.from(password) : Buffer.from(password);
+    const saltBuf = Buffer.from(salt);
+    return mockCrypto.pbkdf2Sync(passwordBuf, saltBuf, opts.c, opts.dkLen, 'sha256');
+  },
+}), { virtual: true });
+
+jest.mock('@noble/hashes/sha256', () => ({
+  __esModule: true,
+  sha256: {
+    // Placeholder - not directly used when we have the pbkdf2 mock
+    create: () => ({ update: () => {}, digest: () => new Uint8Array(32) }),
+  },
+}), { virtual: true });
+
 

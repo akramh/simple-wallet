@@ -124,16 +124,52 @@ export function generateSalt(): string {
 }
 
 /**
- * Derive an encryption key from a password using PBKDF2.
+ * Derive an encryption key from a password using PBKDF2 (synchronous).
  * Uses HMAC-SHA256 with 100,000 iterations for brute-force resistance.
  * 
  * @param password - User's password
  * @param saltHex - Hex-encoded salt (from generateSalt())
  * @returns 256-bit derived key as Buffer
+ * @deprecated Use deriveKeyAsync() for better performance in React Native
  */
 export function deriveKey(password: string, saltHex: string): Buffer {
   const salt = Buffer.from(saltHex, 'hex');
   return Buffer.from(getCrypto().pbkdf2Sync(
+    password,
+    salt,
+    PBKDF2_ITERATIONS,
+    KEY_LENGTH,
+    PBKDF2_DIGEST
+  ) as any);
+}
+
+/**
+ * Derive an encryption key from a password using PBKDF2 (asynchronous).
+ * Uses native crypto when available (react-native-quick-crypto) for fast performance.
+ * Falls back to sync implementation if async not available.
+ * 
+ * @param password - User's password
+ * @param saltHex - Hex-encoded salt (from generateSalt())
+ * @returns Promise resolving to 256-bit derived key as Buffer
+ */
+export async function deriveKeyAsync(password: string, saltHex: string): Promise<Buffer> {
+  const salt = Buffer.from(saltHex, 'hex');
+  const crypto = getCrypto();
+  
+  // Use async PBKDF2 if available (react-native-quick-crypto)
+  if (crypto.pbkdf2Async) {
+    const result = await crypto.pbkdf2Async(
+      password,
+      salt,
+      PBKDF2_ITERATIONS,
+      KEY_LENGTH,
+      PBKDF2_DIGEST
+    );
+    return Buffer.from(result);
+  }
+  
+  // Fallback to sync implementation
+  return Buffer.from(crypto.pbkdf2Sync(
     password,
     salt,
     PBKDF2_ITERATIONS,
@@ -190,7 +226,7 @@ export function encryptData(plaintext: string, password: string): LegacyEncrypti
 }
 
 /**
- * Decrypt data encrypted with encryptData().
+ * Decrypt data encrypted with encryptData() (synchronous).
  * Uses GCM authentication tag to verify integrity.
  * 
  * @param encryptedData - Encrypted data in format "iv:authTag:ciphertext"
@@ -198,6 +234,7 @@ export function encryptData(plaintext: string, password: string): LegacyEncrypti
  * @param saltHex - Hex-encoded salt from encryption
  * @returns Decrypted plaintext
  * @throws Error if decryption fails (wrong password, corrupted data, or tampered ciphertext)
+ * @deprecated Use decryptDataAsync() for better performance in React Native
  */
 export function decryptData(encryptedData: string, password: string, saltHex: string): string {
   // Parse encrypted data
@@ -218,6 +255,60 @@ export function decryptData(encryptedData: string, password: string, saltHex: st
   decipher.setAuthTag(authTag);
 
   // Decrypt
+  let decrypted = decipher.update(ciphertext, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+
+  return decrypted;
+}
+
+/**
+ * Encrypt plaintext data using AES-256-GCM (asynchronous).
+ * Uses native PBKDF2 when available for fast key derivation.
+ * 
+ * @param plaintext - Data to encrypt (typically a mnemonic phrase)
+ * @param password - User's password for key derivation
+ * @returns Promise resolving to encrypted data (format: "iv:authTag:ciphertext") and salt
+ */
+export async function encryptDataAsync(plaintext: string, password: string): Promise<LegacyEncryptionResult> {
+  const salt = generateSalt();
+  const key = await deriveKeyAsync(password, salt);
+  const iv = Buffer.from(getCrypto().randomBytes(IV_LENGTH));
+
+  const cipher = getCrypto().createCipheriv(ALGORITHM, key, iv);
+  let encrypted = cipher.update(plaintext, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+
+  const authTag = Buffer.from(cipher.getAuthTag()).toString('hex');
+  const encryptedData = `${iv.toString('hex')}:${authTag}:${encrypted}`;
+
+  return { encrypted: encryptedData, salt };
+}
+
+/**
+ * Decrypt data encrypted with encryptData() (asynchronous).
+ * Uses native PBKDF2 when available for fast key derivation.
+ * 
+ * @param encryptedData - Encrypted data in format "iv:authTag:ciphertext"
+ * @param password - Password used during encryption
+ * @param saltHex - Hex-encoded salt from encryption
+ * @returns Promise resolving to decrypted plaintext
+ * @throws Error if decryption fails
+ */
+export async function decryptDataAsync(encryptedData: string, password: string, saltHex: string): Promise<string> {
+  const parts = encryptedData.split(':');
+  if (parts.length !== 3) {
+    throw new Error('Invalid encrypted data format');
+  }
+
+  const [ivHex, authTagHex, ciphertext] = parts;
+  const iv = Buffer.from(ivHex, 'hex');
+  const authTag = Buffer.from(authTagHex, 'hex');
+
+  const key = await deriveKeyAsync(password, saltHex);
+
+  const decipher = getCrypto().createDecipheriv(ALGORITHM, key, iv);
+  decipher.setAuthTag(authTag);
+
   let decrypted = decipher.update(ciphertext, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
 
@@ -250,7 +341,7 @@ export function encryptMnemonic(mnemonic: string, password: string): EncryptionR
 }
 
 /**
- * Decrypt a mnemonic phrase from its stored components.
+ * Decrypt a mnemonic phrase from its stored components (synchronous).
  * 
  * @param encryptedMnemonic - Encrypted ciphertext
  * @param password - Master password used during encryption
@@ -259,10 +350,50 @@ export function encryptMnemonic(mnemonic: string, password: string): EncryptionR
  * @param authTag - GCM authentication tag from storage
  * @returns Decrypted mnemonic phrase
  * @throws Error if password is incorrect (authentication tag verification fails)
+ * @deprecated Use decryptMnemonicAsync() for better performance in React Native
  */
 export function decryptMnemonic(encryptedMnemonic: string, password: string, salt: string, iv: string, authTag: string): string {
   const encryptedData = `${iv}:${authTag}:${encryptedMnemonic}`;
   return decryptData(encryptedData, password, salt);
+}
+
+/**
+ * Encrypt a BIP-39 mnemonic phrase (asynchronous).
+ * Uses native PBKDF2 when available for fast key derivation.
+ * 
+ * @param mnemonic - BIP-39 mnemonic phrase (12-24 words)
+ * @param password - Master password for encryption
+ * @returns Promise resolving to encryption result with separated components for storage
+ */
+export async function encryptMnemonicAsync(mnemonic: string, password: string): Promise<EncryptionResult> {
+  const result = await encryptDataAsync(mnemonic, password);
+  const parts = result.encrypted.split(':');
+  const [iv, authTag, encrypted] = parts;
+
+  return { encrypted, salt: result.salt, iv, authTag };
+}
+
+/**
+ * Decrypt a mnemonic phrase from its stored components (asynchronous).
+ * Uses native PBKDF2 when available for fast key derivation.
+ * 
+ * @param encryptedMnemonic - Encrypted ciphertext
+ * @param password - Master password used during encryption
+ * @param salt - PBKDF2 salt from storage
+ * @param iv - Initialization vector from storage
+ * @param authTag - GCM authentication tag from storage
+ * @returns Promise resolving to decrypted mnemonic phrase
+ * @throws Error if password is incorrect
+ */
+export async function decryptMnemonicAsync(
+  encryptedMnemonic: string,
+  password: string,
+  salt: string,
+  iv: string,
+  authTag: string
+): Promise<string> {
+  const encryptedData = `${iv}:${authTag}:${encryptedMnemonic}`;
+  return decryptDataAsync(encryptedData, password, salt);
 }
 
 // ============================================================================

@@ -10,11 +10,15 @@ import {
   TouchableOpacity,
   RefreshControl,
   Pressable,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../../store';
+import { useClipboard } from '../../hooks';
+import { useToast } from '../../contexts';
+import { getTokenIcon } from '../../utils/tokenIcons';
 
 export default function WalletScreen() {
   const router = useRouter();
@@ -29,7 +33,10 @@ export default function WalletScreen() {
     prices,
     accounts,
     currentAccountIndex,
+    currentWalletName,
   } = useWalletStore();
+  const { copy } = useClipboard();
+  const { showToast } = useToast();
 
   // Refresh balances on mount
   useEffect(() => {
@@ -39,6 +46,14 @@ export default function WalletScreen() {
   const handleRefresh = useCallback(() => {
     refreshBalances();
   }, [refreshBalances]);
+
+  const handleCopyAddress = async () => {
+    if (!address) return;
+    const success = await copy(address);
+    if (success) {
+      showToast('Address copied to clipboard', 'success');
+    }
+  };
 
   const networkConfig = networks[network];
   const truncatedAddress = address
@@ -76,9 +91,11 @@ export default function WalletScreen() {
         {/* Total Balance */}
         <Text className="text-gray-400 text-sm mb-1">Total Balance</Text>
         <Text className="text-white text-4xl font-bold mb-1">{formattedTotal}</Text>
-        <Pressable className="flex-row items-center">
+        <Pressable className="flex-row items-center" onPress={handleCopyAddress}>
+          <Text className="text-white font-medium">{currentWalletName || 'Wallet'}</Text>
+          <Text className="text-gray-500 mx-2">·</Text>
           <Text className="text-gray-400 text-sm">{truncatedAddress}</Text>
-          <Ionicons name="copy-outline" size={14} color="#9ca3af" className="ml-2" />
+          <Ionicons name="copy-outline" size={14} color="#9ca3af" style={{ marginLeft: 8 }} />
         </Pressable>
       </View>
 
@@ -197,11 +214,21 @@ function TokenRow({
   usdValue: number | null;
   isLoading: boolean;
 }) {
+  const tokenIcon = getTokenIcon(symbol);
+  
   return (
     <View className="flex-row items-center py-4 border-b border-gray-800">
       {/* Token Icon */}
-      <View className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-3">
-        <Text className="text-white font-bold">{symbol.charAt(0)}</Text>
+      <View className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-3 overflow-hidden">
+        {tokenIcon ? (
+          <Image
+            source={tokenIcon}
+            className="w-full h-full"
+            resizeMode="cover"
+          />
+        ) : (
+          <Text className="text-white font-bold">{symbol.charAt(0)}</Text>
+        )}
       </View>
 
       {/* Token Info */}

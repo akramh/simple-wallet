@@ -325,6 +325,8 @@ class WalletBridge {
   /**
    * Unlock an existing wallet.
    *
+   * Uses react-native-quick-crypto for fast native PBKDF2 key derivation.
+   *
    * @param password - Master password for decrypting the stored mnemonic.
    * @param name - Wallet name to unlock (defaults to `default`).
    * @returns Unlocked wallet address and wallet name.
@@ -345,7 +347,8 @@ class WalletBridge {
       builtInTokens: getBundledTokens(),
     });
 
-    const loaded = this.service.loadWallet(name, password);
+    // Use async loadWallet for native-speed PBKDF2 via react-native-quick-crypto
+    const loaded = await this.service.loadWalletAsync(name, password);
     if (!loaded) {
       throw new Error('Invalid password or wallet not found');
     }

@@ -2,12 +2,12 @@
  * @fileoverview Receive screen - shows address QR code.
  */
 
+import { useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   Share,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -19,16 +19,18 @@ import { QRCode, NetworkBadge } from '../components';
 export default function ReceiveScreen() {
   const router = useRouter();
   const { address, network, networks } = useWalletStore();
-  const { copy, copied } = useClipboard();
+  const { copy } = useClipboard();
+  const [copied, setCopied] = useState(false);
 
   const networkConfig = networks[network];
   const isTestnet = network.includes('test') || network.includes('sepolia');
 
   const handleCopy = async () => {
-    if (!address) return;
+    if (!address || copied) return;
     const success = await copy(address);
     if (success) {
-      Alert.alert('Copied', 'Address copied to clipboard');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -92,10 +94,18 @@ export default function ReceiveScreen() {
         <View className="flex-row gap-4 w-full">
           <TouchableOpacity
             onPress={handleCopy}
-            className="flex-1 bg-gray-800 rounded-xl py-4 flex-row items-center justify-center"
+            className={`flex-1 rounded-xl py-4 flex-row items-center justify-center ${
+              copied ? 'bg-purple-600' : 'bg-gray-800'
+            }`}
           >
-            <Ionicons name="copy-outline" size={20} color="#a855f7" />
-            <Text className="text-purple-400 font-semibold ml-2">Copy</Text>
+            <Ionicons 
+              name={copied ? 'checkmark-circle' : 'copy-outline'} 
+              size={20} 
+              color={copied ? 'white' : '#a855f7'} 
+            />
+            <Text className={`font-semibold ml-2 ${copied ? 'text-white' : 'text-purple-400'}`}>
+              {copied ? 'Copied!' : 'Copy'}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={handleShare}

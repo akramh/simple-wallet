@@ -21,9 +21,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
+import { useToast } from '../contexts';
 
 export default function AccountManageScreen() {
   const router = useRouter();
+  const { showToast } = useToast();
   const {
     accounts,
     currentAccountIndex,
@@ -57,13 +59,11 @@ export default function AccountManageScreen() {
   const handleAddAccount = async () => {
     try {
       const result = await createAccount();
-      Alert.alert(
-        'Account Created',
-        `New account #${result.index + 1} created!\n\nAddress: ${result.address.slice(0, 12)}...${result.address.slice(-10)}`,
-        [{ text: 'OK' }]
-      );
+      showToast(`Account #${result.index + 1} created`, 'success');
+      // Automatically switch to the new account
+      await switchAccount(result.index);
     } catch (err) {
-      Alert.alert('Error', 'Failed to create account');
+      showToast('Failed to create account', 'error');
     }
   };
 

@@ -10,7 +10,14 @@
  */
 
 import { ethers } from 'ethers';
-import { encryptMnemonic, decryptMnemonic, validateMnemonic, generateMnemonic } from './crypto-utils.js';
+import { 
+  encryptMnemonic, 
+  decryptMnemonic, 
+  encryptMnemonicAsync, 
+  decryptMnemonicAsync, 
+  validateMnemonic, 
+  generateMnemonic 
+} from './crypto-utils.js';
 import type { Config, TokenMetadata, Token } from './types/index.js';
 import type { StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
@@ -338,6 +345,10 @@ export class Wallet {
     return walletName;
   }
 
+  /**
+   * Load wallet synchronously.
+   * @deprecated Use loadWalletAsync() for better performance in React Native
+   */
   loadWallet(walletName: string, password: string, accountIndex: number | null = null): WalletInfo | null {
     try {
       const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
@@ -346,6 +357,64 @@ export class Wallet {
         const walletData = wallets[walletName];
 
         const mnemonic = decryptMnemonic(
+          walletData.encryptedMnemonic,
+          password,
+          walletData.salt,
+          walletData.iv,
+          walletData.authTag
+        );
+
+        if (!validateMnemonic(mnemonic)) {
+          throw new Error('Incorrect password');
+        }
+
+        this.encryptedMnemonic = walletData.encryptedMnemonic;
+        this.salt = walletData.salt;
+        this.iv = walletData.iv;
+        this.authTag = walletData.authTag;
+        this.mnemonic = mnemonic;
+
+        const indexToLoad = accountIndex !== null ? accountIndex : (walletData.currentAccountIndex || 0);
+        this.currentAccountIndex = indexToLoad;
+        const derived = this._deriveAccount(indexToLoad);
+        this.wallet = this.provider ? derived.connect(this.provider) : derived;
+
+        return {
+          address: this.wallet.address.toLowerCase(),
+          mnemonic: this.mnemonic,
+          privateKey: this.wallet.privateKey
+        };
+      }
+
+      return null;
+    } catch (error) {
+      if ((error as Error).message?.includes('Unsupported state or unable to authenticate data')) {
+        throw new Error('Incorrect password');
+      }
+      if ((error as Error).message?.includes('invalid mnemonic')) {
+        throw new Error('Incorrect password');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Load wallet asynchronously with native-speed PBKDF2.
+   * Uses react-native-quick-crypto when available for fast key derivation.
+   * 
+   * @param walletName - Name of wallet to load
+   * @param password - Password for decryption
+   * @param accountIndex - Optional account index to load
+   * @returns Promise resolving to wallet info or null
+   */
+  async loadWalletAsync(walletName: string, password: string, accountIndex: number | null = null): Promise<WalletInfo | null> {
+    try {
+      const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
+
+      if (walletName && wallets[walletName]) {
+        const walletData = wallets[walletName];
+
+        const mnemonic = await decryptMnemonicAsync(
           walletData.encryptedMnemonic,
           password,
           walletData.salt,
