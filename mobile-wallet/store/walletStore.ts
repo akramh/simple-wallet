@@ -21,6 +21,7 @@
  */
 
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   walletBridge,
   WalletState,
@@ -30,6 +31,8 @@ import {
   GasEstimate,
   NetworkConfig,
 } from '../services';
+
+const ENABLED_NETWORKS_KEY = 'enabledNetworks';
 
 // ============================================================================
 // Store Types
@@ -68,6 +71,10 @@ interface WalletStore {
   balances: TokenBalance[];
   isRefreshingBalances: boolean;
   balancesLastUpdated: number | null;
+  allNetworkHoldings: any[];
+  allNetworkTotals: Record<string, number>;
+  allNetworksLastUpdated: number | null;
+  isRefreshingAllNetworks: boolean;
 
   // Prices
   prices: Record<string, number | null>;
@@ -83,6 +90,7 @@ interface WalletStore {
 
   // Networks
   networks: Record<string, NetworkConfig>;
+  enabledNetworks: string[];
 
   // Error handling
   error: string | null;
@@ -105,6 +113,12 @@ interface WalletStore {
   refreshBalances: () => Promise<void>;
   /** Refresh fiat prices and derived portfolio totals. */
   refreshPrices: () => Promise<void>;
+  /** Refresh aggregated holdings across enabled networks. */
+  refreshAllNetworks: () => Promise<void>;
+  /** Set enabled networks and persist. */
+  setEnabledNetworks: (networks: string[]) => Promise<void>;
+  /** Load enabled networks from storage. */
+  loadEnabledNetworks: () => Promise<void>;
   /**
    * Switch the active network.
    *
@@ -169,6 +183,10 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   balances: [],
   isRefreshingBalances: false,
   balancesLastUpdated: null,
+  allNetworkHoldings: [],
+  allNetworkTotals: {},
+  allNetworksLastUpdated: null,
+  isRefreshingAllNetworks: false,
 
   prices: {},
   totalValue: 0,
@@ -181,6 +199,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   transactionsLastUpdated: null,
 
   networks: {},
+  enabledNetworks: [],
 
   error: null,
 
@@ -197,6 +216,20 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       await walletBridge.initialize();
       const state = await walletBridge.getState();
       const networks = await walletBridge.getNetworks();
+      // Load enabled networks (persisted) or default to mainnets (exclude testnets by name)
+      let enabledNetworks: string[] = [];
+      try {
+        const stored = await AsyncStorage.getItem(ENABLED_NETWORKS_KEY);
+        if (stored) {
+          enabledNetworks = JSON.parse(stored);
+        }
+      } catch {
+        enabledNetworks = [];
+      }
+      if (!enabledNetworks.length) {
+        enabledNetworks = Object.keys(networks).filter(k => !k.toLowerCase().includes('test'));
+        AsyncStorage.setItem(ENABLED_NETWORKS_KEY, JSON.stringify(enabledNetworks)).catch(() => {});
+      }
 
       // Load wallet list
       const wallets = await walletBridge.getAllWallets();
@@ -215,6 +248,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         address: state.address,
         currentWalletName: state.currentWalletName,
         networks,
+        enabledNetworks,
         walletList,
       });
     } catch (error) {
@@ -335,6 +369,10 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         address: null,
         currentWalletName: null,
         balances: [],
+        allNetworkHoldings: [],
+        allNetworkTotals: {},
+        allNetworksLastUpdated: null,
+        isRefreshingAllNetworks: false,
         transactions: [],
         prices: {},
         totalValue: 0,
@@ -402,6 +440,45 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     } catch (error) {
       console.error('[WalletStore] Refresh prices failed:', error);
       set({ isLoadingPrices: false });
+    }
+  },
+
+  refreshAllNetworks: async () => {
+    if (get().isRefreshingAllNetworks) return;
+    const enabled = get().enabledNetworks.length ? get().enabledNetworks : Object.keys(get().networks);
+    try {
+      set({ isRefreshingAllNetworks: true });
+      const result = await walletBridge.getAllNetworkHoldings({ enabledNetworks: enabled, ttlMs: 30_000 });
+      set({
+        allNetworkHoldings: result.holdings,
+        allNetworkTotals: result.totalsByNetwork,
+        allNetworksLastUpdated: result.fetchedAt,
+        isRefreshingAllNetworks: false,
+      });
+    } catch (error) {
+      console.error('[WalletStore] refreshAllNetworks failed:', error);
+      set({ isRefreshingAllNetworks: false });
+    }
+  },
+
+  setEnabledNetworks: async (networks: string[]) => {
+    set({ enabledNetworks: networks });
+    try {
+      await AsyncStorage.setItem(ENABLED_NETWORKS_KEY, JSON.stringify(networks));
+    } catch (err) {
+      console.warn('[WalletStore] Failed to persist enabled networks', err);
+    }
+  },
+
+  loadEnabledNetworks: async () => {
+    try {
+      const stored = await AsyncStorage.getItem(ENABLED_NETWORKS_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        set({ enabledNetworks: Array.isArray(parsed) ? parsed : [] });
+      }
+    } catch (err) {
+      console.warn('[WalletStore] Failed to load enabled networks', err);
     }
   },
 

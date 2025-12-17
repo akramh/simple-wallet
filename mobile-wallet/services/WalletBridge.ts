@@ -140,6 +140,13 @@ class WalletBridge {
   private isInitialized = false;
   private currentWalletName = 'default';
   private _isUnlocked = false;
+  // Per-network balance cache: key -> { fetchedAt, height?, portfolio[] }
+  private balanceCache: Map<string, { fetchedAt: number; height?: number; portfolio: any[] }> = new Map();
+  // Aggregated all-network cache
+  private aggregateCache: Map<string, { fetchedAt: number; holdings: any[]; totalsByNetwork: Record<string, number>; grandTotal: number }> = new Map();
+  // In-flight dedupe maps
+  private inflightBalances: Map<string, Promise<any>> = new Map();
+  private inflightAggregate: Map<string, Promise<any>> = new Map();
 
   /**
    * Initialize the wallet bridge.
@@ -487,8 +494,12 @@ class WalletBridge {
     const prices: Record<string, number | null> = {};
     let totalValue = 0;
 
-    // Get balances to calculate total value
+    // Get balances to calculate total value (and filter to non-zero to avoid excess pricing calls)
     const balances = await this.refreshBalances();
+    const nonZeroBalances = balances.filter((b: any) => {
+      const val = parseFloat(b.balance || '0');
+      return Number.isFinite(val) && val > 0;
+    });
 
     // Determine the price key and fetch function based on network type
     let nativePrice: number | null = null;
@@ -519,8 +530,8 @@ class WalletBridge {
       }
     }
 
-    // Apply prices to balances
-    for (const item of balances) {
+    // Apply prices to non-zero balances
+    for (const item of nonZeroBalances) {
       const balance = parseFloat(item.balance || '0');
 
       if (item.token.type === 'native') {
@@ -529,9 +540,51 @@ class WalletBridge {
           totalValue += balance * nativePrice;
         }
       } else {
-        // For ERC-20 tokens, skip individual API calls to avoid rate limiting
-        // In production, you'd want to batch these or use a paid API
+        // ERC-20 prices are resolved below via batched fetch; initialise to null for now.
         prices[item.token.symbol] = null;
+      }
+    }
+
+    // For EVM networks, fetch ERC-20 prices in batch for non-zero tokens
+    if (networkConfig?.chainId) {
+      const tokenInfos = nonZeroBalances
+        .filter((b: any) => b.token.type === 'erc20' && b.token.address)
+        .map((b: any) => ({
+          type: 'erc20' as const,
+          symbol: b.token.symbol,
+          address: b.token.address,
+          decimals: b.token.decimals,
+          balance: b.balance
+        }));
+
+      if (tokenInfos.length) {
+        const { getTokenPrices: getPricesBatch, calculateTotalValue: calcTotal } = await import('./price-service');
+        const priceMap = await getPricesBatch(networkConfig.chainId, tokenInfos.map(({ address, type, symbol, decimals }) => ({
+          type,
+          symbol,
+          address,
+          decimals
+        })));
+
+        // Update prices map for ERC-20s
+        tokenInfos.forEach(info => {
+          const key = info.address!.toLowerCase();
+          const p = priceMap.get(key) ?? null;
+          prices[info.symbol] = p;
+        });
+
+        // Recompute total value including ERC-20s
+        const balancesForCalc = nonZeroBalances.map((item: any) => ({
+          token: {
+            type: item.token.type === 'native' ? 'native' : 'erc20',
+            symbol: item.token.symbol,
+            address: item.token.address,
+            decimals: item.token.decimals
+          },
+          balance: item.balance
+        }));
+
+        totalValue = calcTotal(balancesForCalc, priceMap);
       }
     }
 
@@ -857,6 +910,174 @@ class WalletBridge {
   }
 
   /**
+   * Get holdings across enabled networks with caching, dedupe, and bounded concurrency.
+   */
+  async getAllNetworkHoldings(options?: {
+    includeZero?: boolean;
+    networkConcurrency?: number;
+    ttlMs?: number;
+    force?: boolean;
+    enabledNetworks?: string[];
+  }): Promise<{ holdings: any[]; totalsByNetwork: Record<string, number>; grandTotal: number; fetchedAt: number }> {
+    this.requireUnlocked();
+    const includeZero = options?.includeZero ?? false;
+    const networkConcurrency = options?.networkConcurrency ?? 2;
+    const ttlMs = options?.ttlMs ?? 30_000;
+    const force = options?.force ?? false;
+
+    const enabledNetworks = options?.enabledNetworks && options.enabledNetworks.length
+      ? options.enabledNetworks
+      : Object.keys(this.config!.networks);
+
+    const aggregateKey = this.makeAggregateCacheKey(enabledNetworks);
+    const cachedAggregate = this.aggregateCache.get(aggregateKey);
+    const now = Date.now();
+    if (!force && cachedAggregate && now - cachedAggregate.fetchedAt < ttlMs) {
+      return { ...cachedAggregate };
+    }
+
+    if (this.inflightAggregate.has(aggregateKey)) {
+      return this.inflightAggregate.get(aggregateKey)!;
+    }
+
+    const runner = (async () => {
+      const queue = [...enabledNetworks];
+      const holdings: any[] = [];
+      const errors: Record<string, string> = {};
+
+      const workers: Array<Promise<void>> = [];
+      for (let i = 0; i < networkConcurrency; i++) {
+        workers.push((async () => {
+          while (queue.length) {
+            const networkKey = queue.shift();
+            if (!networkKey) break;
+            try {
+              const perNetwork = await this.getNetworkPortfolioWithCache(networkKey, { ttlMs, force });
+              holdings.push(...perNetwork.portfolio.map((item: any) => ({
+                ...item,
+                networkKey,
+                height: perNetwork.height ?? null,
+                fetchedAt: perNetwork.fetchedAt
+              })));
+            } catch (err: any) {
+              errors[networkKey] = err?.message || 'Failed to fetch';
+            }
+          }
+        })());
+      }
+      await Promise.all(workers);
+
+      const filtered = includeZero ? holdings : holdings.filter(h => {
+        const val = parseFloat(h.balance || '0');
+        return Number.isFinite(val) && val > 0 && h.balance !== 'Error';
+      });
+
+      // Totals by network (USD) using price-service
+      const totalsByNetwork: Record<string, number> = {};
+      const { getTokenPrices, calculateTotalValue } = await import('./price-service');
+
+      for (const networkKey of enabledNetworks) {
+        const netConfig = this.config!.networks[networkKey];
+        const assets = filtered.filter(h => h.networkKey === networkKey);
+        if (!assets.length) {
+          totalsByNetwork[networkKey] = 0;
+          continue;
+        }
+
+        if (netConfig.type === 'bitcoin') {
+          const { getBitcoinPrice } = await import('./price-service');
+          const price = await getBitcoinPrice(networkKey);
+          const total = assets.reduce((acc, a) => acc + (parseFloat(a.balance || '0') * (price || 0)), 0);
+          totalsByNetwork[networkKey] = total;
+          continue;
+        }
+        if (netConfig.type === 'solana') {
+          const { getSolanaPrice } = await import('./price-service');
+          const price = await getSolanaPrice(networkKey);
+          const total = assets.reduce((acc, a) => acc + (parseFloat(a.balance || '0') * (price || 0)), 0);
+          totalsByNetwork[networkKey] = total;
+          continue;
+        }
+        if (netConfig.type === 'xrp') {
+          const { getXRPPrice } = await import('./price-service');
+          const price = await getXRPPrice(networkKey);
+          const total = assets.reduce((acc, a) => acc + (parseFloat(a.balance || '0') * (price || 0)), 0);
+          totalsByNetwork[networkKey] = total;
+          continue;
+        }
+
+        // EVM: batch prices per chain
+        const chainId = netConfig.chainId;
+        if (!chainId) {
+          totalsByNetwork[networkKey] = 0;
+          continue;
+        }
+
+        const tokenInfos = assets.map(a => ({
+          token: {
+            type: a.token.type === 'native' ? 'native' : 'erc20',
+            symbol: a.token.symbol,
+            address: a.token.address,
+            decimals: a.token.decimals
+          },
+          balance: a.balance
+        }));
+        const priceMap = await getTokenPrices(chainId, tokenInfos.map(t => t.token));
+        totalsByNetwork[networkKey] = calculateTotalValue(tokenInfos, priceMap);
+      }
+
+      const grandTotal = Object.values(totalsByNetwork).reduce((a, b) => a + b, 0);
+      const aggregate = { holdings: filtered, totalsByNetwork, grandTotal, fetchedAt: Date.now() };
+      this.aggregateCache.set(aggregateKey, aggregate);
+      this.inflightAggregate.delete(aggregateKey);
+      return aggregate;
+    })();
+
+    this.inflightAggregate.set(aggregateKey, runner);
+    return runner;
+  }
+
+  /**
+   * Per-network portfolio with cache + in-flight dedupe.
+   */
+  private async getNetworkPortfolioWithCache(networkKey: string, opts: { ttlMs: number; force: boolean }): Promise<{ fetchedAt: number; height?: number; portfolio: any[] }> {
+    const cacheKey = this.makeBalanceCacheKey(networkKey);
+    const cached = this.balanceCache.get(cacheKey);
+    const now = Date.now();
+    if (!opts.force && cached && now - cached.fetchedAt < opts.ttlMs) {
+      return cached;
+    }
+
+    if (this.inflightBalances.has(cacheKey)) {
+      return this.inflightBalances.get(cacheKey)!;
+    }
+
+    const run = (async () => {
+      const maxRetries = 2;
+      let lastErr: any;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const portfolio = await this.service.getPortfolioForNetwork(networkKey);
+          const result = { fetchedAt: Date.now(), height: undefined, portfolio };
+          this.balanceCache.set(cacheKey, result);
+          this.inflightBalances.delete(cacheKey);
+          return result;
+        } catch (err) {
+          lastErr = err;
+          if (attempt === maxRetries) break;
+          const jitter = 300 + Math.floor(Math.random() * 500);
+          await new Promise(res => setTimeout(res, jitter));
+        }
+      }
+      this.inflightBalances.delete(cacheKey);
+      throw lastErr;
+    })();
+
+    this.inflightBalances.set(cacheKey, run);
+    return run;
+  }
+
+  /**
    * Get accounts for current wallet.
    *
    * @returns Current wallet accounts and the persisted selected account index.
@@ -985,6 +1206,33 @@ class WalletBridge {
       throw new Error('Wallet is locked');
     }
     this.resetAutoLockTimer();
+  }
+
+  /**
+   * Compute a simple tokens revision string for cache invalidation.
+   */
+  private getTokensRevision(networkKey: string): string {
+    try {
+      const tokens = this.service?.getTokensForNetwork(networkKey) || [];
+      return JSON.stringify(tokens.map((t: any) => `${t.symbol}:${t.address || 'native'}`));
+    } catch {
+      return 'default';
+    }
+  }
+
+  private makeBalanceCacheKey(networkKey: string): string {
+    const walletName = this.currentWalletName || 'default';
+    const accountIndex = this.service?.getCurrentAccountIndex ? this.service.getCurrentAccountIndex() : 0;
+    const tokensRevision = this.getTokensRevision(networkKey);
+    return `${walletName}|${accountIndex}|${networkKey}|${tokensRevision}`;
+  }
+
+  private makeAggregateCacheKey(networks: string[]): string {
+    const walletName = this.currentWalletName || 'default';
+    const accountIndex = this.service?.getCurrentAccountIndex ? this.service.getCurrentAccountIndex() : 0;
+    const tokensRevisionAll = networks.map(n => `${n}:${this.getTokensRevision(n)}`).join('|');
+    const enabledHash = networks.join(',');
+    return `${walletName}|${accountIndex}|${enabledHash}|${tokensRevisionAll}`;
   }
 
   private resetAutoLockTimer(): void {

@@ -2,13 +2,32 @@
  * @fileoverview Portfolio screen - shows holdings and performance.
  */
 
-import { View, Text, ScrollView, Dimensions } from 'react-native';
+import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../../store';
+import { Image } from 'react-native';
+import { getTokenIcon } from '../../utils/tokenIcons';
 
 export default function PortfolioScreen() {
-  const { balances, formattedTotal, totalValue, prices } = useWalletStore();
+  const {
+    balances,
+    formattedTotal,
+    totalValue,
+    prices,
+    allNetworkHoldings,
+    allNetworkTotals,
+    allNetworksLastUpdated,
+    isRefreshingAllNetworks,
+    refreshAllNetworks,
+    networks,
+  } = useWalletStore();
+
+  const globalTotal = Object.values(allNetworkTotals).reduce((a, b) => a + (b || 0), 0);
+  const formattedGlobalTotal =
+    globalTotal > 0
+      ? `$${globalTotal.toFixed(2)}`
+      : formattedTotal;
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
@@ -18,15 +37,41 @@ export default function PortfolioScreen() {
         <Text className="text-gray-400 mt-1">Your asset allocation</Text>
       </View>
 
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+      <ScrollView
+        className="flex-1"
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshingAllNetworks}
+            onRefresh={refreshAllNetworks}
+            tintColor="#a855f7"
+          />
+        }
+      >
         {/* Total Value Card */}
-        <View className="mx-5 bg-gradient-to-br from-purple-600 to-blue-600 rounded-2xl p-6 mb-6">
-          <Text className="text-white/70 text-sm">Total Value</Text>
-          <Text className="text-white text-4xl font-bold mt-2">{formattedTotal}</Text>
+        <View className="mx-5 bg-linear-to-br from-purple-600 to-blue-600 rounded-2xl p-6 mb-6">
+          <Text className="text-white/70 text-sm">Total Value (All Networks)</Text>
+          <Text className="text-white text-4xl font-bold mt-2">{formattedGlobalTotal}</Text>
           <View className="flex-row items-center mt-3">
             <Ionicons name="trending-up" size={16} color="#86efac" />
             <Text className="text-green-300 ml-1">+0.00%</Text>
             <Text className="text-white/50 ml-2">24h</Text>
+          </View>
+          <View className="flex-row items-center mt-2 justify-between">
+            <Text className="text-white/60 text-xs">
+              {allNetworksLastUpdated
+                ? `Updated ${new Date(allNetworksLastUpdated).toLocaleTimeString()}`
+                : 'Tap refresh to update'}
+            </Text>
+            <TouchableOpacity
+              onPress={refreshAllNetworks}
+              disabled={isRefreshingAllNetworks}
+              className="px-3 py-1 bg-white/20 rounded-full"
+            >
+              <Text className="text-white text-xs">
+                {isRefreshingAllNetworks ? 'Refreshing...' : 'Refresh all'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -34,7 +79,10 @@ export default function PortfolioScreen() {
         <View className="px-5">
           <Text className="text-white text-lg font-semibold mb-4">Holdings</Text>
 
-          {balances.length === 0 ? (
+          {allNetworkHoldings.filter(b => {
+            const val = parseFloat(b.balance || '0');
+            return Number.isFinite(val) && val > 0;
+          }).length === 0 ? (
             <View className="items-center py-12">
               <Ionicons name="pie-chart-outline" size={48} color="#4b5563" />
               <Text className="text-gray-500 mt-4">No holdings yet</Text>
@@ -43,23 +91,36 @@ export default function PortfolioScreen() {
               </Text>
             </View>
           ) : (
-            balances.map((item, index) => {
-              const price = prices[item.token.symbol] ?? null;
-              const balance = parseFloat(item.balance || '0');
-              const usdValue = price !== null ? balance * price : 0;
-              const percentage = totalValue > 0 ? (usdValue / totalValue) * 100 : 0;
-              return (
-                <HoldingRow
-                  key={`${item.token.symbol}-${index}`}
-                  symbol={item.token.symbol}
-                  name={item.token.name}
-                  balance={item.balance || '0'}
-                  value={usdValue}
-                  percentage={percentage}
-                  change24h={0}
-                />
-              );
-            })
+            Object.entries(networks)
+              .filter(([key]) => allNetworkHoldings.some(h => h.networkKey === key))
+              .map(([networkKey, net]) => {
+                const items = allNetworkHoldings.filter(h => h.networkKey === networkKey);
+                const subtotal = allNetworkTotals[networkKey] || 0;
+                return (
+                  <View key={networkKey} className="mb-4">
+                    <View className="flex-row justify-between items-center mb-2">
+                      <Text className="text-white text-md font-semibold">{net.name || networkKey}</Text>
+                      <Text className="text-white/70 text-sm">${subtotal.toFixed(2)}</Text>
+                    </View>
+                    {items.map((item, index) => {
+                      const balance = parseFloat(item.balance || '0');
+                      const networkTotal = subtotal || totalValue;
+                      const percentage = networkTotal > 0 ? ( (balance * (prices[item.token.symbol] ?? 0)) / networkTotal) * 100 : 0;
+                      return (
+                        <HoldingRow
+                          key={`${networkKey}-${item.token.symbol}-${index}`}
+                          symbol={item.token.symbol}
+                          name={item.token.name}
+                          balance={item.balance || '0'}
+                          value={(prices[item.token.symbol] ?? 0) * balance}
+                          percentage={percentage}
+                          change24h={0}
+                        />
+                      );
+                    })}
+                  </View>
+                );
+              })
           )}
         </View>
       </ScrollView>
@@ -87,12 +148,17 @@ function HoldingRow({
   change24h: number;
 }) {
   const isPositive = change24h >= 0;
+  const icon = getTokenIcon(symbol);
 
   return (
     <View className="flex-row items-center py-4 border-b border-gray-800">
       {/* Token Icon */}
-      <View className="w-12 h-12 rounded-full bg-gray-800 items-center justify-center mr-3">
-        <Text className="text-white font-bold text-lg">{symbol.charAt(0)}</Text>
+      <View className="w-12 h-12 rounded-full bg-gray-800 items-center justify-center mr-3 overflow-hidden">
+        {icon ? (
+          <Image source={icon} style={{ width: 40, height: 40, resizeMode: 'contain' }} />
+        ) : (
+          <Text className="text-white font-bold text-lg">{symbol.charAt(0)}</Text>
+        )}
       </View>
 
       {/* Token Info */}
