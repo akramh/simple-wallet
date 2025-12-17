@@ -3,10 +3,11 @@
  * 
  * A polished, animated toast that slides in from the top.
  * Supports success, error, and info variants.
+ * Uses Modal to ensure visibility above all other screens.
  */
 
 import { useEffect, useRef } from 'react';
-import { View, Text, Animated, StyleSheet } from 'react-native';
+import { View, Text, Animated, StyleSheet, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -23,8 +24,8 @@ interface ToastProps {
 const toastConfig: Record<ToastType, { icon: keyof typeof Ionicons.glyphMap; bg: string; iconColor: string }> = {
   success: {
     icon: 'checkmark-circle',
-    bg: '#166534', // green-800
-    iconColor: '#4ade80', // green-400
+    bg: '#581c87', // purple-900
+    iconColor: '#c084fc', // purple-400
   },
   error: {
     icon: 'alert-circle',
@@ -33,8 +34,8 @@ const toastConfig: Record<ToastType, { icon: keyof typeof Ionicons.glyphMap; bg:
   },
   info: {
     icon: 'information-circle',
-    bg: '#1e3a5f', // blue-800
-    iconColor: '#60a5fa', // blue-400
+    bg: '#1e1b4b', // indigo-950
+    iconColor: '#a78bfa', // violet-400
   },
 };
 
@@ -97,24 +98,36 @@ export function Toast({
   if (!visible) return null;
 
   return (
-    <Animated.View
-      style={[
-        styles.container,
-        {
-          top: insets.top + 10,
-          transform: [{ translateY }],
-          opacity,
-          backgroundColor: config.bg,
-        },
-      ]}
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      statusBarTranslucent
     >
-      <Ionicons name={config.icon} size={20} color={config.iconColor} />
-      <Text style={styles.message}>{message}</Text>
-    </Animated.View>
+      <View style={styles.modalContainer} pointerEvents="none">
+        <Animated.View
+          style={[
+            styles.container,
+            {
+              top: insets.top + 10,
+              transform: [{ translateY }],
+              opacity,
+              backgroundColor: config.bg,
+            },
+          ]}
+        >
+          <Ionicons name={config.icon} size={20} color={config.iconColor} />
+          <Text style={styles.message}>{message}</Text>
+        </Animated.View>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  modalContainer: {
+    flex: 1,
+  },
   container: {
     position: 'absolute',
     left: 20,
@@ -124,7 +137,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderRadius: 12,
-    zIndex: 9999,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
