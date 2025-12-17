@@ -51,10 +51,9 @@ export default function CreateWalletScreen() {
       agreedToTerms;
 
   const handleCreate = async () => {
-    if (!isValid) return;
+    if (!isValid || isLoading) return;
 
     try {
-      clearError();
       // Use session password if adding wallet, otherwise use entered password
       const passwordToUse = isAddingWallet ? sessionPassword! : password;
       const result = await createWallet(passwordToUse, walletName || 'default');
@@ -199,7 +198,12 @@ export default function CreateWalletScreen() {
         }`}
       >
         {isLoading ? (
-          <ActivityIndicator color="white" />
+          <View className="flex-row items-center justify-center">
+            <ActivityIndicator color="white" size="small" />
+            <Text className="text-white font-semibold ml-3">
+              {isAddingWallet ? 'Adding wallet...' : 'Creating wallet...'}
+            </Text>
+          </View>
         ) : (
           <Text className="text-white font-semibold text-center text-lg">
             {isAddingWallet ? 'Add Wallet' : 'Create Wallet'}

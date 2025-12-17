@@ -2,11 +2,12 @@
  * @fileoverview Network selection modal.
  */
 
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
+import { getNetworkIcon } from '../utils/tokenIcons';
 
 export default function NetworkSelectScreen() {
   const router = useRouter();
@@ -52,6 +53,7 @@ export default function NetworkSelectScreen() {
           {evmNetworks.map(([key, config], index) => (
             <NetworkRow
               key={key}
+              networkKey={key}
               name={config.name}
               symbol={config.nativeSymbol}
               chainId={config.chainId}
@@ -70,6 +72,7 @@ export default function NetworkSelectScreen() {
               {otherNetworks.map(([key, config], index) => (
                 <NetworkRow
                   key={key}
+                  networkKey={key}
                   name={config.name}
                   symbol={config.nativeSymbol}
                   type={config.type}
@@ -93,6 +96,7 @@ export default function NetworkSelectScreen() {
 }
 
 function NetworkRow({
+  networkKey,
   name,
   symbol,
   chainId,
@@ -101,6 +105,7 @@ function NetworkRow({
   isLast,
   onPress,
 }: {
+  networkKey: string;
   name: string;
   symbol: string;
   chainId?: number;
@@ -109,7 +114,9 @@ function NetworkRow({
   isLast: boolean;
   onPress: () => void;
 }) {
-  // Get network icon color based on symbol
+  const networkIcon = getNetworkIcon(networkKey);
+  
+  // Fallback icon color based on symbol
   const getIconColor = () => {
     switch (symbol) {
       case 'ETH':
@@ -137,12 +144,20 @@ function NetworkRow({
     >
       {/* Network Icon */}
       <View
-        className="w-10 h-10 rounded-full items-center justify-center mr-3"
-        style={{ backgroundColor: `${getIconColor()}20` }}
+        className="w-10 h-10 rounded-full items-center justify-center mr-3 overflow-hidden"
+        style={{ backgroundColor: networkIcon ? 'transparent' : `${getIconColor()}20` }}
       >
-        <Text className="font-bold" style={{ color: getIconColor() }}>
-          {symbol.charAt(0)}
-        </Text>
+        {networkIcon ? (
+          <Image
+            source={networkIcon}
+            className="w-full h-full"
+            resizeMode="cover"
+          />
+        ) : (
+          <Text className="font-bold" style={{ color: getIconColor() }}>
+            {symbol.charAt(0)}
+          </Text>
+        )}
       </View>
 
       {/* Network Info */}

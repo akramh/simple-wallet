@@ -56,10 +56,9 @@ export default function ImportWalletScreen() {
       password === confirmPassword;
 
   const handleImport = async () => {
-    if (!isValid) return;
+    if (!isValid || isLoading) return;
 
     try {
-      clearError();
       const normalizedMnemonic = mnemonic.trim().toLowerCase().replace(/\s+/g, ' ');
       // Use session password if adding wallet, otherwise use entered password
       const passwordToUse = isAddingWallet ? sessionPassword! : password;
@@ -212,7 +211,12 @@ export default function ImportWalletScreen() {
           }`}
         >
           {isLoading ? (
-            <ActivityIndicator color="white" />
+            <View className="flex-row items-center justify-center">
+              <ActivityIndicator color="white" size="small" />
+              <Text className="text-white font-semibold ml-3">
+                Importing wallet...
+              </Text>
+            </View>
           ) : (
             <Text className="text-white font-semibold text-center text-lg">
               Import Wallet

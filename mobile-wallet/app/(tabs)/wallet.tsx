@@ -10,11 +10,13 @@ import {
   TouchableOpacity,
   RefreshControl,
   Pressable,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../../store';
+import { getTokenIcon } from '../../utils/tokenIcons';
 
 export default function WalletScreen() {
   const router = useRouter();
@@ -197,11 +199,21 @@ function TokenRow({
   usdValue: number | null;
   isLoading: boolean;
 }) {
+  const tokenIcon = getTokenIcon(symbol);
+  
   return (
     <View className="flex-row items-center py-4 border-b border-gray-800">
       {/* Token Icon */}
-      <View className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-3">
-        <Text className="text-white font-bold">{symbol.charAt(0)}</Text>
+      <View className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-3 overflow-hidden">
+        {tokenIcon ? (
+          <Image
+            source={tokenIcon}
+            className="w-full h-full"
+            resizeMode="cover"
+          />
+        ) : (
+          <Text className="text-white font-bold">{symbol.charAt(0)}</Text>
+        )}
       </View>
 
       {/* Token Info */}

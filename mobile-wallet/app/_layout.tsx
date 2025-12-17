@@ -6,11 +6,9 @@
  * - QueryClient for React Query
  * - Safe area handling
  * - Wallet initialization
+ *
+ * Note: Crypto polyfill is loaded in index.js (app entry point) before expo-router.
  */
-
-// IMPORTANT: Import crypto polyfill FIRST before any other imports
-// This sets up global.crypto.getRandomValues for ethers.js
-import '../services/crypto-polyfill';
 
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
