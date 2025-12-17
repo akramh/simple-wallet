@@ -12,3 +12,5 @@ export { TransactionDetailsModal } from './TransactionDetailsModal';
 export { NetworkBadge } from './NetworkBadge';
 export { EmptyState } from './EmptyState';
 export { QRCode } from './QRCode';
+export { Toast } from './Toast';
+export type { ToastType } from './Toast';

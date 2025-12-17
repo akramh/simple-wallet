@@ -2,14 +2,15 @@
  * @fileoverview Profile/settings screen.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, Switch, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../../store';
 import { walletBridge } from '../../services';
-import { useBiometrics } from '../../hooks/useBiometrics';
+import { useBiometrics, useClipboard } from '../../hooks';
+import { useToast } from '../../contexts';
 
 // Auto-lock timeout options in minutes
 const AUTO_LOCK_OPTIONS = [
@@ -23,6 +24,8 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { address, currentWalletName, network, networks, lock } = useWalletStore();
   const biometrics = useBiometrics();
+  const { copy } = useClipboard();
+  const { showToast } = useToast();
 
   // Auto-lock state
   const [autoLockMinutes, setAutoLockMinutes] = useState(15);
@@ -32,6 +35,14 @@ export default function ProfileScreen() {
   const [showBiometricsPasswordModal, setShowBiometricsPasswordModal] = useState(false);
   const [biometricsPassword, setBiometricsPassword] = useState('');
   const [isBiometricsLoading, setIsBiometricsLoading] = useState(false);
+
+  const handleCopyAddress = async () => {
+    if (!address) return;
+    const success = await copy(address);
+    if (success) {
+      showToast('Address copied to clipboard', 'success');
+    }
+  };
 
   // Handle biometrics toggle
   const handleBiometricsToggle = useCallback(async () => {
@@ -154,12 +165,13 @@ export default function ProfileScreen() {
               <Text className="text-white text-lg font-semibold">
                 {currentWalletName || 'Default Wallet'}
               </Text>
-              <View className="flex-row items-center mt-1">
+              <TouchableOpacity 
+                className="flex-row items-center mt-1"
+                onPress={handleCopyAddress}
+              >
                 <Text className="text-gray-400 text-sm">{truncatedAddress}</Text>
-                <TouchableOpacity className="ml-2">
-                  <Ionicons name="copy-outline" size={14} color="#9ca3af" />
-                </TouchableOpacity>
-              </View>
+                <Ionicons name="copy-outline" size={14} color="#9ca3af" style={{ marginLeft: 8 }} />
+              </TouchableOpacity>
             </View>
           </View>
         </View>

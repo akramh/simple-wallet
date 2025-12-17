@@ -7,19 +7,20 @@ import {
   Text,
   TouchableOpacity,
   Share,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
 import { useClipboard } from '../hooks';
+import { useToast } from '../contexts';
 import { QRCode, NetworkBadge } from '../components';
 
 export default function ReceiveScreen() {
   const router = useRouter();
   const { address, network, networks } = useWalletStore();
-  const { copy, copied } = useClipboard();
+  const { copy } = useClipboard();
+  const { showToast } = useToast();
 
   const networkConfig = networks[network];
   const isTestnet = network.includes('test') || network.includes('sepolia');
@@ -28,7 +29,7 @@ export default function ReceiveScreen() {
     if (!address) return;
     const success = await copy(address);
     if (success) {
-      Alert.alert('Copied', 'Address copied to clipboard');
+      showToast('Address copied to clipboard', 'success');
     }
   };
 

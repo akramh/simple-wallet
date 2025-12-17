@@ -8,7 +8,6 @@ import {
   Text,
   TouchableOpacity,
   FlatList,
-  Alert,
   TextInput,
   Modal,
   ActivityIndicator,
@@ -31,6 +30,7 @@ export default function WalletManageScreen() {
   } = useWalletStore();
 
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showAddWalletModal, setShowAddWalletModal] = useState(false);
   const [selectedWalletToSwitch, setSelectedWalletToSwitch] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -64,17 +64,17 @@ export default function WalletManageScreen() {
   };
 
   const handleAddWallet = () => {
-    Alert.alert('Add Wallet', 'Choose an option', [
-      {
-        text: 'Create New',
-        onPress: () => router.push('/(auth)/create'),
-      },
-      {
-        text: 'Import Existing',
-        onPress: () => router.push('/(auth)/import'),
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    setShowAddWalletModal(true);
+  };
+
+  const handleCreateNew = () => {
+    setShowAddWalletModal(false);
+    router.push('/(auth)/create');
+  };
+
+  const handleImportExisting = () => {
+    setShowAddWalletModal(false);
+    router.push('/(auth)/import');
   };
 
   return (
@@ -216,6 +216,72 @@ export default function WalletManageScreen() {
                   )}
                 </TouchableOpacity>
               </View>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Add Wallet Modal */}
+      <Modal
+        visible={showAddWalletModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAddWalletModal(false)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setShowAddWalletModal(false)}
+          className="flex-1 bg-black/60 justify-end"
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}}>
+            <View className="bg-gray-900 rounded-t-3xl px-6 pt-6 pb-10">
+              {/* Handle bar */}
+              <View className="w-10 h-1 bg-gray-600 rounded-full self-center mb-6" />
+              
+              <Text className="text-white text-xl font-bold text-center mb-2">
+                Add Wallet
+              </Text>
+              <Text className="text-gray-400 text-center mb-8">
+                Create a new wallet or import an existing one
+              </Text>
+
+              {/* Create New Wallet */}
+              <TouchableOpacity
+                onPress={handleCreateNew}
+                className="flex-row items-center bg-gray-800 rounded-2xl p-4 mb-3"
+              >
+                <View className="w-12 h-12 rounded-full bg-purple-600/20 items-center justify-center mr-4">
+                  <Ionicons name="add-circle" size={24} color="#a855f7" />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-white font-semibold text-lg">Create New Wallet</Text>
+                  <Text className="text-gray-400 text-sm">Generate a new recovery phrase</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#6b7280" />
+              </TouchableOpacity>
+
+              {/* Import Existing */}
+              <TouchableOpacity
+                onPress={handleImportExisting}
+                className="flex-row items-center bg-gray-800 rounded-2xl p-4 mb-6"
+              >
+                <View className="w-12 h-12 rounded-full bg-blue-600/20 items-center justify-center mr-4">
+                  <Ionicons name="download" size={24} color="#3b82f6" />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-white font-semibold text-lg">Import Existing</Text>
+                  <Text className="text-gray-400 text-sm">Use your recovery phrase</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#6b7280" />
+              </TouchableOpacity>
+
+              {/* Cancel Button */}
+              <TouchableOpacity
+                onPress={() => setShowAddWalletModal(false)}
+                className="bg-gray-800 rounded-xl py-4"
+              >
+                <Text className="text-white text-center font-semibold">Cancel</Text>
+              </TouchableOpacity>
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
