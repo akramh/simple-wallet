@@ -25,14 +25,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import { walletBridge } from '../services';
-import { useToast } from '../contexts';
 
 type ScreenState = 'password' | 'revealed';
 
 export default function SecretPhraseScreen() {
   const router = useRouter();
-  const { showToast } = useToast();
 
   const [screenState, setScreenState] = useState<ScreenState>('password');
   const [password, setPassword] = useState('');
@@ -40,6 +39,7 @@ export default function SecretPhraseScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isBlurred, setIsBlurred] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   const words = mnemonic?.split(' ') || [];
 
@@ -66,9 +66,11 @@ export default function SecretPhraseScreen() {
   };
 
   const handleCopy = async () => {
-    if (!mnemonic) return;
+    if (!mnemonic || copied) return;
     await Clipboard.setStringAsync(mnemonic);
-    showToast('Recovery phrase copied. Clear your clipboard after!', 'info');
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleBack = () => {
@@ -238,10 +240,19 @@ export default function SecretPhraseScreen() {
               {/* Copy Button */}
               <TouchableOpacity
                 onPress={handleCopy}
-                className="flex-row items-center justify-center mt-4 py-3 bg-gray-800 rounded-xl"
+                className={`flex-row items-center justify-center mt-4 py-3 rounded-xl ${
+                  copied ? 'bg-purple-600' : 'bg-gray-800'
+                }`}
+                disabled={copied}
               >
-                <Ionicons name="copy-outline" size={18} color="#a855f7" />
-                <Text className="text-purple-400 ml-2">Copy to Clipboard</Text>
+                <Ionicons
+                  name={copied ? 'checkmark-circle' : 'copy-outline'}
+                  size={18}
+                  color={copied ? '#ffffff' : '#a855f7'}
+                />
+                <Text className={`ml-2 ${copied ? 'text-white' : 'text-purple-400'}`}>
+                  {copied ? 'Copied!' : 'Copy to Clipboard'}
+                </Text>
               </TouchableOpacity>
 
               {/* Hide Button */}
