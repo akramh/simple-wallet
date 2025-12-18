@@ -43,8 +43,11 @@ export default function WalletScreen() {
 
   // Refresh balances on mount
   useEffect(() => {
-    refreshBalances();
-  }, []);
+    // Avoid spamming refreshes when we already have recent cached data.
+    if (!balancesLastUpdated || Date.now() - balancesLastUpdated > 30_000) {
+      refreshBalances();
+    }
+  }, [balancesLastUpdated, refreshBalances]);
 
   const handleRefresh = useCallback(() => {
     refreshBalances();

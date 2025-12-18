@@ -22,6 +22,9 @@ jest.mock('../services', () => {
     getAllWallets: jest.fn(async () => ({})),
     lockWallet: jest.fn(async () => {}),
     unlockWallet: jest.fn(async () => ({ success: true, address: '0xabc', walletName: 'default' })),
+    getCachedBalances: jest.fn(() => null),
+    getCachedPrices: jest.fn(() => null),
+    getCachedAllNetworkHoldings: jest.fn(() => null),
     refreshBalances: jest.fn(async () => []),
     getTokenPrices: jest.fn(async () => ({ prices: {}, totalValue: 0, formattedTotal: '$0.00' })),
     getTransactions: jest.fn(async () => []),
@@ -176,6 +179,29 @@ describe('useWalletStore invariants', () => {
     expect(walletBridge.refreshBalances).not.toHaveBeenCalled();
   });
 
+  test('refreshPrices passes current balances to WalletBridge', async () => {
+    const { walletBridge } = require('../services');
+    walletBridge.getTokenPrices.mockClear();
+
+    const balances = [
+      {
+        token: { symbol: 'ETH', name: 'Ether', type: 'native', decimals: 18 },
+        balance: '1',
+        lastUpdated: Date.now(),
+        isLoading: false,
+      },
+    ];
+
+    useWalletStore.setState({
+      balances,
+      isLoadingPrices: false,
+    } as any);
+
+    await useWalletStore.getState().refreshPrices();
+
+    expect(walletBridge.getTokenPrices).toHaveBeenCalledWith(balances);
+  });
+
   test('unlock sets correct state on success', async () => {
     const { walletBridge } = require('../services');
     walletBridge.unlockWallet.mockResolvedValueOnce({
@@ -196,6 +222,84 @@ describe('useWalletStore invariants', () => {
     expect(state.address).toBe('0xunlocked');
     expect(state.currentWalletName).toBe('MyWallet');
     expect(state.isLoading).toBe(false);
+  });
+
+  test('unlock hydrates cached balances/prices before background refresh completes', async () => {
+    const { walletBridge } = require('../services');
+    const now = Date.now();
+    const cachedBalances = [
+      {
+        token: { symbol: 'ETH', name: 'Ether', type: 'native', decimals: 18 },
+        balance: '1',
+        lastUpdated: now,
+        isLoading: false,
+      },
+    ];
+
+    walletBridge.unlockWallet.mockResolvedValueOnce({
+      address: '0xunlocked',
+      walletName: 'MyWallet',
+    });
+    walletBridge.getAccounts.mockResolvedValueOnce({
+      accounts: { '0': { address: '0xunlocked' } },
+      currentIndex: 0,
+    });
+    walletBridge.getCachedBalances.mockReturnValueOnce({ balances: cachedBalances, fetchedAt: now });
+    walletBridge.getCachedPrices.mockReturnValueOnce({
+      prices: { ETH: 2000 },
+      totalValue: 2000,
+      formattedTotal: '$2000.00',
+      pricedAt: now,
+    });
+
+    // Keep the background refresh pending so we can assert the hydrated state.
+    let resolveRefresh: (v: any) => void = () => {};
+    walletBridge.refreshBalances.mockImplementationOnce(
+      () =>
+        new Promise<any>((resolve) => {
+          resolveRefresh = resolve;
+        })
+    );
+
+    await useWalletStore.getState().unlock('password123', 'MyWallet');
+
+    const s = useWalletStore.getState();
+    expect(s.balances).toEqual(cachedBalances);
+    expect(s.balancesLastUpdated).toBe(now);
+    expect(s.prices).toEqual({ ETH: 2000 });
+    expect(s.totalValue).toBe(2000);
+    expect(s.formattedTotal).toBe('$2000.00');
+
+    // Clean up the pending promise to avoid open handles.
+    resolveRefresh([]);
+  });
+
+  test('unlock hydrates cached all-network portfolio snapshot', async () => {
+    const { walletBridge } = require('../services');
+    const now = Date.now();
+
+    walletBridge.unlockWallet.mockResolvedValueOnce({
+      address: '0xunlocked',
+      walletName: 'MyWallet',
+    });
+    walletBridge.getAccounts.mockResolvedValueOnce({
+      accounts: { '0': { address: '0xunlocked' } },
+      currentIndex: 0,
+    });
+
+    walletBridge.getCachedAllNetworkHoldings.mockReturnValueOnce({
+      holdings: [{ token: { symbol: 'ETH' }, balance: '1', networkKey: 'sepolia' }],
+      totalsByNetwork: { sepolia: 2000 },
+      grandTotal: 2000,
+      fetchedAt: now,
+    });
+
+    await useWalletStore.getState().unlock('password123', 'MyWallet');
+
+    const s = useWalletStore.getState();
+    expect(s.allNetworkHoldings.length).toBe(1);
+    expect(s.allNetworkTotals).toEqual({ sepolia: 2000 });
+    expect(s.allNetworksLastUpdated).toBe(now);
   });
 
   test('switchNetwork updates network and address, clears old data', async () => {
@@ -282,5 +386,3 @@ describe('useWalletStore error handling', () => {
     expect(state.isUnlocked).toBe(false);
   });
 });
-
-

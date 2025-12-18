@@ -1,7 +1,12 @@
 /**
  * @fileoverview Portfolio screen - shows holdings and performance.
+ *
+ * Implements “stale-while-revalidate” behavior:
+ * - Render cached holdings immediately when available
+ * - Refresh in the background when data is stale
  */
 
+import { useEffect } from 'react';
 import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,8 +26,19 @@ export default function PortfolioScreen() {
     allNetworksLastUpdated,
     isRefreshingAllNetworks,
     refreshAllNetworks,
+    hydrateAllNetworksFromCache,
     networks,
   } = usePortfolioScreenSelector();
+
+  useEffect(() => {
+    // Hydrate cached snapshot immediately on tab visit, then revalidate silently if stale.
+    const cachedAt = hydrateAllNetworksFromCache();
+    if (!cachedAt || Date.now() - cachedAt > 30_000) {
+      setTimeout(() => {
+        refreshAllNetworks({ silent: true });
+      }, 0);
+    }
+  }, [hydrateAllNetworksFromCache, refreshAllNetworks]);
 
   const globalTotal = Object.values(allNetworkTotals).reduce((a, b) => a + (b || 0), 0);
   const formattedGlobalTotal =
@@ -40,7 +56,7 @@ export default function PortfolioScreen() {
         >
           <View className="bg-gray-900/90 px-4 py-2 rounded-full border border-purple-500/30 flex-row items-center shadow-2xl">
             <ActivityIndicator size="small" color="#a855f7" />
-            <Text className="text-white text-xs font-medium ml-2">Refreshing all networks...</Text>
+            <Text className="text-white text-xs font-medium ml-2">Refreshing Portfolio</Text>
           </View>
         </View>
       )}
@@ -105,7 +121,6 @@ export default function PortfolioScreen() {
                   <View key={networkKey} className="mb-4">
                     <View className="flex-row justify-between items-center mb-2">
                       <Text className="text-white text-md font-semibold">{net.name || networkKey}</Text>
-                      <Text className="text-white/70 text-sm">${subtotal.toFixed(2)}</Text>
                     </View>
                     {items.map((item, index) => {
                       const balance = parseFloat(item.balance || '0');

@@ -124,6 +124,12 @@ export class EthereumProvider {
     throw new Error(`All RPC endpoints failed for ${networkKey}: ${lastError?.message || 'unknown error'}`);
   }
 
+  private getChainIdForNetwork(networkKey: string): number | undefined {
+    const networkConfig = this.config.networks[networkKey] as any;
+    const chainId = networkConfig?.chainId;
+    return typeof chainId === 'number' ? chainId : undefined;
+  }
+
   /**
    * Get native currency balance (ETH).
    */
@@ -145,12 +151,32 @@ export class EthereumProvider {
     }
   }
 
+  private async getBalanceWithProvider(provider: ethers.JsonRpcProvider, address: string): Promise<string> {
+    try {
+      const balance = await this.retryRpcRequest(() => provider.getBalance(address), 3, 1000);
+      return ethers.formatEther(balance);
+    } catch (error) {
+      if ((error as Error).message.includes('timeout')) {
+        throw new Error('Network request timed out. Please check your internet connection or try a different RPC endpoint.');
+      }
+      throw error;
+    }
+  }
+
   /**
    * Get token contract instance.
    */
   getTokenContract(address: string, signer?: ethers.Signer): ethers.Contract {
     if (!this.provider) throw new Error('No provider connected');
     return new this.ContractClass(address, ERC20_ABI, signer || this.provider);
+  }
+
+  private getTokenContractWithProvider(
+    provider: ethers.JsonRpcProvider,
+    address: string,
+    signer?: ethers.Signer
+  ): ethers.Contract {
+    return new this.ContractClass(address, ERC20_ABI, signer || provider);
   }
 
   /**
@@ -186,6 +212,36 @@ export class EthereumProvider {
     }
   }
 
+  private async getTokenMetadataWithProvider(address: string, provider: ethers.JsonRpcProvider): Promise<TokenMetadata> {
+    if (!address) throw new Error('Token address is required');
+
+    const key = address.toLowerCase();
+    if (this.tokenMetadataCache[key]) {
+      return this.tokenMetadataCache[key];
+    }
+
+    const contract = this.getTokenContractWithProvider(provider, address);
+
+    try {
+      const [symbol, name, decimals] = await Promise.all([
+        this.retryRpcRequest(() => contract.symbol()),
+        this.retryRpcRequest(() => contract.name()),
+        this.retryRpcRequest(() => contract.decimals())
+      ]);
+
+      const meta: TokenMetadata = {
+        symbol,
+        name,
+        decimals: Number(decimals)
+      };
+
+      this.tokenMetadataCache[key] = meta;
+      return meta;
+    } catch (error) {
+      throw new Error(`Unable to fetch token metadata: ${(error as Error).message}`);
+    }
+  }
+
   /**
    * Get token balance.
    */
@@ -196,11 +252,24 @@ export class EthereumProvider {
       return this.getBalance(address);
     }
 
-    const decimals = typeof token.decimals === 'number' 
-      ? token.decimals 
-      : (await this.getTokenMetadata(token.address)).decimals;
+    return this.getTokenBalanceWithProvider(this.provider, token, address);
+  }
 
-    const contract = this.getTokenContract(token.address);
+  private async getTokenBalanceWithProvider(
+    provider: ethers.JsonRpcProvider,
+    token: Token,
+    address: string
+  ): Promise<string> {
+    if (token.type === 'native') {
+      return this.getBalanceWithProvider(provider, address);
+    }
+
+    const decimals =
+      typeof token.decimals === 'number'
+        ? token.decimals
+        : (await this.getTokenMetadataWithProvider(token.address, provider)).decimals;
+
+    const contract = this.getTokenContractWithProvider(provider, token.address);
 
     try {
       const balance = await this.retryRpcRequest(() => contract.balanceOf(address));
@@ -218,6 +287,19 @@ export class EthereumProvider {
   }
 
   /**
+   * Get portfolio balances for a specific EVM network without requiring global network mutation.
+   *
+   * @param networkKey - EVM network key from config.
+   * @param tokens - Token list for that network.
+   * @param address - Owner address.
+   */
+  async getPortfolioForNetwork(tokens: Token[], address: string, networkKey: string): Promise<EthereumPortfolioResult[]> {
+    const provider = await this.ensureProvider(networkKey);
+    const chainId = this.getChainIdForNetwork(networkKey);
+    return this.getPortfolioWithProvider(provider, chainId, tokens, address);
+  }
+
+  /**
    * Get portfolio balances.
    *
    * For EVM ERC-20 tokens, prefer batching via Multicall3 (Universal Multicall address).
@@ -226,6 +308,16 @@ export class EthereumProvider {
   async getPortfolio(tokens: Token[], address: string): Promise<EthereumPortfolioResult[]> {
     if (!this.provider) throw new Error('No provider connected');
 
+    const chainId = this.getChainIdForNetwork(this.config.network);
+    return this.getPortfolioWithProvider(this.provider, chainId, tokens, address);
+  }
+
+  private async getPortfolioWithProvider(
+    provider: ethers.JsonRpcProvider,
+    chainId: number | undefined,
+    tokens: Token[],
+    address: string
+  ): Promise<EthereumPortfolioResult[]> {
     const nativeTokens = tokens.filter(t => t.type === 'native');
     const erc20Tokens = tokens.filter(t => t.type !== 'native' && t.address);
 
@@ -234,7 +326,7 @@ export class EthereumProvider {
     // Handle native balance (single call)
     if (nativeTokens.length) {
       try {
-        const balance = await this.getBalance(address);
+        const balance = await this.getBalanceWithProvider(provider, address);
         results.push({ token: nativeTokens[0], balance });
       } catch (error) {
         results.push({ token: nativeTokens[0], balance: 'Error', error: (error as Error).message });
@@ -245,11 +337,10 @@ export class EthereumProvider {
     if (!erc20Tokens.length) return results;
 
     // Try multicall first; if it fails, fall back to limited concurrency
-    const chainId = (this.config.networks[this.config.network] as any)?.chainId;
     const multicallAddress = this.getMulticallAddress(chainId);
 
     if (multicallAddress) {
-      const multicallResults = await this.tryMulticallBalances(multicallAddress, erc20Tokens, address);
+      const multicallResults = await this.tryMulticallBalances(provider, multicallAddress, erc20Tokens, address);
       if (multicallResults) {
         results.push(...multicallResults);
         return results;
@@ -267,7 +358,7 @@ export class EthereumProvider {
           const token = queue.shift();
           if (!token) break;
           try {
-            const balance = await this.getTokenBalance(token, address);
+            const balance = await this.getTokenBalanceWithProvider(provider, token, address);
             results.push({ token, balance });
           } catch (error) {
             results.push({ token, balance: 'Error', error: (error as Error).message });
@@ -303,6 +394,7 @@ export class EthereumProvider {
    * Multicall balanceOf batching using Multicall3 aggregate.
    */
   private async tryMulticallBalances(
+    provider: ethers.JsonRpcProvider,
     multicallAddress: string,
     tokens: Token[],
     owner: string
@@ -311,11 +403,11 @@ export class EthereumProvider {
       const abi = [
         'function aggregate((address target, bytes callData)[] calls) public returns (uint256 blockNumber, bytes[] returnData)'
       ];
-      const multicall = new this.ContractClass(multicallAddress, abi, this.provider!);
+      const multicall = new this.ContractClass(multicallAddress, abi, provider);
 
       const calls = tokens.map((token) => ({
         target: token.address!,
-        callData: new this.ContractClass(token.address!, ERC20_ABI, this.provider!).interface.encodeFunctionData(
+        callData: new this.ContractClass(token.address!, ERC20_ABI, provider).interface.encodeFunctionData(
           'balanceOf',
           [owner]
         )
@@ -333,7 +425,7 @@ export class EthereumProvider {
         returnData.forEach((data: string, idx: number) => {
           const token = tokens[i + idx];
           try {
-            const decoded = new this.ContractClass(token.address!, ERC20_ABI, this.provider!).interface.decodeFunctionResult(
+            const decoded = new this.ContractClass(token.address!, ERC20_ABI, provider).interface.decodeFunctionResult(
               'balanceOf',
               data
             );

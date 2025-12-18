@@ -649,7 +649,7 @@ export class WalletAppService {
 
     // EVM networks
     const tokens = this.getTokensForNetwork(networkKey);
-    return this.wallet.getPortfolio(tokens);
+    return this.wallet.ethereumProvider.getPortfolioForNetwork(tokens, this.wallet.getAddress(), networkKey);
   }
 
   /**

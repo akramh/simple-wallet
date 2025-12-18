@@ -15,7 +15,7 @@
     "watch:extension": "vite build --config vite.config.extension.ts --watch",
     "start": "npm run build && node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "npm run build && node --test",
+    "test": "npm run build && node --test tests/*.test.js",
     "type-check": "tsc --noEmit"
   },
   "keywords": [

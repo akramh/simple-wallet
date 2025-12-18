@@ -17,7 +17,9 @@ test('checkBalance shows portfolio without throwing', async () => {
   app.wallet.config.network = 'mainnet';
   app.wallet.getAddress = () => '0xabc0000000000000000000000000000000000000';
   app.wallet.currentAccountIndex = 0;
-  app.wallet.getPortfolio = async (tokens) => tokens.map(t => ({ token: t, balance: '1.0' }));
+  // WalletAppService.getPortfolioForNetwork routes through EthereumProvider for EVM networks.
+  app.wallet.ethereumProvider.getPortfolioForNetwork = async (tokens) =>
+    tokens.map((t) => ({ token: t, balance: '1.0' }));
 
   await withPromptQueue([{ continue: '' }], () => app.checkBalance('TestWallet'));
 });
@@ -47,7 +49,9 @@ test('checkPortfolioAllNetworks aggregates without error', async () => {
   app.wallet.setNetwork = async (net) => { seenNetworks.push(net); };
   app.wallet.getAddress = () => '0xabc0000000000000000000000000000000000000';
   app.wallet.currentAccountIndex = 0;
-  app.wallet.getPortfolio = async (tokens) => tokens.map(t => ({ token: t, balance: '0' }));
+  // WalletAppService.getPortfolioForNetwork routes through EthereumProvider for EVM networks.
+  app.wallet.ethereumProvider.getPortfolioForNetwork = async (tokens) =>
+    tokens.map((t) => ({ token: t, balance: '0' }));
 
   await withPromptQueue([{ continue: '' }], () => app.checkPortfolioAllNetworks('TestWallet'));
 

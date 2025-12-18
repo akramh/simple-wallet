@@ -273,6 +273,7 @@ export const useWalletScreenSelector = () =>
       // Balances
       balances: state.balances,
       isRefreshingBalances: state.isRefreshingBalances,
+      balancesLastUpdated: state.balancesLastUpdated,
       // Prices
       prices: state.prices,
       formattedTotal: state.formattedTotal,
@@ -315,6 +316,7 @@ export const usePortfolioScreenSelector = () =>
       allNetworksLastUpdated: state.allNetworksLastUpdated,
       isRefreshingAllNetworks: state.isRefreshingAllNetworks,
       refreshAllNetworks: state.refreshAllNetworks,
+      hydrateAllNetworksFromCache: state.hydrateAllNetworksFromCache,
       networks: state.networks,
     }))
   );
