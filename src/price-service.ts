@@ -399,6 +399,73 @@ export async function getERC20TokenPrice(
 }
 
 /**
+ * Fetches prices for multiple ERC-20 tokens in one or more batched requests.
+ * Uses CoinGecko `simple/token_price/{platform}` with a comma-separated list.
+ */
+export async function getERC20TokenPricesBatch(
+  chainId: number,
+  contractAddresses: string[],
+  chunkSize: number = 50
+): Promise<Map<string, number | null>> {
+  const results = new Map<string, number | null>();
+  const platform = CHAIN_TO_PLATFORM[chainId];
+  if (!platform) {
+    return results;
+  }
+
+  const toFetch = contractAddresses
+    .map(addr => addr.toLowerCase())
+    .filter(addr => getCachedPrice(chainId, addr) === null);
+
+  // Populate cached hits immediately
+  for (const addr of contractAddresses) {
+    const key = addr.toLowerCase();
+    const cached = getCachedPrice(chainId, key);
+    if (cached !== null) {
+      results.set(key, cached);
+    }
+  }
+
+  for (let i = 0; i < toFetch.length; i += chunkSize) {
+    const slice = toFetch.slice(i, i + chunkSize);
+    try {
+      const url = `${COINGECKO_BASE}/simple/token_price/${platform}?contract_addresses=${slice.join(',')}&vs_currencies=usd`;
+      const response = await fetchWithTimeout(url);
+      if (!response.ok) {
+        if (response.status !== 429) {
+          console.warn(`[PriceService] API error: ${response.status}`);
+        }
+        slice.forEach(addr => results.set(addr, null));
+        continue;
+      }
+      const data = await response.json() as Record<string, { usd?: number } | undefined> & { error_code?: number };
+      if (data.error_code) {
+        slice.forEach(addr => results.set(addr, null));
+        continue;
+      }
+      for (const addr of slice) {
+        const price = data[addr]?.usd;
+        if (typeof price === 'number') {
+          setCachedPrice(chainId, addr, price);
+          results.set(addr, price);
+        } else {
+          results.set(addr, null);
+        }
+      }
+    } catch (error) {
+      console.warn('[PriceService] Failed to fetch ERC-20 prices batch:', error);
+      slice.forEach(addr => results.set(addr, null));
+    }
+    // Small delay between batches to be courteous
+    if (i + chunkSize < toFetch.length) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+  }
+
+  return results;
+}
+
+/**
  * Token info for price fetching
  */
 export interface TokenInfo {
@@ -413,7 +480,7 @@ export interface TokenInfo {
  * Returns a map of tokenKey -> price (null if unavailable)
  * 
  * Due to CoinGecko free tier limitations, ERC-20 tokens are fetched
- * sequentially with a small delay to avoid rate limiting.
+ * in batches to reduce request count and avoid rate limiting.
  */
 export async function getTokenPrices(
   chainId: number,
@@ -431,17 +498,23 @@ export async function getTokenPrices(
     results.set('native', price);
   }
   
-  // Fetch ERC-20 prices with delay to avoid rate limits
-  for (const token of erc20Tokens) {
-    if (token.address) {
-      const price = await getERC20TokenPrice(chainId, token.address);
-      results.set(token.address.toLowerCase(), price);
-      
-      // Small delay between requests to be nice to the API
-      if (erc20Tokens.indexOf(token) < erc20Tokens.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
+  // Fetch ERC-20 prices in batches
+  const addresses = erc20Tokens
+    .map(t => t.address!.toLowerCase())
+    .filter(Boolean);
+
+  if (addresses.length) {
+    const batchPrices = await getERC20TokenPricesBatch(chainId, addresses);
+    for (const [addr, price] of batchPrices.entries()) {
+      results.set(addr, price);
     }
+    // For any addresses not returned (e.g., cached-only), ensure an entry exists
+    addresses.forEach(addr => {
+      if (!results.has(addr)) {
+        const cached = getCachedPrice(chainId, addr);
+        results.set(addr, cached);
+      }
+    });
   }
   
   return results;

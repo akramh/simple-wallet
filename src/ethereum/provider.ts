@@ -219,18 +219,139 @@ export class EthereumProvider {
 
   /**
    * Get portfolio balances.
+   *
+   * For EVM ERC-20 tokens, prefer batching via Multicall3 (Universal Multicall address).
+   * Falls back to a small-concurrency loop if multicall is unavailable or fails.
    */
   async getPortfolio(tokens: Token[], address: string): Promise<EthereumPortfolioResult[]> {
-    const promises = tokens.map(async (token): Promise<EthereumPortfolioResult> => {
-      try {
-        const balance = await this.getTokenBalance(token, address);
-        return { token, balance };
-      } catch (error) {
-        return { token, balance: 'Error', error: (error as Error).message };
-      }
-    });
+    if (!this.provider) throw new Error('No provider connected');
 
-    return Promise.all(promises);
+    const nativeTokens = tokens.filter(t => t.type === 'native');
+    const erc20Tokens = tokens.filter(t => t.type !== 'native' && t.address);
+
+    const results: EthereumPortfolioResult[] = [];
+
+    // Handle native balance (single call)
+    if (nativeTokens.length) {
+      try {
+        const balance = await this.getBalance(address);
+        results.push({ token: nativeTokens[0], balance });
+      } catch (error) {
+        results.push({ token: nativeTokens[0], balance: 'Error', error: (error as Error).message });
+      }
+    }
+
+    // Nothing else to do
+    if (!erc20Tokens.length) return results;
+
+    // Try multicall first; if it fails, fall back to limited concurrency
+    const chainId = (this.config.networks[this.config.network] as any)?.chainId;
+    const multicallAddress = this.getMulticallAddress(chainId);
+
+    if (multicallAddress) {
+      const multicallResults = await this.tryMulticallBalances(multicallAddress, erc20Tokens, address);
+      if (multicallResults) {
+        results.push(...multicallResults);
+        return results;
+      }
+    }
+
+    // Fallback: limited concurrency to reduce throttling
+    const concurrency = 4;
+    const queue = [...erc20Tokens];
+    const workers: Array<Promise<void>> = [];
+
+    for (let i = 0; i < concurrency; i++) {
+      workers.push((async () => {
+        while (queue.length) {
+          const token = queue.shift();
+          if (!token) break;
+          try {
+            const balance = await this.getTokenBalance(token, address);
+            results.push({ token, balance });
+          } catch (error) {
+            results.push({ token, balance: 'Error', error: (error as Error).message });
+          }
+        }
+      })());
+    }
+
+    await Promise.all(workers);
+    return results;
+  }
+
+  /**
+   * Resolve a Universal Multicall3 address (ca11...) for common chains.
+   */
+  private getMulticallAddress(chainId?: number): string | null {
+    const CA11 = '0xcA11bde05977b3631167028862bE2a173976CA11';
+    const supported = new Set([
+      1,       // mainnet
+      10,      // optimism
+      56,      // bsc
+      137,     // polygon
+      8453,    // base
+      42161,   // arbitrum
+      43114,   // avalanche
+      59144,   // linea
+      11155111 // sepolia
+    ]);
+    return chainId && supported.has(chainId) ? CA11 : null;
+  }
+
+  /**
+   * Multicall balanceOf batching using Multicall3 aggregate.
+   */
+  private async tryMulticallBalances(
+    multicallAddress: string,
+    tokens: Token[],
+    owner: string
+  ): Promise<EthereumPortfolioResult[] | null> {
+    try {
+      const abi = [
+        'function aggregate((address target, bytes callData)[] calls) public returns (uint256 blockNumber, bytes[] returnData)'
+      ];
+      const multicall = new this.ContractClass(multicallAddress, abi, this.provider!);
+
+      const calls = tokens.map((token) => ({
+        target: token.address!,
+        callData: new this.ContractClass(token.address!, ERC20_ABI, this.provider!).interface.encodeFunctionData(
+          'balanceOf',
+          [owner]
+        )
+      }));
+
+      const chunkSize = 50;
+      const chunks: EthereumPortfolioResult[] = [];
+
+      for (let i = 0; i < calls.length; i += chunkSize) {
+        const slice = calls.slice(i, i + chunkSize);
+        const { returnData } = await this.retryRpcRequest(() =>
+          multicall.aggregate(slice)
+        );
+
+        returnData.forEach((data: string, idx: number) => {
+          const token = tokens[i + idx];
+          try {
+            const decoded = new this.ContractClass(token.address!, ERC20_ABI, this.provider!).interface.decodeFunctionResult(
+              'balanceOf',
+              data
+            );
+            const raw = decoded?.[0];
+            const decimals = typeof token.decimals === 'number' ? token.decimals : 18;
+            const balance = ethers.formatUnits(raw, decimals);
+            chunks.push({ token, balance });
+          } catch (error) {
+            chunks.push({ token, balance: 'Error', error: (error as Error).message });
+          }
+        });
+      }
+
+      return chunks;
+    } catch (error) {
+      // Multicall may not exist or may fail; fall back
+      return null;
+    }
   }
 
   /**
