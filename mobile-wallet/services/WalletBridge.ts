@@ -576,7 +576,7 @@ class WalletBridge {
         // Recompute total value including ERC-20s
         const balancesForCalc = nonZeroBalances.map((item: any) => ({
           token: {
-            type: item.token.type === 'native' ? 'native' : 'erc20',
+            type: (item.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
             symbol: item.token.symbol,
             address: item.token.address,
             decimals: item.token.decimals
@@ -1015,7 +1015,7 @@ class WalletBridge {
 
         const tokenInfos = assets.map(a => ({
           token: {
-            type: a.token.type === 'native' ? 'native' : 'erc20',
+            type: (a.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
             symbol: a.token.symbol,
             address: a.token.address,
             decimals: a.token.decimals

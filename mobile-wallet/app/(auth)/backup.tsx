@@ -31,23 +31,8 @@ export default function BackupScreen() {
   };
 
   const handleContinue = () => {
-    if (!confirmed) {
-      Alert.alert(
-        'Confirm Backup',
-        'Have you saved your recovery phrase in a safe place?',
-        [
-          { text: 'Not Yet', style: 'cancel' },
-          {
-            text: 'Yes, I Saved It',
-            onPress: () => {
-              router.replace('/(tabs)/wallet');
-            },
-          },
-        ]
-      );
-    } else {
-      router.replace('/(tabs)/wallet');
-    }
+    if (!confirmed) return;
+    router.replace('/(tabs)/wallet');
   };
 
   return (
@@ -144,13 +129,13 @@ export default function BackupScreen() {
         {/* Continue Button */}
         <TouchableOpacity
           onPress={handleContinue}
-          disabled={!revealed}
+          disabled={!revealed || !confirmed}
           className={`rounded-xl py-4 mb-8 ${
-            revealed ? 'bg-purple-600' : 'bg-gray-800'
+            revealed && confirmed ? 'bg-purple-600' : 'bg-gray-800'
           }`}
         >
           <Text className="text-white font-semibold text-center text-lg">
-            {confirmed ? 'Continue to Wallet' : 'I\'ve Saved It'}
+            Continue to Wallet
           </Text>
         </TouchableOpacity>
       </ScrollView>
