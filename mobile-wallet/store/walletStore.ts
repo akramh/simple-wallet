@@ -268,6 +268,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   createWallet: async (password: string, name = 'default') => {
     try {
       set({ isLoading: true, error: null });
+      // Yield to UI to allow loading state to render before blocking crypto op
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       const result = await walletBridge.createWallet(password, name, true);
 
@@ -296,6 +298,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   importWallet: async (mnemonic: string, password: string, name = 'default') => {
     try {
       set({ isLoading: true, error: null });
+      // Yield to UI to allow loading state to render before blocking crypto op
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       const result = await walletBridge.importWallet(mnemonic, password, name);
 

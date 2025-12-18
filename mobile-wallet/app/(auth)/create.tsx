@@ -201,7 +201,7 @@ export default function CreateWalletScreen() {
           <View className="flex-row items-center justify-center">
             <ActivityIndicator color="white" size="small" />
             <Text className="text-white font-semibold ml-3">
-              {isAddingWallet ? 'Adding wallet...' : 'Creating wallet...'}
+              {isAddingWallet ? 'Adding wallet...' : 'Encrypting wallet...'}
             </Text>
           </View>
         ) : (
