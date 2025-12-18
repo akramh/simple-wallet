@@ -39,10 +39,11 @@ export type CacheKey = string;
  * - Must avoid `_` because `MobileStorageAdapter` converts `_` → `.` when restoring paths.
  */
 function encodeCacheKey(key: CacheKey): string {
-  const base64 = global.Buffer
-    ? global.Buffer.from(key, 'utf8').toString('base64')
-    : // Fallback should be extremely rare in RN; keep it deterministic.
-      encodeURIComponent(key);
+  const bytes: Uint8Array = global.Buffer
+    ? global.Buffer.from(key, 'utf8')
+    : utf8BytesFromString(key);
+
+  const base64 = base64FromBytes(bytes);
   // Make it path-safe AND avoid underscores.
   return base64.replace(/\+/g, '-').replace(/\//g, '~').replace(/=+$/g, '');
 }
@@ -50,6 +51,48 @@ function encodeCacheKey(key: CacheKey): string {
 function makeCachePath(namespace: string, key: CacheKey): string {
   // Dot-separated paths round-trip through MobileStorageAdapter.
   return `cache.${namespace}.${encodeCacheKey(key)}.json`;
+}
+
+function utf8BytesFromString(input: string): Uint8Array {
+  // Prefer built-in encoder when present.
+  if (global.TextEncoder) {
+    return new global.TextEncoder().encode(input);
+  }
+
+  // RFC 3986 percent-encode to ASCII, then decode %XX to bytes.
+  const encoded = encodeURIComponent(input);
+  const bytes: number[] = [];
+  for (let i = 0; i < encoded.length; i++) {
+    const ch = encoded[i];
+    if (ch === '%') {
+      const hex = encoded.slice(i + 1, i + 3);
+      bytes.push(parseInt(hex, 16));
+      i += 2;
+      continue;
+    }
+    bytes.push(encoded.charCodeAt(i));
+  }
+  return Uint8Array.from(bytes);
+}
+
+function base64FromBytes(bytes: Uint8Array): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let out = '';
+
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b1 = bytes[i] ?? 0;
+    const b2 = bytes[i + 1] ?? 0;
+    const b3 = bytes[i + 2] ?? 0;
+
+    const triplet = (b1 << 16) | (b2 << 8) | b3;
+
+    out += alphabet[(triplet >> 18) & 0x3f];
+    out += alphabet[(triplet >> 12) & 0x3f];
+    out += i + 1 < bytes.length ? alphabet[(triplet >> 6) & 0x3f] : '=';
+    out += i + 2 < bytes.length ? alphabet[triplet & 0x3f] : '=';
+  }
+
+  return out;
 }
 
 /**
