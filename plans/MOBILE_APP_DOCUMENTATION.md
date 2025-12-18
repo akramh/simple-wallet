@@ -2,72 +2,107 @@
 
 ## Overview
 
-The Mobile App (`mobile-wallet/`) is a React Native application built with **Expo SDK 54**. It brings the full multi-chain capabilities of the Core SDK to iOS and Android devices. It emphasizes performance and native feel while reusing the business logic from `src/`.
+The Mobile App (`mobile-wallet/`) is a high-performance, non-custodial crypto wallet built with **React Native** and **Expo SDK 54**. It brings the multi-chain capabilities of the Core SDK to iOS and Android, featuring a native look and feel, biometric security, and optimized cryptography.
 
 ## Architecture
 
-The mobile app bridges the Node.js-centric Core SDK to the React Native environment using the **Adapter Pattern**.
+The application is built on a layered architecture that bridges the Node.js-centric Core SDK to the React Native runtime.
 
-### 1. The Bridge (`services/WalletBridge.ts`)
-Since the Core SDK is designed for Node/Web, the Mobile App uses a Singleton `WalletBridge` to adapt it.
--   **Lazy Loading**: Initializes the `WalletAppService` only when needed.
--   **Method Exposure**: Exposes simplified async methods for the UI (e.g., `createWallet`, `getBalances`).
--   **Session Management**: Handles the master password session in memory (Zustand store).
-
-### 2. Native Polyfills & Adapters
-React Native does not have the standard Node.js `crypto` or `fs` modules.
-
-#### Crypto Adapter (`services/MobileCryptoAdapter.ts`)
-**CRITICAL**: We use `react-native-quick-crypto` via JSI (JavaScript Interface) for native C++ performance.
--   **Why?** standard JS implementations of PBKDF2 (key derivation) take ~16s on Hermes. `quick-crypto` takes ~20ms.
--   **Implementation**: The adapter implements the shared `CryptoAdapter` interface using `quick-crypto`.
-
-#### Storage Adapter (`services/MobileStorageAdapter.ts`)
--   **Sensitive Data**: Uses `expo-secure-store` (Keychain/Keystore) for preferences and sensitive flags.
--   **Large Data**: Uses `@react-native-async-storage/async-storage` for the encrypted wallet blobs and transaction history.
-
-#### Metro Configuration (`metro.config.js`)
-To make the shared `src/` folder compatible:
--   **Path Aliases**: Maps `@wallet/*` to `../src/*`.
--   **Stubs**: Redirects Node-only modules (like `stream`, `path`) to browser-compatible polyfills or empty stubs in `mobile-wallet/stubs/`.
-
-### 3. UI Layer
--   **Framework**: Expo Router (file-based routing in `app/`).
--   **Styling**: NativeWind (Tailwind CSS).
--   **State**: Zustand (`store/walletStore.ts`) for reactive global state.
-
-### 4. Zustand Store with Optimized Selectors
-The mobile app uses optimized Zustand selectors (`store/selectors.ts`) to prevent unnecessary re-renders:
-
-```typescript
-// BAD - subscribes to entire store, re-renders on any change
-const { balances, network } = useWalletStore();
-
-// GOOD - only re-renders when specific slice changes
-import { useBalancesSelector, useNetworkSelector } from '../store';
-const balances = useBalancesSelector();
-const network = useNetworkSelector();
-
-// Screen-specific composite selectors for common patterns
-import { useWalletScreenSelector } from '../store';
-const { address, balances, network, refreshBalances } = useWalletScreenSelector();
+```mermaid
+graph TD
+    UI[React Native UI (Expo Router)] --> Store[Zustand Store (walletStore)]
+    Store --> Bridge[WalletBridge Service]
+    
+    subgraph "Native Adapters"
+    Bridge --> Storage[MobileStorageAdapter]
+    Bridge --> Crypto[MobileCryptoAdapter]
+    end
+    
+    subgraph "Core SDK (Shared)"
+    Bridge --> Service[WalletAppService]
+    Service --> Wallet[Wallet Core]
+    end
+    
+    Storage --> Secure[Expo SecureStore (Keychain)]
+    Storage --> Async[AsyncStorage]
+    Crypto --> Quick[react-native-quick-crypto (C++)]
 ```
 
-Available screen selectors:
--   `useWalletScreenSelector` - Main wallet view
--   `useActivityScreenSelector` - Transaction history
--   `usePortfolioScreenSelector` - Portfolio overview
--   `useProfileScreenSelector` - Settings/profile
--   `useSendScreenSelector` - Send transaction
--   `useUnlockScreenSelector` - Unlock/auth
--   `useNetworkSelectScreenSelector` - Network selection
+### 1. State Management (`store/walletStore.ts`)
+The app uses **Zustand** for global UI state. The store is the single source of truth for the UI but **never** holds sensitive data (like passwords or private keys).
+-   **Reactive Data**: Balances, Prices, Transactions, Network status.
+-   **Actions**: `unlock()`, `refreshBalances()`, `sendTransaction()`.
+-   **Persistence**: Persists non-sensitive preferences (like `enabledNetworks`) via AsyncStorage.
+
+### 2. Service Layer (`services/WalletBridge.ts`)
+A Singleton service that acts as the facade for the Core SDK.
+-   **Session Management**: Holds the `sessionPassword` in memory. It is cleared on lock or timeout.
+-   **Auto-Lock**: A 15-minute inactivity timer automatically clears the session.
+-   **Request Deduplication**: Prevents API spam by deduplicating in-flight balance and price requests.
+-   **Lazy Loading**: Dynamically requires the Core SDK modules (`@wallet/*`) only when needed to optimize startup time.
+
+### 3. Navigation (`app/`)
+Uses **Expo Router** for file-based routing.
+-   `app/_layout.tsx`: Root provider setup (QueryClient, SafeArea, Toast).
+-   `app/(auth)/*`: Login, Import, and Creation flows.
+-   `app/(tabs)/*`: Main wallet interface (Wallet, Activity, Portfolio, Profile).
+-   `app/*.tsx`: Modals (Send, Receive, Network Select).
+
+## Critical Adapters
+
+The Mobile App requires specialized adapters to run the Node.js-based Core SDK in a React Native environment.
+
+### 1. Crypto Adapter (`services/MobileCryptoAdapter.ts`)
+**Problem**: The standard JS implementation of PBKDF2 (used for wallet encryption) takes ~16 seconds on the Hermes engine because Hermes is optimized for AOT size, not JIT loop performance.
+**Solution**: We use `react-native-quick-crypto`, which binds to native C++ OpenSSL via JSI.
+-   **Performance**: Reduces PBKDF2 (100k iterations) time from **16,000ms** to **~20ms**.
+-   **Fallback**: Uses `@noble/hashes` (pure JS) for Jest tests where native modules are unavailable.
+-   **Async Wrapper**: Wraps sync crypto calls in `setTimeout` to yield to the UI thread during heavy operations.
+
+### 2. Storage Adapter (`services/MobileStorageAdapter.ts`)
+**Problem**: We need secure storage for keys but also large storage for history.
+**Solution**: A hybrid adapter.
+-   **SecureStore**: Used for `wallets.json` (encrypted blobs). Maps to iOS Keychain / Android Keystore.
+-   **AsyncStorage**: Used for `config.json`, transaction history, and cache.
+-   **Sync Read**: The Core SDK requires synchronous `readJSON`. The adapter loads all data into an in-memory `Map` cache on startup (`initialize()`).
+
+## Build & Configuration
+
+### Metro Config (`metro.config.js`)
+The bundler is heavily customized to support the monorepo and shared code.
+-   **Monorepo Support**: `watchFolders` includes `../src`.
+-   **Path Aliases**: Maps `@wallet/*` to `../src/*`.
+-   **Stubs**: Redirects Node-only modules to local polyfills in `stubs/`:
+    -   `crypto` → `stubs/crypto.js`
+    -   `fs` → `stubs/fs.js`
+    -   `bip32` → `stubs/bip32.js` (Replaces WASM dependency with pure JS)
+    -   `tiny-secp256k1` → `stubs/tiny-secp256k1.js` (Replaces WASM dependency)
+
+### Dependencies
+-   **Native Modules**: Requires `npx expo prebuild` (cannot run in Expo Go).
+-   **Polyfills**: `react-native-buffer`, `events`, `stream-browserify`.
 
 ## Key Features
 
--   **Biometrics**: Supports FaceID/TouchID to unlock the wallet using OS-level hardware security (see Security section).
--   **Haptic Feedback**: Uses `expo-haptics` for tactile interactions.
--   **Native Navigation**: Stack and Tab navigation via Expo Router.
--   **Scanner**: Camera integration for scanning QR codes (pending implementation).
+### 1. Multi-Chain Support
+The app supports all chains from the Core SDK:
+-   **EVM**: Ethereum, Base, Polygon, etc. (using `ethers` + `ExplorerAPI`).
+-   **Bitcoin**: Native SegWit addresses (using `stubs/bitcoin-index.js`).
+-   **Solana**: SOL support (using `@solana/web3.js`).
+-   **XRP**: Native XRP support (using `xrpl`).
+
+### 2. Biometric Auth
+-   Uses `expo-local-authentication`.
+-   On success, retrieves the session password from SecureStore (if the user enabled "Remember Me").
+
+### 3. Price & Portfolio
+-   **Caching**: Prices are cached for 60 seconds.
+-   **Aggregation**: `refreshAllNetworks` fetches balances across all enabled chains in parallel (with bounded concurrency) to show a global portfolio value.
+
+### 4. Native Experience
+-   **Haptic Feedback**: Uses `expo-haptics` for tactile interactions on buttons and successful transactions.
+-   **Native Navigation**: Uses native stack and tab navigators for fluid screen transitions.
+-   **QR Scanner**: Integrated camera support via `expo-camera` for scanning recipient addresses (Pending full implementation).
 
 ## Development Guide
 
@@ -75,42 +110,30 @@ Available screen selectors:
 ```bash
 cd mobile-wallet
 npm install
-npx expo prebuild --clean # Required for native crypto modules
+# Generate native folders (ios/android)
+npx expo prebuild --clean
 ```
 
 ### Running
--   `npm run ios`: Launches in iOS Simulator.
--   `npm run android`: Launches in Android Emulator.
-
-### Shared Code Constraints
-When editing `src/` (Core SDK):
--   **Avoid Node.js specific APIs**: Do not use `fs.readFileSync` or `crypto.randomBytes` directly. Use the injected Adapters.
--   **BigInt**: React Native (Hermes) supports BigInt, so modern JS is fine.
-
-## Security
-
-### Biometric Authentication
-The mobile app uses **OS-level biometric protection** via `expo-secure-store` with `requireAuthentication: true`. This provides hardware-backed security:
-
--   **iOS**: Uses Keychain with `kSecAccessControlBiometryAny` access control. The Secure Enclave handles biometric verification before releasing secrets.
--   **Android**: Uses Android Keystore with biometric-gated keys (API 23+).
-
-**Implementation** (`hooks/useBiometrics.ts`):
-```typescript
-const BIOMETRIC_SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
-  requireAuthentication: true,
-  authenticationPrompt: 'Authenticate to unlock your wallet',
-  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-};
+```bash
+# iOS Simulator
+npm run ios
+# Android Emulator
+npm run android
 ```
 
-**Key Security Properties**:
--   Biometric prompt is handled by the OS, not the app layer (resistant to runtime bypass attacks)
--   Keys are automatically invalidated when biometric settings change (new fingerprint, etc.)
--   Password is only released after successful biometric verification at the hardware level
+### Testing
+-   **Unit Tests**: `npm test` (Uses Jest + `@testing-library/react-native`).
+    -   *Note*: Mocks native modules like `react-native-quick-crypto`.
+-   **E2E Tests**: Detox configuration is present (`detox.config.js`) for full flow testing.
 
-### Session Password
-The master password is held in memory (`WalletBridge.sessionPassword`) only while the wallet is unlocked. It is cleared on lock and never persisted to disk unencrypted.
+### Shared Code Constraints
+When editing the shared SDK (`src/`) for mobile compatibility:
+-   **Avoid Node.js specific APIs**: Do not use `fs.readFileSync` or `crypto.randomBytes` directly. Use the injected Adapters.
+-   **No WebAssembly**: Since React Native does not support WASM, any library using it must be stubbed or replaced with a pure JS or JSI equivalent.
+-   **Sync vs Async**: Prefer async methods for heavy operations to keep the mobile UI responsive.
 
-### Auto-Lock
-The app automatically locks after 15 minutes of inactivity, clearing the session password from memory.
+## Known Limitations / Gotchas
+1.  **Hermes & BigInt**: Hermes supports `BigInt`, so we don't need a polyfill, but be careful with `JSON.stringify` on objects containing BigInts (handled in SDK).
+2.  **WASM**: React Native does not support WebAssembly. Any library using WASM (like `tiny-secp256k1`) MUST be stubbed with a pure JS or C++ JSI alternative.
+3.  **SecureStore Size**: Has a 2KB limit on some Android devices. We only store the encrypted wallet blob, not the entire transaction history, in SecureStore.
