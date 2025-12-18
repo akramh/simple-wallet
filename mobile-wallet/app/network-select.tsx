@@ -6,12 +6,12 @@ import { View, Text, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useWalletStore } from '../store';
+import { useNetworkSelectScreenSelector } from '../store';
 import { getNetworkIcon } from '../utils/tokenIcons';
 
 export default function NetworkSelectScreen() {
   const router = useRouter();
-  const { network, networks, switchNetwork, isLoading } = useWalletStore();
+  const { network, networks, switchNetwork, isLoading } = useNetworkSelectScreenSelector();
 
   const handleNetworkSelect = async (networkKey: string) => {
     if (networkKey === network) {

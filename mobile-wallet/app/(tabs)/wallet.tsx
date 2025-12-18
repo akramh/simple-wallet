@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useWalletStore } from '../../store';
+import { useWalletScreenSelector } from '../../store';
 import { useClipboard } from '../../hooks';
 import { useToast } from '../../contexts';
 import { getTokenIcon } from '../../utils/tokenIcons';
@@ -34,7 +34,7 @@ export default function WalletScreen() {
     accounts,
     currentAccountIndex,
     currentWalletName,
-  } = useWalletStore();
+  } = useWalletScreenSelector();
   const { copy } = useClipboard();
   const { showToast } = useToast();
 

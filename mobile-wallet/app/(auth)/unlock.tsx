@@ -16,12 +16,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useWalletStore } from '../../store';
+import { useUnlockScreenSelector } from '../../store';
 import { useBiometrics } from '../../hooks';
 
 export default function UnlockScreen() {
   const router = useRouter();
-  const { unlock, isLoading, error, clearError, walletList, loadWalletList } = useWalletStore();
+  const { unlock, isLoading, error, clearError, walletList, loadWalletList } = useUnlockScreenSelector();
   const {
     isAvailable: biometricsAvailable,
     isEnabled: biometricsEnabled,

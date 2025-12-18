@@ -20,7 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useWalletStore } from '../store';
+import { useSendScreenSelector } from '../store';
 import type { Token, GasEstimate } from '../services';
 
 export default function SendScreen() {
@@ -31,7 +31,7 @@ export default function SendScreen() {
     networks,
     getGasEstimate,
     sendTransaction,
-  } = useWalletStore();
+  } = useSendScreenSelector();
 
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
   const [recipient, setRecipient] = useState('');

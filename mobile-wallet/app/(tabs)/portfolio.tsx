@@ -5,7 +5,7 @@
 import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useWalletStore } from '../../store';
+import { usePortfolioScreenSelector } from '../../store';
 import { Image } from 'react-native';
 import { getTokenIcon } from '../../utils/tokenIcons';
 
@@ -21,7 +21,7 @@ export default function PortfolioScreen() {
     isRefreshingAllNetworks,
     refreshAllNetworks,
     networks,
-  } = useWalletStore();
+  } = usePortfolioScreenSelector();
 
   const globalTotal = Object.values(allNetworkTotals).reduce((a, b) => a + (b || 0), 0);
   const formattedGlobalTotal =

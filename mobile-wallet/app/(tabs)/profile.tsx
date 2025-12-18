@@ -7,7 +7,7 @@ import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, Switch, TextInp
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useWalletStore } from '../../store';
+import { useProfileScreenSelector } from '../../store';
 import { walletBridge } from '../../services';
 import { useBiometrics, useClipboard } from '../../hooks';
 import { useToast } from '../../contexts';
@@ -22,7 +22,7 @@ const AUTO_LOCK_OPTIONS = [
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { address, currentWalletName, network, networks, lock } = useWalletStore();
+  const { address, currentWalletName, network, networks, lock } = useProfileScreenSelector();
   const biometrics = useBiometrics();
   const { copy } = useClipboard();
   const { showToast } = useToast();
