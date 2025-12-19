@@ -121,7 +121,7 @@ test('getNativeTokenPrice fetches and caches ETH price', async () => {
 
     const price = await getNativeTokenPrice(1); // mainnet
     assert.equal(price, 2500.50);
-    assert.equal(fetchMock.getCallCount(), 1);
+    assert.equal(fetchMock.getCallCount(), 2);
   } finally {
     teardownFetchMock();
   }
@@ -145,7 +145,7 @@ test('getNativeTokenPrice uses cache on second call', async () => {
 
     assert.equal(price1, 2500.50);
     assert.equal(price2, 2500.50);
-    assert.equal(fetchMock.getCallCount(), 1, 'should only call API once');
+    assert.equal(fetchMock.getCallCount(), 2, 'should only call API once per provider');
   } finally {
     teardownFetchMock();
   }
@@ -418,18 +418,18 @@ test('clearPriceCache clears all cached prices', async () => {
 
     // First call - fetches from API
     await getNativeTokenPrice(1);
-    assert.equal(fetchMock.getCallCount(), 1);
+    assert.equal(fetchMock.getCallCount(), 2);
 
     // Second call - uses cache
     await getNativeTokenPrice(1);
-    assert.equal(fetchMock.getCallCount(), 1);
+    assert.equal(fetchMock.getCallCount(), 2);
 
     // Clear cache
     clearPriceCache();
 
     // Third call - fetches from API again
     await getNativeTokenPrice(1);
-    assert.equal(fetchMock.getCallCount(), 2);
+    assert.equal(fetchMock.getCallCount(), 4);
   } finally {
     teardownFetchMock();
   }
