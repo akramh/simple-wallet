@@ -22,6 +22,7 @@ import Svg, {
   Circle,
   Line,
   G,
+  Text as SvgText,
 } from 'react-native-svg';
 import Animated, {
   useSharedValue,
@@ -70,9 +71,13 @@ const CHART_COLORS = {
   positiveGradient: 'rgba(34, 197, 94, 0.2)',
   negativeGradient: 'rgba(239, 68, 68, 0.2)',
   grid: '#374151', // gray-700
+  gridLine: '#1f2937', // gray-800
   text: '#9ca3af', // gray-400
   touchLine: '#a855f7', // purple-500
 };
+
+/** Number of Y-axis ticks to display */
+const Y_AXIS_TICKS = 4;
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
@@ -96,6 +101,47 @@ function getMinMax(data: PricePoint[]): { min: number; max: number } {
     min: min - padding,
     max: max + padding,
   };
+}
+
+/**
+ * Generate Y-axis tick values
+ */
+function getYAxisTicks(
+  minMax: { min: number; max: number },
+  numTicks: number
+): number[] {
+  const { min, max } = minMax;
+  const ticks: number[] = [];
+  const step = (max - min) / (numTicks - 1);
+
+  for (let i = 0; i < numTicks; i++) {
+    ticks.push(min + step * i);
+  }
+
+  return ticks;
+}
+
+/**
+ * Format price for Y-axis display
+ * Uses compact notation for readability
+ */
+function formatAxisPrice(price: number): string {
+  if (price >= 1000000) {
+    return `$${(price / 1000000).toFixed(1)}M`;
+  }
+  if (price >= 1000) {
+    return `$${(price / 1000).toFixed(1)}K`;
+  }
+  if (price >= 100) {
+    return `$${price.toFixed(0)}`;
+  }
+  if (price >= 1) {
+    return `$${price.toFixed(2)}`;
+  }
+  if (price >= 0.01) {
+    return `$${price.toFixed(3)}`;
+  }
+  return `$${price.toFixed(4)}`;
 }
 
 /**
@@ -223,7 +269,7 @@ export function PriceChart({
     height,
     paddingTop: 16,
     paddingBottom: 16,
-    paddingLeft: 8,
+    paddingLeft: 55, // Space for Y-axis labels
     paddingRight: 8,
   };
 
@@ -252,6 +298,10 @@ export function PriceChart({
   const areaPath = useMemo(
     () => generateAreaPath(data, dimensions, minMax),
     [data, dimensions, minMax]
+  );
+  const yAxisTicks = useMemo(
+    () => getYAxisTicks(minMax, Y_AXIS_TICKS),
+    [minMax]
   );
 
   // Touch gesture
@@ -316,6 +366,40 @@ export function PriceChart({
                 <Stop offset="100%" stopColor={CHART_COLORS.negative} stopOpacity={0} />
               </LinearGradient>
             </Defs>
+
+            {/* Y-axis grid lines and labels */}
+            {yAxisTicks.map((tickValue, index) => {
+              const chartHeight = dimensions.height - dimensions.paddingTop - dimensions.paddingBottom;
+              const y =
+                dimensions.paddingTop +
+                chartHeight -
+                ((tickValue - minMax.min) / (minMax.max - minMax.min)) * chartHeight;
+
+              return (
+                <G key={`y-tick-${index}`}>
+                  {/* Horizontal grid line */}
+                  <Line
+                    x1={dimensions.paddingLeft}
+                    y1={y}
+                    x2={dimensions.width - dimensions.paddingRight}
+                    y2={y}
+                    stroke={CHART_COLORS.gridLine}
+                    strokeWidth={1}
+                    strokeDasharray="2,4"
+                  />
+                  {/* Y-axis label */}
+                  <SvgText
+                    x={dimensions.paddingLeft - 6}
+                    y={y + 4}
+                    fontSize={10}
+                    fill={CHART_COLORS.text}
+                    textAnchor="end"
+                  >
+                    {formatAxisPrice(tickValue)}
+                  </SvgText>
+                </G>
+              );
+            })}
 
             {/* Gradient fill */}
             <Path d={areaPath} fill={`url(#${gradientId})`} />
