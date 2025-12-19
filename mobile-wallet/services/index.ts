@@ -25,3 +25,19 @@ export type {
   NetworkConfig,
   Config,
 } from './WalletBridge';
+
+// Price history service for token detail charts
+export {
+  getPriceHistory,
+  getTokenMetadata,
+  getCoinGeckoId,
+  clearPriceHistoryCache,
+  formatLargeNumber,
+  formatSupply,
+} from './price-history';
+export type {
+  TimeRange,
+  PricePoint,
+  PriceHistoryData,
+  TokenMetadata,
+} from './price-history';

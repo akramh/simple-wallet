@@ -10,3 +10,4 @@ export { useBalances } from './useBalances';
 export { useTransaction } from './useTransaction';
 export { useBiometrics } from './useBiometrics';
 export { useClipboard } from './useClipboard';
+export { usePriceHistory } from './usePriceHistory';

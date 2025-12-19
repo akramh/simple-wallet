@@ -7,14 +7,15 @@
  */
 
 import { useEffect } from 'react';
-import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePortfolioScreenSelector } from '../../store';
-import { Image } from 'react-native';
 import { getTokenIcon } from '../../utils/tokenIcons';
 
 export default function PortfolioScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const {
     balances,
@@ -126,6 +127,23 @@ export default function PortfolioScreen() {
                       const balance = parseFloat(item.balance || '0');
                       const networkTotal = subtotal || totalValue;
                       const percentage = networkTotal > 0 ? ( (balance * (prices[item.token.symbol] ?? 0)) / networkTotal) * 100 : 0;
+                      const isNative = item.token.address === 'native' || !item.token.address;
+
+                      const handlePress = () => {
+                        router.push({
+                          pathname: '/token-detail',
+                          params: {
+                            symbol: item.token.symbol,
+                            name: item.token.name,
+                            network: networkKey,
+                            balance: item.balance || '0',
+                            contractAddress: isNative ? undefined : item.token.address,
+                            isNative: isNative ? 'true' : 'false',
+                            decimals: item.token.decimals?.toString() || '18',
+                          },
+                        });
+                      };
+
                       return (
                         <HoldingRow
                           key={`${networkKey}-${item.token.symbol}-${index}`}
@@ -135,6 +153,7 @@ export default function PortfolioScreen() {
                           value={(prices[item.token.symbol] ?? 0) * balance}
                           percentage={percentage}
                           change24h={0}
+                          onPress={handlePress}
                         />
                       );
                     })}
@@ -159,6 +178,7 @@ function HoldingRow({
   value,
   percentage,
   change24h,
+  onPress,
 }: {
   symbol: string;
   name: string;
@@ -166,12 +186,17 @@ function HoldingRow({
   value: number;
   percentage: number;
   change24h: number;
+  onPress: () => void;
 }) {
   const isPositive = change24h >= 0;
   const icon = getTokenIcon(symbol);
 
   return (
-    <View className="flex-row items-center py-4 border-b border-gray-800">
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      className="flex-row items-center py-4 border-b border-gray-800"
+    >
       {/* Token Icon */}
       <View className="w-12 h-12 rounded-full bg-gray-800 items-center justify-center mr-3 overflow-hidden">
         {icon ? (
@@ -206,6 +231,9 @@ function HoldingRow({
           </Text>
         </View>
       </View>
-    </View>
+
+      {/* Chevron indicator */}
+      <Ionicons name="chevron-forward" size={16} color="#6b7280" style={{ marginLeft: 8 }} />
+    </TouchableOpacity>
   );
 }
