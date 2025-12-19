@@ -14,3 +14,4 @@ export { EmptyState } from './EmptyState';
 export { QRCode } from './QRCode';
 export { Toast } from './Toast';
 export type { ToastType } from './Toast';
+export { PriceChart } from './PriceChart';

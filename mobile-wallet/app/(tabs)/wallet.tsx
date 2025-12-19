@@ -89,6 +89,23 @@ export default function WalletScreen() {
           const price = prices[item.token.symbol] ?? null;
           const balance = parseFloat(item.balance || '0');
           const usdValue = price !== null ? balance * price : null;
+          const isNative = item.token.address === 'native' || !item.token.address;
+
+          const handleTokenPress = () => {
+            router.push({
+              pathname: '/token-detail',
+              params: {
+                symbol: item.token.symbol,
+                name: item.token.name,
+                network: network,
+                balance: item.balance || '0',
+                contractAddress: isNative ? undefined : item.token.address,
+                isNative: isNative ? 'true' : 'false',
+                decimals: item.token.decimals?.toString() || '18',
+              },
+            });
+          };
+
           return (
             <View className="px-5 bg-gray-900/50">
               <TokenRow
@@ -97,6 +114,7 @@ export default function WalletScreen() {
                 balance={item.balance || '0'}
                 usdValue={usdValue}
                 isLoading={item.isLoading}
+                onPress={handleTokenPress}
               />
             </View>
           );
@@ -238,17 +256,23 @@ function TokenRow({
   balance,
   usdValue,
   isLoading,
+  onPress,
 }: {
   symbol: string;
   name: string;
   balance: string;
   usdValue: number | null;
   isLoading: boolean;
+  onPress: () => void;
 }) {
   const tokenIcon = getTokenIcon(symbol);
-  
+
   return (
-    <View className="flex-row items-center py-4 border-b border-gray-800">
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      className="flex-row items-center py-4 border-b border-gray-800"
+    >
       {/* Token Icon */}
       <View className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-3 overflow-hidden">
         {tokenIcon ? (
@@ -283,6 +307,9 @@ function TokenRow({
           </>
         )}
       </View>
-    </View>
+
+      {/* Chevron indicator */}
+      <Ionicons name="chevron-forward" size={16} color="#6b7280" style={{ marginLeft: 8 }} />
+    </TouchableOpacity>
   );
 }
