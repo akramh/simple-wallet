@@ -1,112 +1,124 @@
 /**
  * @file price-service.ts
- * @description Token price fetching service using CoinGecko API.
- * 
+ * @description Token price fetching service with multi-provider fallback.
+ *
  * Provides real-time USD prices for native tokens and ERC-20 tokens
- * with caching to minimize API calls and respect rate limits.
- * 
- * @limitations (CoinGecko Free Tier)
- * - ERC-20 token prices: 1 contract per request
- * - Rate limiting: ~10-30 requests/minute
- * - Some tokens may not have price data
+ * using CoinPaprika (primary) with CoinGecko fallback.
+ *
+ * @responsibilities
+ * - Fetch current prices for native tokens by chain ID
+ * - Fetch current prices for ERC-20 tokens by contract address
+ * - Fetch price history for charts
+ * - Fetch token metadata (market cap, supply, description)
+ * - Calculate transaction costs in USD
+ *
+ * @security
+ * - No sensitive data handled
+ * - Read-only API calls
  */
+
+import {
+  priceProviderManager,
+  type TimeRange,
+  type PriceHistoryResult,
+  type TokenMetadataResult,
+  type PricePoint,
+  CHAIN_TO_PLATFORM,
+} from './price-providers/index.js';
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface TokenPriceInfo {
-  address?: string;       // Contract address for ERC-20, undefined for native
+  address?: string; // Contract address for ERC-20, undefined for native
   symbol: string;
-  price: number | null;   // USD price, null if unavailable
+  price: number | null; // USD price, null if unavailable
   lastUpdated: number;
 }
 
 export interface PriceCache {
-  [key: string]: {        // key: 'native' or lowercase contract address
+  [key: string]: {
+    // key: 'native' or lowercase contract address
     price: number;
     lastUpdated: number;
   };
 }
 
+/**
+ * Token info for price fetching
+ */
+export interface TokenInfo {
+  type: 'native' | 'erc20';
+  symbol: string;
+  address?: string;
+  decimals?: number;
+}
+
+/**
+ * Transaction cost breakdown in USD
+ */
+export interface TransactionCosts {
+  /** USD value of the amount being sent (null if price unavailable) */
+  amountUsd: number | null;
+  /** USD value of gas cost (null if price unavailable) */
+  gasCostUsd: number | null;
+  /** Total USD cost: amount + gas (null if either unavailable) */
+  totalUsd: number | null;
+}
+
+// Re-export types from price-providers
+export type { TimeRange, PriceHistoryResult, TokenMetadataResult, PricePoint };
+
 // ============================================================================
 // Constants
 // ============================================================================
 
-const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
-
-/** Cache TTL: 60 seconds */
+/** Cache TTL: 60 seconds (for legacy cache) */
 const CACHE_TTL = 60 * 1000;
 
-/** Request timeout: 10 seconds */
-const REQUEST_TIMEOUT = 10 * 1000;
-
 /**
- * Maps chain IDs to CoinGecko platform IDs for ERC-20 token lookups
+ * Maps chain IDs to native token symbols
  */
-const CHAIN_TO_PLATFORM: Record<number, string> = {
-  1: 'ethereum',
-  56: 'binance-smart-chain',
-  137: 'polygon-pos',
-  43114: 'avalanche',
-  42161: 'arbitrum-one',
-  10: 'optimistic-ethereum',
-  8453: 'base',
-  59144: 'linea',
-  11155111: 'ethereum', // Sepolia testnet (no real prices)
+const CHAIN_TO_NATIVE_SYMBOL: Record<number, string> = {
+  1: 'ETH',
+  56: 'BNB',
+  137: 'MATIC',
+  43114: 'AVAX',
+  42161: 'ETH', // Arbitrum uses ETH
+  10: 'ETH', // Optimism uses ETH
+  8453: 'ETH', // Base uses ETH
+  59144: 'ETH', // Linea uses ETH
+  11155111: 'ETH', // Sepolia testnet
 };
 
 /**
- * Maps chain IDs to CoinGecko native token IDs
- */
-const CHAIN_TO_NATIVE_ID: Record<number, string> = {
-  1: 'ethereum',
-  56: 'binancecoin',
-  137: 'matic-network',
-  43114: 'avalanche-2',
-  42161: 'ethereum',       // Arbitrum uses ETH
-  10: 'ethereum',          // Optimism uses ETH
-  8453: 'ethereum',        // Base uses ETH
-  59144: 'ethereum',       // Linea uses ETH
-  11155111: 'ethereum',    // Sepolia testnet
-};
-
-/**
- * Maps Bitcoin network keys to CoinGecko IDs
+ * Maps Bitcoin network keys to symbol
  */
 const BITCOIN_NETWORK_TO_ID: Record<string, string> = {
   'bitcoin-mainnet': 'bitcoin',
-  'bitcoin-testnet': 'bitcoin',  // Use mainnet price for testnet display
+  'bitcoin-testnet': 'bitcoin',
 };
 
-/** Bitcoin price cache (separate from EVM chain cache) */
-let bitcoinPriceCache: { price: number; lastUpdated: number } | null = null;
-
 /**
- * Maps Solana network keys to CoinGecko IDs
+ * Maps Solana network keys to symbol
  */
 const SOLANA_NETWORK_TO_ID: Record<string, string> = {
   'solana-mainnet': 'solana',
-  'solana-devnet': 'solana', // Use mainnet price for devnet display
+  'solana-devnet': 'solana',
 };
 
-/** Solana price cache (separate from EVM chain cache) */
-let solanaPriceCache: { price: number; lastUpdated: number } | null = null;
-
 /**
- * Maps XRP network keys to CoinGecko IDs
+ * Maps XRP network keys to symbol
  */
 const XRP_NETWORK_TO_ID: Record<string, string> = {
   'xrp-mainnet': 'ripple',
-  'xrp-testnet': 'ripple', // Use mainnet price for testnet display
-  'xrp-devnet': 'ripple',  // Use mainnet price for devnet display
+  'xrp-testnet': 'ripple',
+  'xrp-devnet': 'ripple',
 };
 
-/** XRP price cache (separate from other chain caches) */
-let xrpPriceCache: { price: number; lastUpdated: number } | null = null;
-
 // ============================================================================
-// Price Cache (per network)
+// Legacy Price Cache (for ERC-20 batch operations)
 // ============================================================================
 
 /** Price cache: chainId -> tokenKey -> price info */
@@ -115,15 +127,15 @@ const priceCache: Record<number, PriceCache> = {};
 function getCachedPrice(chainId: number, tokenKey: string): number | null {
   const networkCache = priceCache[chainId];
   if (!networkCache) return null;
-  
+
   const cached = networkCache[tokenKey];
   if (!cached) return null;
-  
+
   // Check if cache is still valid
   if (Date.now() - cached.lastUpdated > CACHE_TTL) {
     return null;
   }
-  
+
   return cached.price;
 }
 
@@ -138,66 +150,25 @@ function setCachedPrice(chainId: number, tokenKey: string, price: number): void 
 }
 
 // ============================================================================
-// API Functions
+// Current Price Functions
 // ============================================================================
 
 /**
- * Fetch with timeout helper
- */
-async function fetchWithTimeout(url: string, timeout = REQUEST_TIMEOUT): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    return response;
-  } catch (error) {
-    clearTimeout(timeoutId);
-    throw error;
-  }
-}
-
-/**
- * Fetches the native token price for a given chain
+ * Fetches the native token price for a given chain.
+ * Uses provider manager with CoinPaprika primary, CoinGecko fallback.
+ *
+ * @param chainId - EVM chain ID
+ * @returns USD price or null if unavailable
  */
 export async function getNativeTokenPrice(chainId: number): Promise<number | null> {
-  const cacheKey = 'native';
-  
-  // Check cache first
-  const cached = getCachedPrice(chainId, cacheKey);
-  if (cached !== null) {
-    return cached;
-  }
-  
-  const coinId = CHAIN_TO_NATIVE_ID[chainId];
-  if (!coinId) {
-    console.warn(`[PriceService] No CoinGecko ID for chainId ${chainId}`);
+  const symbol = CHAIN_TO_NATIVE_SYMBOL[chainId];
+  if (!symbol) {
+    console.warn(`[PriceService] No symbol for chainId ${chainId}`);
     return null;
   }
-  
-  try {
-    const url = `${COINGECKO_BASE}/simple/price?ids=${coinId}&vs_currencies=usd`;
-    const response = await fetchWithTimeout(url);
-    
-    if (!response.ok) {
-      console.warn(`[PriceService] API error: ${response.status}`);
-      return null;
-    }
-    
-    const data = await response.json() as Record<string, { usd?: number } | undefined>;
-    const price = data[coinId]?.usd;
-    
-    if (typeof price === 'number') {
-      setCachedPrice(chainId, cacheKey, price);
-      return price;
-    }
-    
-    return null;
-  } catch (error) {
-    console.warn('[PriceService] Failed to fetch native price:', error);
-    return null;
-  }
+
+  const result = await priceProviderManager.getCurrentPrice(symbol);
+  return result?.price ?? null;
 }
 
 /**
@@ -208,35 +179,8 @@ export async function getNativeTokenPrice(chainId: number): Promise<number | nul
  * @returns Bitcoin price in USD, or null if unavailable
  */
 export async function getBitcoinPrice(networkKey?: string): Promise<number | null> {
-  // Check cache first
-  if (bitcoinPriceCache && Date.now() - bitcoinPriceCache.lastUpdated < CACHE_TTL) {
-    return bitcoinPriceCache.price;
-  }
-
-  const coinId = 'bitcoin';
-
-  try {
-    const url = `${COINGECKO_BASE}/simple/price?ids=${coinId}&vs_currencies=usd`;
-    const response = await fetchWithTimeout(url);
-
-    if (!response.ok) {
-      console.warn(`[PriceService] Bitcoin API error: ${response.status}`);
-      return null;
-    }
-
-    const data = await response.json() as Record<string, { usd?: number } | undefined>;
-    const price = data[coinId]?.usd;
-
-    if (typeof price === 'number') {
-      bitcoinPriceCache = { price, lastUpdated: Date.now() };
-      return price;
-    }
-
-    return null;
-  } catch (error) {
-    console.warn('[PriceService] Failed to fetch Bitcoin price:', error);
-    return null;
-  }
+  const result = await priceProviderManager.getCurrentPrice('BTC');
+  return result?.price ?? null;
 }
 
 /**
@@ -268,35 +212,8 @@ export function isXRPNetworkKey(networkKey: string): boolean {
  * @returns Solana price in USD, or null if unavailable
  */
 export async function getSolanaPrice(networkKey?: string): Promise<number | null> {
-  // Check cache first
-  if (solanaPriceCache && Date.now() - solanaPriceCache.lastUpdated < CACHE_TTL) {
-    return solanaPriceCache.price;
-  }
-
-  const coinId = 'solana';
-
-  try {
-    const url = `${COINGECKO_BASE}/simple/price?ids=${coinId}&vs_currencies=usd`;
-    const response = await fetchWithTimeout(url);
-
-    if (!response.ok) {
-      console.warn(`[PriceService] Solana API error: ${response.status}`);
-      return null;
-    }
-
-    const data = await response.json() as Record<string, { usd?: number } | undefined>;
-    const price = data[coinId]?.usd;
-
-    if (typeof price === 'number') {
-      solanaPriceCache = { price, lastUpdated: Date.now() };
-      return price;
-    }
-
-    return null;
-  } catch (error) {
-    console.warn('[PriceService] Failed to fetch Solana price:', error);
-    return null;
-  }
+  const result = await priceProviderManager.getCurrentPrice('SOL');
+  return result?.price ?? null;
 }
 
 /**
@@ -307,100 +224,34 @@ export async function getSolanaPrice(networkKey?: string): Promise<number | null
  * @returns XRP price in USD, or null if unavailable
  */
 export async function getXRPPrice(networkKey?: string): Promise<number | null> {
-  // Check cache first
-  if (xrpPriceCache && Date.now() - xrpPriceCache.lastUpdated < CACHE_TTL) {
-    return xrpPriceCache.price;
-  }
-
-  const key = networkKey ?? 'xrp-mainnet';
-  if (!isXRPNetworkKey(key)) {
-    return null;
-  }
-
-  const coinId = XRP_NETWORK_TO_ID[key] ?? 'ripple';
-
-  try {
-    const url = `${COINGECKO_BASE}/simple/price?ids=${coinId}&vs_currencies=usd`;
-    const response = await fetchWithTimeout(url);
-
-    if (!response.ok) {
-      console.warn(`[PriceService] XRP API error: ${response.status}`);
-      return null;
-    }
-
-    const data = await response.json() as Record<string, { usd?: number } | undefined>;
-    const price = data[coinId]?.usd;
-
-    if (typeof price === 'number') {
-      xrpPriceCache = { price, lastUpdated: Date.now() };
-      return price;
-    }
-
-    return null;
-  } catch (error) {
-    console.warn('[PriceService] Failed to fetch XRP price:', error);
-    return null;
-  }
+  const result = await priceProviderManager.getCurrentPrice('XRP');
+  return result?.price ?? null;
 }
 
 /**
- * Fetches the price for an ERC-20 token by contract address
- * Note: CoinGecko free tier limits to 1 contract per request
+ * Fetches the price for an ERC-20 token by contract address.
+ * Uses provider manager with fallback.
+ *
+ * @param chainId - EVM chain ID
+ * @param contractAddress - Token contract address
+ * @returns USD price or null if unavailable
  */
 export async function getERC20TokenPrice(
   chainId: number,
   contractAddress: string
 ): Promise<number | null> {
-  const cacheKey = contractAddress.toLowerCase();
-  
-  // Check cache first
-  const cached = getCachedPrice(chainId, cacheKey);
-  if (cached !== null) {
-    return cached;
-  }
-  
-  const platform = CHAIN_TO_PLATFORM[chainId];
-  if (!platform) {
-    console.warn(`[PriceService] No platform for chainId ${chainId}`);
-    return null;
-  }
-  
-  try {
-    const url = `${COINGECKO_BASE}/simple/token_price/${platform}?contract_addresses=${cacheKey}&vs_currencies=usd`;
-    const response = await fetchWithTimeout(url);
-    
-    if (!response.ok) {
-      // Don't spam console for expected rate limits
-      if (response.status !== 429) {
-        console.warn(`[PriceService] API error: ${response.status}`);
-      }
-      return null;
-    }
-    
-    const data = await response.json() as Record<string, { usd?: number } | undefined> & { error_code?: number };
-    
-    // Check for API error response
-    if (data.error_code) {
-      return null;
-    }
-    
-    const price = data[cacheKey]?.usd;
-    
-    if (typeof price === 'number') {
-      setCachedPrice(chainId, cacheKey, price);
-      return price;
-    }
-    
-    return null;
-  } catch (error) {
-    console.warn('[PriceService] Failed to fetch ERC-20 price:', error);
-    return null;
-  }
+  const result = await priceProviderManager.getTokenPriceByContract(chainId, contractAddress);
+  return result?.price ?? null;
 }
 
 /**
- * Fetches prices for multiple ERC-20 tokens in one or more batched requests.
- * Uses CoinGecko `simple/token_price/{platform}` with a comma-separated list.
+ * Fetches prices for multiple ERC-20 tokens in batched requests.
+ * Falls back to individual fetches via provider manager.
+ *
+ * @param chainId - EVM chain ID
+ * @param contractAddresses - Array of token contract addresses
+ * @param chunkSize - Number of addresses per batch (default 50)
+ * @returns Map of address -> price (null if unavailable)
  */
 export async function getERC20TokenPricesBatch(
   chainId: number,
@@ -413,52 +264,26 @@ export async function getERC20TokenPricesBatch(
     return results;
   }
 
-  const toFetch = contractAddresses
-    .map(addr => addr.toLowerCase())
-    .filter(addr => getCachedPrice(chainId, addr) === null);
-
-  // Populate cached hits immediately
+  // Check cache first, collect addresses that need fetching
+  const toFetch: string[] = [];
   for (const addr of contractAddresses) {
     const key = addr.toLowerCase();
     const cached = getCachedPrice(chainId, key);
     if (cached !== null) {
       results.set(key, cached);
+    } else {
+      toFetch.push(key);
     }
   }
 
-  for (let i = 0; i < toFetch.length; i += chunkSize) {
-    const slice = toFetch.slice(i, i + chunkSize);
-    try {
-      const url = `${COINGECKO_BASE}/simple/token_price/${platform}?contract_addresses=${slice.join(',')}&vs_currencies=usd`;
-      const response = await fetchWithTimeout(url);
-      if (!response.ok) {
-        if (response.status !== 429) {
-          console.warn(`[PriceService] API error: ${response.status}`);
-        }
-        slice.forEach(addr => results.set(addr, null));
-        continue;
-      }
-      const data = await response.json() as Record<string, { usd?: number } | undefined> & { error_code?: number };
-      if (data.error_code) {
-        slice.forEach(addr => results.set(addr, null));
-        continue;
-      }
-      for (const addr of slice) {
-        const price = data[addr]?.usd;
-        if (typeof price === 'number') {
-          setCachedPrice(chainId, addr, price);
-          results.set(addr, price);
-        } else {
-          results.set(addr, null);
-        }
-      }
-    } catch (error) {
-      console.warn('[PriceService] Failed to fetch ERC-20 prices batch:', error);
-      slice.forEach(addr => results.set(addr, null));
-    }
-    // Small delay between batches to be courteous
-    if (i + chunkSize < toFetch.length) {
-      await new Promise(resolve => setTimeout(resolve, 200));
+  // Fetch remaining via provider manager
+  for (const addr of toFetch) {
+    const result = await priceProviderManager.getTokenPriceByContract(chainId, addr);
+    const price = result?.price ?? null;
+    results.set(addr, price);
+
+    if (price !== null) {
+      setCachedPrice(chainId, addr, price);
     }
   }
 
@@ -466,87 +291,110 @@ export async function getERC20TokenPricesBatch(
 }
 
 /**
- * Token info for price fetching
- */
-export interface TokenInfo {
-  type: 'native' | 'erc20';
-  symbol: string;
-  address?: string;
-  decimals?: number;
-}
-
-/**
- * Fetches prices for multiple tokens
- * Returns a map of tokenKey -> price (null if unavailable)
- * 
- * Due to CoinGecko free tier limitations, ERC-20 tokens are fetched
- * in batches to reduce request count and avoid rate limiting.
+ * Fetches prices for multiple tokens.
+ * Returns a map of tokenKey -> price (null if unavailable).
+ *
+ * @param chainId - EVM chain ID
+ * @param tokens - Array of token info objects
+ * @returns Map of token key -> price
  */
 export async function getTokenPrices(
   chainId: number,
   tokens: TokenInfo[]
 ): Promise<Map<string, number | null>> {
   const results = new Map<string, number | null>();
-  
+
   // Separate native and ERC-20 tokens
-  const nativeToken = tokens.find(t => t.type === 'native');
-  const erc20Tokens = tokens.filter(t => t.type === 'erc20' && t.address);
-  
+  const nativeToken = tokens.find((t) => t.type === 'native');
+  const erc20Tokens = tokens.filter((t) => t.type === 'erc20' && t.address);
+
   // Fetch native token price first
   if (nativeToken) {
     const price = await getNativeTokenPrice(chainId);
     results.set('native', price);
   }
-  
-  // Fetch ERC-20 prices in batches
-  const addresses = erc20Tokens
-    .map(t => t.address!.toLowerCase())
-    .filter(Boolean);
+
+  // Fetch ERC-20 prices
+  const addresses = erc20Tokens.map((t) => t.address!.toLowerCase()).filter(Boolean);
 
   if (addresses.length) {
     const batchPrices = await getERC20TokenPricesBatch(chainId, addresses);
     for (const [addr, price] of batchPrices.entries()) {
       results.set(addr, price);
     }
-    // For any addresses not returned (e.g., cached-only), ensure an entry exists
-    addresses.forEach(addr => {
-      if (!results.has(addr)) {
-        const cached = getCachedPrice(chainId, addr);
-        results.set(addr, cached);
-      }
-    });
   }
-  
+
   return results;
 }
 
+// ============================================================================
+// Price History Functions (NEW)
+// ============================================================================
+
 /**
- * Calculate total portfolio value in USD
+ * Fetch price history for a token.
+ * Uses provider manager with CoinPaprika primary, CoinGecko fallback.
+ *
+ * @param symbol - Token symbol (e.g., "ETH", "BTC")
+ * @param timeRange - Time range for history (1H, 1D, 1W, 1M, YTD, ALL)
+ * @returns Price history data or null if unavailable
+ */
+export async function getPriceHistory(
+  symbol: string,
+  timeRange: TimeRange
+): Promise<PriceHistoryResult | null> {
+  return priceProviderManager.getPriceHistory(symbol, timeRange);
+}
+
+/**
+ * Fetch token metadata (market cap, supply, description).
+ * Uses provider manager with CoinPaprika primary, CoinGecko fallback.
+ *
+ * @param symbol - Token symbol (e.g., "ETH", "BTC")
+ * @returns Token metadata or null if unavailable
+ */
+export async function getTokenMetadata(symbol: string): Promise<TokenMetadataResult | null> {
+  return priceProviderManager.getTokenMetadata(symbol);
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+/**
+ * Calculate total portfolio value in USD.
+ *
+ * @param balances - Array of token balances
+ * @param prices - Map of token key -> price
+ * @returns Total USD value
  */
 export function calculateTotalValue(
   balances: Array<{ token: TokenInfo; balance: string }>,
   prices: Map<string, number | null>
 ): number {
   let total = 0;
-  
+
   for (const { token, balance } of balances) {
     const priceKey = token.type === 'native' ? 'native' : token.address?.toLowerCase();
     if (!priceKey) continue;
-    
+
     const price = prices.get(priceKey);
     if (price === null || price === undefined) continue;
-    
+
     const balanceNum = parseFloat(balance);
     if (isNaN(balanceNum)) continue;
-    
+
     total += balanceNum * price;
   }
-  
+
   return total;
 }
 
 /**
- * Format USD value for display
+ * Format USD value for display.
+ *
+ * @param value - USD value
+ * @returns Formatted string (e.g., "$1,234.56", "<$0.01", "$1.23M")
  */
 export function formatUSDValue(value: number): string {
   if (value === 0) return '$0.00';
@@ -562,33 +410,22 @@ export function formatUSDValue(value: number): string {
 }
 
 /**
- * Clear the price cache (useful for testing or forcing refresh)
+ * Clear the price cache (useful for testing or forcing refresh).
+ * Clears both the legacy cache and the provider manager cache.
  */
 export function clearPriceCache(): void {
+  // Clear legacy cache
   for (const key of Object.keys(priceCache)) {
     delete priceCache[Number(key)];
   }
-  // Also clear non-EVM caches
-  bitcoinPriceCache = null;
-  solanaPriceCache = null;
-  xrpPriceCache = null;
+
+  // Clear provider manager cache
+  priceProviderManager.clearCache();
 }
 
 // ============================================================================
 // Transaction Cost Calculations
 // ============================================================================
-
-/**
- * Transaction cost breakdown in USD
- */
-export interface TransactionCosts {
-  /** USD value of the amount being sent (null if price unavailable) */
-  amountUsd: number | null;
-  /** USD value of gas cost (null if price unavailable) */
-  gasCostUsd: number | null;
-  /** Total USD cost: amount + gas (null if either unavailable) */
-  totalUsd: number | null;
-}
 
 /**
  * Calculate USD costs for a transaction.
