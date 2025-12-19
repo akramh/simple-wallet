@@ -215,7 +215,7 @@ export class MobileCryptoAdapter implements AsyncCryptoAdapter {
         const saltBuffer = saltBytes.buffer.slice(
           saltBytes.byteOffset,
           saltBytes.byteOffset + saltBytes.byteLength
-        );
+        ) as ArrayBuffer;
         const resultBuffer = QuickCrypto.pbkdf2Sync(
           passwordBuffer,
           saltBuffer,

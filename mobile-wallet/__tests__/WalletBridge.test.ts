@@ -99,6 +99,55 @@ describe('WalletBridge session invariants', () => {
     expect(state.isUnlocked).toBe(false);
     expect(state.address).toBeNull();
   });
+
+  test('getNetworks returns configured networks', async () => {
+    const networks = await walletBridge.getNetworks();
+    expect(networks).toBeDefined();
+    expect(networks.sepolia).toBeDefined();
+    expect(networks.sepolia.name).toBe('Sepolia');
+    expect(networks['bitcoin-mainnet']).toBeDefined();
+    expect(networks['bitcoin-mainnet'].type).toBe('bitcoin');
+  });
+
+  test('initialize can be called multiple times (idempotent)', async () => {
+    // First call already happened in beforeEach
+    await walletBridge.initialize();
+    await walletBridge.initialize();
+
+    // Should still work
+    const state = await walletBridge.getState();
+    expect(state.network).toBe('sepolia');
+  });
+});
+
+describe('WalletBridge network operations', () => {
+  beforeEach(async () => {
+    await walletBridge.initialize();
+  });
+
+  test('getNetworks returns all configured networks', async () => {
+    const networks = await walletBridge.getNetworks();
+    expect(Object.keys(networks).length).toBeGreaterThan(0);
+  });
+});
+
+describe('WalletBridge state management', () => {
+  beforeEach(async () => {
+    await walletBridge.initialize();
+    await walletBridge.lockWallet();
+  });
+
+  test('getState returns correct locked state', async () => {
+    const state = await walletBridge.getState();
+    expect(state.isUnlocked).toBe(false);
+    expect(state.address).toBeNull();
+  });
+
+  test('getAllWallets returns wallet list', async () => {
+    const wallets = await walletBridge.getAllWallets();
+    expect(wallets).toBeDefined();
+    expect(typeof wallets).toBe('object');
+  });
 });
 
 

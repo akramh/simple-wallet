@@ -1,15 +1,21 @@
 /**
  * @fileoverview Portfolio screen - shows holdings and performance.
+ *
+ * Implements “stale-while-revalidate” behavior:
+ * - Render cached holdings immediately when available
+ * - Refresh in the background when data is stale
  */
 
-import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useEffect } from 'react';
+import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useWalletStore } from '../../store';
+import { usePortfolioScreenSelector } from '../../store';
 import { Image } from 'react-native';
 import { getTokenIcon } from '../../utils/tokenIcons';
 
 export default function PortfolioScreen() {
+  const insets = useSafeAreaInsets();
   const {
     balances,
     formattedTotal,
@@ -20,8 +26,19 @@ export default function PortfolioScreen() {
     allNetworksLastUpdated,
     isRefreshingAllNetworks,
     refreshAllNetworks,
+    hydrateAllNetworksFromCache,
     networks,
-  } = useWalletStore();
+  } = usePortfolioScreenSelector();
+
+  useEffect(() => {
+    // Hydrate cached snapshot immediately on tab visit, then revalidate silently if stale.
+    const cachedAt = hydrateAllNetworksFromCache();
+    if (!cachedAt || Date.now() - cachedAt > 30_000) {
+      setTimeout(() => {
+        refreshAllNetworks({ silent: true });
+      }, 0);
+    }
+  }, [hydrateAllNetworksFromCache, refreshAllNetworks]);
 
   const globalTotal = Object.values(allNetworkTotals).reduce((a, b) => a + (b || 0), 0);
   const formattedGlobalTotal =
@@ -31,6 +48,19 @@ export default function PortfolioScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
+      {/* Floating Refresh Indicator */}
+      {isRefreshingAllNetworks && (
+        <View 
+          style={{ top: insets.top + 8 }}
+          className="absolute left-0 right-0 z-50 items-center"
+        >
+          <View className="bg-gray-900/90 px-4 py-2 rounded-full border border-purple-500/30 flex-row items-center shadow-2xl">
+            <ActivityIndicator size="small" color="#a855f7" />
+            <Text className="text-white text-xs font-medium ml-2">Refreshing Portfolio</Text>
+          </View>
+        </View>
+      )}
+
       {/* Header */}
       <View className="px-5 pt-4 pb-6">
         <Text className="text-white text-2xl font-bold">Portfolio</Text>
@@ -60,18 +90,9 @@ export default function PortfolioScreen() {
           <View className="flex-row items-center mt-2 justify-between">
             <Text className="text-white/60 text-xs">
               {allNetworksLastUpdated
-                ? `Updated ${new Date(allNetworksLastUpdated).toLocaleTimeString()}`
-                : 'Tap refresh to update'}
+                ? `Updated ${new Date(allNetworksLastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : 'Pull down to refresh'}
             </Text>
-            <TouchableOpacity
-              onPress={refreshAllNetworks}
-              disabled={isRefreshingAllNetworks}
-              className="px-3 py-1 bg-white/20 rounded-full"
-            >
-              <Text className="text-white text-xs">
-                {isRefreshingAllNetworks ? 'Refreshing...' : 'Refresh all'}
-              </Text>
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -100,7 +121,6 @@ export default function PortfolioScreen() {
                   <View key={networkKey} className="mb-4">
                     <View className="flex-row justify-between items-center mb-2">
                       <Text className="text-white text-md font-semibold">{net.name || networkKey}</Text>
-                      <Text className="text-white/70 text-sm">${subtotal.toFixed(2)}</Text>
                     </View>
                     {items.map((item, index) => {
                       const balance = parseFloat(item.balance || '0');

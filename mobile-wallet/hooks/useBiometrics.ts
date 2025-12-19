@@ -3,13 +3,15 @@
  *
  * @responsibilities
  * - Detect biometric capability + enrollment state on device
- * - Manage “biometric unlock enabled” setting
+ * - Manage "biometric unlock enabled" setting
  * - Provide authenticate/enable/disable helpers used by the unlock screen
  *
  * @security
- * - This hook currently stores a user password in SecureStore to support biometric unlock.
- *   This is a convenience trade-off; consider migrating to OS-backed key material / keystore
- *   wrapping if stronger guarantees are required.
+ * - Password is stored using SecureStore's `requireAuthentication: true` option,
+ *   which enforces OS-level biometric verification before releasing the secret.
+ * - On iOS, this uses Keychain with kSecAccessControlBiometryAny access control.
+ * - On Android, this uses Android Keystore with biometric-gated keys (API 23+).
+ * - Keys are invalidated when biometric settings change (new fingerprint, etc.).
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -18,6 +20,13 @@ import * as SecureStore from 'expo-secure-store';
 
 const BIOMETRIC_ENABLED_KEY = 'wallet_biometric_enabled';
 const BIOMETRIC_PASSWORD_KEY = 'wallet_biometric_password';
+
+/** Secure storage options for biometric-protected password */
+const BIOMETRIC_SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
+  requireAuthentication: true,
+  authenticationPrompt: 'Authenticate to unlock your wallet',
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
 
 interface BiometricState {
   isAvailable: boolean;
@@ -82,7 +91,11 @@ export function useBiometrics() {
    *
    * @returns Stored password string (if available) or null on failure/cancel.
    *
-   * @security Never log the returned password.
+   * @security
+   * - Uses OS-level biometric gating via SecureStore's `requireAuthentication`.
+   * - The biometric prompt is handled by the OS (Keychain on iOS, Keystore on Android),
+   *   not by LocalAuthentication, making it resistant to runtime bypass attacks.
+   * - Never log the returned password.
    */
   const authenticate = useCallback(async (): Promise<string | null> => {
     if (!state.isAvailable || !state.isEnabled) {
@@ -93,34 +106,37 @@ export function useBiometrics() {
     try {
       setState((prev) => ({ ...prev, isAuthenticating: true, error: null }));
 
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Unlock your wallet',
-        fallbackLabel: 'Use password',
-        disableDeviceFallback: false,
-      });
+      // The biometric prompt is triggered automatically by SecureStore when
+      // requireAuthentication: true. The OS handles the biometric verification
+      // at the hardware/Secure Enclave level before releasing the secret.
+      const password = await SecureStore.getItemAsync(
+        BIOMETRIC_PASSWORD_KEY,
+        BIOMETRIC_SECURE_OPTIONS
+      );
 
-      if (result.success) {
-        const password = await SecureStore.getItemAsync(BIOMETRIC_PASSWORD_KEY);
-        setState((prev) => ({ ...prev, isAuthenticating: false }));
-        return password;
-      } else {
-        const errorMessage =
-          result.error === 'user_cancel'
-            ? 'Authentication cancelled'
-            : result.error === 'user_fallback'
-            ? 'Use password instead'
-            : 'Authentication failed';
+      setState((prev) => ({ ...prev, isAuthenticating: false }));
 
+      if (!password) {
+        // Key may have been invalidated (e.g., biometric settings changed)
         setState((prev) => ({
           ...prev,
-          isAuthenticating: false,
-          error: errorMessage,
+          error: 'Biometric key expired. Please re-enable biometrics.',
+          isEnabled: false,
         }));
+        // Clean up stale enabled flag
+        await SecureStore.setItemAsync(BIOMETRIC_ENABLED_KEY, 'false');
         return null;
       }
+
+      return password;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Authentication failed';
-      setState((prev) => ({ ...prev, isAuthenticating: false, error: message }));
+
+      // Handle user cancellation or authentication failure
+      const isUserCancel = message.includes('cancel') || message.includes('Cancel');
+      const displayMessage = isUserCancel ? 'Authentication cancelled' : message;
+
+      setState((prev) => ({ ...prev, isAuthenticating: false, error: displayMessage }));
       return null;
     }
   }, [state.isAvailable, state.isEnabled]);
@@ -131,7 +147,11 @@ export function useBiometrics() {
    * @param password - Current wallet password to store for biometric unlock.
    * @returns True if enabled and stored successfully; false otherwise.
    *
-   * @security Storing the password is sensitive; keep usage tightly scoped.
+   * @security
+   * - Password is stored with `requireAuthentication: true`, binding it to
+   *   OS-level biometric verification.
+   * - On iOS, stored in Keychain with kSecAccessControlBiometryAny.
+   * - On Android, uses biometric-gated Android Keystore keys.
    */
   const enable = useCallback(async (password: string): Promise<boolean> => {
     if (!state.isAvailable) {
@@ -140,18 +160,16 @@ export function useBiometrics() {
     }
 
     try {
-      // Verify user can authenticate first
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Enable biometric unlock',
-        fallbackLabel: 'Cancel',
-      });
+      // Store password with biometric protection.
+      // On iOS, setting a new value doesn't require authentication (only reading does).
+      // On Android, the biometric prompt appears during setItemAsync.
+      await SecureStore.setItemAsync(
+        BIOMETRIC_PASSWORD_KEY,
+        password,
+        BIOMETRIC_SECURE_OPTIONS
+      );
 
-      if (!result.success) {
-        return false;
-      }
-
-      // Store password securely
-      await SecureStore.setItemAsync(BIOMETRIC_PASSWORD_KEY, password);
+      // Store enabled flag separately (not biometric-protected)
       await SecureStore.setItemAsync(BIOMETRIC_ENABLED_KEY, 'true');
 
       setState((prev) => ({ ...prev, isEnabled: true }));

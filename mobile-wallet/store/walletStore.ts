@@ -114,7 +114,14 @@ interface WalletStore {
   /** Refresh fiat prices and derived portfolio totals. */
   refreshPrices: () => Promise<void>;
   /** Refresh aggregated holdings across enabled networks. */
-  refreshAllNetworks: () => Promise<void>;
+  refreshAllNetworks: (options?: { silent?: boolean; force?: boolean }) => Promise<void>;
+  /**
+   * Hydrate aggregated holdings from persistent cache (SWR).
+   *
+   * @remarks
+   * This performs no network calls; it only reads persisted cache snapshots via WalletBridge.
+   */
+  hydrateAllNetworksFromCache: () => number | null;
   /** Set enabled networks and persist. */
   setEnabledNetworks: (networks: string[]) => Promise<void>;
   /** Load enabled networks from storage. */
@@ -268,6 +275,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   createWallet: async (password: string, name = 'default') => {
     try {
       set({ isLoading: true, error: null });
+      // Yield to UI to allow loading state to render before blocking crypto op
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       const result = await walletBridge.createWallet(password, name, true);
 
@@ -296,6 +305,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   importWallet: async (mnemonic: string, password: string, name = 'default') => {
     try {
       set({ isLoading: true, error: null });
+      // Yield to UI to allow loading state to render before blocking crypto op
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       const result = await walletBridge.importWallet(mnemonic, password, name);
 
@@ -348,8 +359,23 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         currentAccountIndex: currentIndex,
       });
 
+      // Hydrate cached balances/prices immediately (SWR) before background refresh.
+      const cachedBalances = walletBridge.getCachedBalances();
+      const cachedPrices = walletBridge.getCachedPrices();
+      if (cachedBalances || cachedPrices) {
+        set({
+          balances: cachedBalances?.balances ?? get().balances,
+          balancesLastUpdated: cachedBalances?.fetchedAt ?? get().balancesLastUpdated,
+          prices: cachedPrices?.prices ?? get().prices,
+          totalValue: cachedPrices?.totalValue ?? get().totalValue,
+          formattedTotal: cachedPrices?.formattedTotal ?? get().formattedTotal,
+        });
+      }
+
       // Refresh balances (don't await - can run in background)
       get().refreshBalances();
+      // Hydrate cross-network portfolio for Portfolio tab (SWR) and refresh in background when needed.
+      get().hydrateAllNetworksFromCache();
     } catch (error) {
       console.error('[WalletStore] Unlock failed:', error);
       set({
@@ -405,7 +431,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       set({
         balances,
         isRefreshingBalances: false,
-        balancesLastUpdated: Date.now(),
+        balancesLastUpdated: balances[0]?.lastUpdated ?? Date.now(),
       });
 
       // Also refresh prices
@@ -429,7 +455,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     try {
       set({ isLoadingPrices: true });
 
-      const priceData = await walletBridge.getTokenPrices();
+      const priceData = await walletBridge.getTokenPrices(get().balances);
 
       set({
         prices: priceData.prices,
@@ -443,21 +469,45 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     }
   },
 
-  refreshAllNetworks: async () => {
-    if (get().isRefreshingAllNetworks) return;
+  refreshAllNetworks: async (options) => {
+    const silent = options?.silent ?? false;
+    const force = options?.force ?? false;
+    if (get().isRefreshingAllNetworks && !silent) return;
     const enabled = get().enabledNetworks.length ? get().enabledNetworks : Object.keys(get().networks);
     try {
-      set({ isRefreshingAllNetworks: true });
-      const result = await walletBridge.getAllNetworkHoldings({ enabledNetworks: enabled, ttlMs: 30_000 });
+      if (!silent) {
+        set({ isRefreshingAllNetworks: true });
+      }
+      const result = await walletBridge.getAllNetworkHoldings({ enabledNetworks: enabled, ttlMs: 30_000, force });
       set({
         allNetworkHoldings: result.holdings,
         allNetworkTotals: result.totalsByNetwork,
         allNetworksLastUpdated: result.fetchedAt,
-        isRefreshingAllNetworks: false,
       });
     } catch (error) {
       console.error('[WalletStore] refreshAllNetworks failed:', error);
-      set({ isRefreshingAllNetworks: false });
+    } finally {
+      if (!silent) {
+        set({ isRefreshingAllNetworks: false });
+      }
+    }
+  },
+
+  hydrateAllNetworksFromCache: () => {
+    if (!get().isUnlocked) return null;
+    const enabled = get().enabledNetworks.length ? get().enabledNetworks : Object.keys(get().networks);
+    try {
+      const cached = walletBridge.getCachedAllNetworkHoldings({ enabledNetworks: enabled });
+      if (!cached) return null;
+      set({
+        allNetworkHoldings: cached.holdings,
+        allNetworkTotals: cached.totalsByNetwork,
+        allNetworksLastUpdated: cached.fetchedAt,
+      });
+      return cached.fetchedAt;
+    } catch (err) {
+      console.warn('[WalletStore] hydrateAllNetworksFromCache failed:', err);
+      return null;
     }
   },
 
@@ -492,18 +542,25 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
       const result = await walletBridge.switchNetwork(networkKey);
 
+      const cachedBalances = walletBridge.getCachedBalances(networkKey);
+      const cachedPrices = walletBridge.getCachedPrices(networkKey);
+
       set({
         network: networkKey,
         address: result.address,
         isLoading: false,
-        balances: [],
-        balancesLastUpdated: null,
+        balances: cachedBalances?.balances ?? [],
+        balancesLastUpdated: cachedBalances?.fetchedAt ?? null,
+        prices: cachedPrices?.prices ?? {},
+        totalValue: cachedPrices?.totalValue ?? 0,
+        formattedTotal: cachedPrices?.formattedTotal ?? '$0.00',
         transactions: [],
         transactionsLastUpdated: null,
       });
 
       get().refreshBalances();
       get().loadTransactions();
+      get().hydrateAllNetworksFromCache();
     } catch (error) {
       console.error('[WalletStore] Switch network failed:', error);
       set({
@@ -629,6 +686,9 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       }));
       accountList.sort((a, b) => a.index - b.index);
 
+      const cachedBalances = walletBridge.getCachedBalances();
+      const cachedPrices = walletBridge.getCachedPrices();
+
       set({
         isLoading: false,
         isUnlocked: true,
@@ -636,8 +696,11 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         currentWalletName: result.walletName,
         accounts: accountList,
         currentAccountIndex: currentIndex,
-        balances: [],
-        balancesLastUpdated: null,
+        balances: cachedBalances?.balances ?? [],
+        balancesLastUpdated: cachedBalances?.fetchedAt ?? null,
+        prices: cachedPrices?.prices ?? {},
+        totalValue: cachedPrices?.totalValue ?? 0,
+        formattedTotal: cachedPrices?.formattedTotal ?? '$0.00',
         transactions: [],
         transactionsLastUpdated: null,
       });
@@ -645,6 +708,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       // Refresh data (don't await - can run in background)
       get().refreshBalances();
       get().loadTransactions();
+      get().hydrateAllNetworksFromCache();
     } catch (error) {
       console.error('[WalletStore] Switch wallet failed:', error);
       set({
@@ -708,12 +772,18 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
       const result = await walletBridge.switchAccount(index);
 
+      const cachedBalances = walletBridge.getCachedBalances();
+      const cachedPrices = walletBridge.getCachedPrices();
+
       set({
         isLoading: false,
         address: result.address,
         currentAccountIndex: index,
-        balances: [],
-        balancesLastUpdated: null,
+        balances: cachedBalances?.balances ?? [],
+        balancesLastUpdated: cachedBalances?.fetchedAt ?? null,
+        prices: cachedPrices?.prices ?? {},
+        totalValue: cachedPrices?.totalValue ?? 0,
+        formattedTotal: cachedPrices?.formattedTotal ?? '$0.00',
         transactions: [],
         transactionsLastUpdated: null,
       });
@@ -721,6 +791,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       // Refresh balances and transactions for new account
       get().refreshBalances();
       get().loadTransactions();
+      get().hydrateAllNetworksFromCache();
     } catch (error) {
       console.error('[WalletStore] Switch account failed:', error);
       set({

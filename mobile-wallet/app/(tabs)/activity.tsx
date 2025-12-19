@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useWalletStore } from '../../store';
+import { useActivityScreenSelector } from '../../store';
 import { TransactionDetailsModal } from '../../components/TransactionDetailsModal';
 import type { Transaction } from '../../services';
 
@@ -30,7 +30,7 @@ export default function ActivityScreen() {
     loadTransactions,
     setTransactionFilter,
     getFilteredTransactions,
-  } = useWalletStore();
+  } = useActivityScreenSelector();
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);

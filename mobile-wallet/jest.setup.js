@@ -76,6 +76,13 @@ jest.mock('expo-secure-store', () => {
     getItemAsync: jest.fn(async (key) => store.get(key) ?? null),
     setItemAsync: jest.fn(async (key, value) => void store.set(key, value)),
     deleteItemAsync: jest.fn(async (key) => void store.delete(key)),
+    canUseBiometricAuthentication: jest.fn(async () => true),
+    // Keychain accessibility constants (iOS)
+    WHEN_UNLOCKED: 'WHEN_UNLOCKED',
+    WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
+    AFTER_FIRST_UNLOCK: 'AFTER_FIRST_UNLOCK',
+    AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 'AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY',
+    WHEN_PASSCODE_SET_THIS_DEVICE_ONLY: 'WHEN_PASSCODE_SET_THIS_DEVICE_ONLY',
   };
 });
 

@@ -6,42 +6,48 @@ import { useCallback, useEffect } from 'react';
 import {
   View,
   Text,
-  ScrollView,
+  FlatList,
   TouchableOpacity,
   RefreshControl,
   Pressable,
   Image,
+  ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useWalletStore } from '../../store';
+import { useWalletScreenSelector } from '../../store';
 import { useClipboard } from '../../hooks';
 import { useToast } from '../../contexts';
 import { getTokenIcon } from '../../utils/tokenIcons';
 
 export default function WalletScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const {
     address,
     network,
     networks,
     balances,
     isRefreshingBalances,
+    balancesLastUpdated,
     formattedTotal,
     refreshBalances,
     prices,
     accounts,
     currentAccountIndex,
     currentWalletName,
-  } = useWalletStore();
+  } = useWalletScreenSelector();
   const { copy } = useClipboard();
   const { showToast } = useToast();
 
   // Refresh balances on mount
   useEffect(() => {
-    refreshBalances();
-  }, []);
+    // Avoid spamming refreshes when we already have recent cached data.
+    if (!balancesLastUpdated || Date.now() - balancesLastUpdated > 30_000) {
+      refreshBalances();
+    }
+  }, [balancesLastUpdated, refreshBalances]);
 
   const handleRefresh = useCallback(() => {
     refreshBalances();
@@ -63,111 +69,136 @@ export default function WalletScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      {/* Header */}
-      <View className="px-5 pt-4 pb-6">
-        {/* Network & Account Selectors */}
-        <View className="flex-row items-center mb-4">
-          <Pressable
-            onPress={() => router.push('/network-select')}
-            className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full mr-2"
-          >
-            <View className="w-2.5 h-2.5 rounded-full bg-green-500 mr-2" />
-            <Text className="text-gray-300 text-sm">{networkConfig?.name || network}</Text>
-            <Ionicons name="chevron-down" size={16} color="#9ca3af" className="ml-1" />
-          </Pressable>
-          
-          {hasMultipleAccounts && (
-            <Pressable
-              onPress={() => router.push('/account-manage')}
-              className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full"
-            >
-              <Ionicons name="person" size={12} color="#9ca3af" />
-              <Text className="text-gray-300 text-sm ml-1">#{currentAccountIndex + 1}</Text>
-              <Ionicons name="chevron-down" size={16} color="#9ca3af" className="ml-1" />
-            </Pressable>
-          )}
-        </View>
-
-        {/* Total Balance */}
-        <Text className="text-gray-400 text-sm mb-1">Total Balance</Text>
-        <Text className="text-white text-4xl font-bold mb-1">{formattedTotal}</Text>
-        <Pressable className="flex-row items-center" onPress={handleCopyAddress}>
-          <Text className="text-white font-medium">{currentWalletName || 'Wallet'}</Text>
-          <Text className="text-gray-500 mx-2">·</Text>
-          <Text className="text-gray-400 text-sm">{truncatedAddress}</Text>
-          <Ionicons name="copy-outline" size={14} color="#9ca3af" style={{ marginLeft: 8 }} />
-        </Pressable>
-      </View>
-
-      {/* Quick Actions */}
-      <View className="flex-row justify-center gap-4 px-5 mb-6">
-        <QuickActionButton
-          icon="arrow-up"
-          label="Send"
-          onPress={() => router.push('/send')}
-        />
-        <QuickActionButton
-          icon="arrow-down"
-          label="Receive"
-          onPress={() => router.push('/receive')}
-        />
-        <QuickActionButton
-          icon="swap-horizontal"
-          label="Swap"
-          onPress={() => {}}
-          disabled
-        />
-        <QuickActionButton
-          icon="card"
-          label="Buy"
-          onPress={() => {}}
-          disabled
-        />
-      </View>
-
-      {/* Token List */}
-      <View className="flex-1 bg-gray-900/50 rounded-t-3xl px-5 pt-5">
-        <View className="mb-4">
-          <Text className="text-white text-lg font-semibold">Tokens</Text>
-        </View>
-
-        <ScrollView
-          refreshControl={
-            <RefreshControl
-              refreshing={isRefreshingBalances}
-              onRefresh={handleRefresh}
-              tintColor="#a855f7"
-            />
-          }
-          showsVerticalScrollIndicator={false}
+      {/* Floating Refresh Indicator */}
+      {isRefreshingBalances && (
+        <View 
+          style={{ top: insets.top + 8 }}
+          className="absolute left-0 right-0 z-50 items-center"
         >
-          {balances.length === 0 ? (
-            <View className="items-center py-12">
-              <Ionicons name="wallet-outline" size={48} color="#4b5563" />
-              <Text className="text-gray-500 mt-4">No tokens yet</Text>
-              <Text className="text-gray-600 text-sm mt-1">
-                Pull down to refresh
-              </Text>
+          <View className="bg-gray-900/90 px-4 py-2 rounded-full border border-purple-500/30 flex-row items-center shadow-2xl">
+            <ActivityIndicator size="small" color="#a855f7" />
+            <Text className="text-white text-xs font-medium ml-2">Refreshing balances...</Text>
+          </View>
+        </View>
+      )}
+
+      <FlatList
+        data={balances}
+        keyExtractor={(item, index) => `${item.token.symbol}-${index}`}
+        renderItem={({ item }) => {
+          const price = prices[item.token.symbol] ?? null;
+          const balance = parseFloat(item.balance || '0');
+          const usdValue = price !== null ? balance * price : null;
+          return (
+            <View className="px-5 bg-gray-900/50">
+              <TokenRow
+                symbol={item.token.symbol}
+                name={item.token.name}
+                balance={item.balance || '0'}
+                usdValue={usdValue}
+                isLoading={item.isLoading}
+              />
             </View>
-          ) : (
-            balances.map((item, index) => {
-              const price = prices[item.token.symbol] ?? null;
-              const balance = parseFloat(item.balance || '0');
-              const usdValue = price !== null ? balance * price : null;
-              return (
-                <TokenRow
-                  key={`${item.token.symbol}-${index}`}
-                  symbol={item.token.symbol}
-                  name={item.token.name}
-                  balance={item.balance || '0'}
-                  usdValue={usdValue}
-                  isLoading={item.isLoading}
-                />
-              );
-            })
-          )}
-        </ScrollView>
-      </View>
+          );
+        }}
+        ListHeaderComponent={() => (
+          <>
+            {/* Header */}
+            <View className="px-5 pt-4 pb-6">
+              {/* Network & Account Selectors */}
+              <View className="flex-row items-center mb-4">
+                <Pressable
+                  onPress={() => router.push('/network-select')}
+                  className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full mr-2"
+                >
+                  <View className="w-2.5 h-2.5 rounded-full bg-green-500 mr-2" />
+                  <Text className="text-gray-300 text-sm">{networkConfig?.name || network}</Text>
+                  <Ionicons name="chevron-down" size={16} color="#9ca3af" className="ml-1" />
+                </Pressable>
+                
+                {hasMultipleAccounts && (
+                  <Pressable
+                    onPress={() => router.push('/account-manage')}
+                    className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full"
+                  >
+                    <Ionicons name="person" size={12} color="#9ca3af" />
+                    <Text className="text-gray-300 text-sm ml-1">#{currentAccountIndex + 1}</Text>
+                    <Ionicons name="chevron-down" size={16} color="#9ca3af" className="ml-1" />
+                  </Pressable>
+                )}
+              </View>
+
+              {/* Total Balance */}
+              <Text className="text-gray-400 text-sm mb-1">Total Balance</Text>
+              <Text className="text-white text-4xl font-bold mb-1">{formattedTotal}</Text>
+              
+              <View className="flex-row items-center justify-between">
+                <Pressable className="flex-row items-center" onPress={handleCopyAddress}>
+                  <Text className="text-white font-medium">{currentWalletName || 'Wallet'}</Text>
+                  <Text className="text-gray-500 mx-2">·</Text>
+                  <Text className="text-gray-400 text-sm">{truncatedAddress}</Text>
+                  <Ionicons name="copy-outline" size={14} color="#9ca3af" style={{ marginLeft: 8 }} />
+                </Pressable>
+                
+                {balancesLastUpdated && (
+                  <Text className="text-gray-600 text-xs">
+                    Updated {new Date(balancesLastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            {/* Quick Actions */}
+            <View className="flex-row justify-center gap-4 px-5 mb-6">
+              <QuickActionButton
+                icon="arrow-up"
+                label="Send"
+                onPress={() => router.push('/send')}
+              />
+              <QuickActionButton
+                icon="arrow-down"
+                label="Receive"
+                onPress={() => router.push('/receive')}
+              />
+              <QuickActionButton
+                icon="swap-horizontal"
+                label="Swap"
+                onPress={() => {}}
+                disabled
+              />
+              <QuickActionButton
+                icon="card"
+                label="Buy"
+                onPress={() => {}}
+                disabled
+              />
+            </View>
+
+            {/* Token List Title */}
+            <View className="bg-gray-900/50 rounded-t-3xl px-5 pt-5 pb-2">
+              <Text className="text-white text-lg font-semibold">Tokens</Text>
+            </View>
+          </>
+        )}
+        ListEmptyComponent={
+          <View className="items-center py-12 bg-gray-900/50 h-full">
+            <Ionicons name="wallet-outline" size={48} color="#4b5563" />
+            <Text className="text-gray-500 mt-4">No tokens yet</Text>
+            <Text className="text-gray-600 text-sm mt-1">
+              Pull down to refresh
+            </Text>
+          </View>
+        }
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshingBalances}
+            onRefresh={handleRefresh}
+            tintColor="#a855f7"
+          />
+        }
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ flexGrow: 1 }}
+      />
     </SafeAreaView>
   );
 }
