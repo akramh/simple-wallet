@@ -71,6 +71,10 @@ export interface NormalizedTonTransaction {
   valueNano: string;
   /** Value transferred in TON. */
   valueTon: string;
+  /** Transaction fee in nanoTON (if available). */
+  feeNano?: string;
+  /** Transaction fee in TON (if available). */
+  feeTon?: string;
   /** Unix timestamp in milliseconds. */
   timestamp: number;
   /** Transaction status. */
@@ -100,8 +104,13 @@ export interface TonFeeEstimate {
 /**
  * Convert TON amount to nanoTON.
  *
- * @param ton - Amount in TON as string or number
- * @returns Amount in nanoTON as bigint
+ * @param ton - Amount in TON as string or number (e.g., "1.5" or 1.5)
+ * @returns Amount in nanoTON as bigint (1 TON = 1,000,000,000 nanoTON)
+ * @throws {Error} If the amount is not a valid number or has more than 9 decimal places
+ *
+ * @example
+ * tonToNano("1.5") // Returns 1500000000n
+ * tonToNano(2) // Returns 2000000000n
  */
 export function tonToNano(ton: string | number): bigint {
   const raw = typeof ton === 'number' ? ton.toString() : ton.trim();
@@ -122,8 +131,13 @@ export function tonToNano(ton: string | number): bigint {
 /**
  * Convert nanoTON to TON.
  *
- * @param nano - Amount in nanoTON
- * @returns Amount in TON as decimal string
+ * @param nano - Amount in nanoTON as bigint, number, or string
+ * @returns Amount in TON as decimal string (trailing zeros trimmed)
+ *
+ * @example
+ * nanoToTon(1500000000n) // Returns "1.5"
+ * nanoToTon("2000000000") // Returns "2"
+ * nanoToTon(500000000) // Returns "0.5"
  */
 export function nanoToTon(nano: bigint | number | string): string {
   const value = typeof nano === 'bigint' ? nano : BigInt(nano);

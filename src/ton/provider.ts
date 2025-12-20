@@ -105,6 +105,8 @@ export interface TonProviderConfig {
   nativeName: string;
   /** Workchain id (default: 0). */
   workchain?: number;
+  /** Block explorer base URL (e.g., 'https://tonscan.org'). */
+  blockExplorer?: string;
 }
 
 /**
@@ -123,7 +125,12 @@ export class TonProvider {
    */
   constructor(config: TonProviderConfig) {
     this.config = config;
-    this.explorer = getTonExplorer(config.networkKey, config.endpoint, config.apiKey);
+    this.explorer = getTonExplorer(
+      config.networkKey,
+      config.endpoint,
+      config.apiKey,
+      config.blockExplorer
+    );
   }
 
   /**
@@ -309,7 +316,9 @@ export class TonProvider {
    * @param amountTon - Amount in TON string
    * @param mnemonic - BIP-39 mnemonic for signing
    * @param comment - Optional comment payload
-   * @returns Transaction hash (if available)
+   * @param accountIndex - HD account index for key derivation
+   * @returns Transaction hash if resolved, or 'pending' if hash resolution timed out
+   * @throws {Error} If recipient address is invalid or no sender address available
    */
   async sendTransaction(
     fromAddress: string | undefined,
@@ -357,30 +366,55 @@ export class TonProvider {
     return { hash };
   }
 
+  /**
+   * Wait for a transaction to be confirmed and return its hash.
+   *
+   * Uses exponential backoff starting at 500ms, increasing by 1.5x each poll,
+   * up to a maximum of 3 seconds between polls.
+   *
+   * @param contract - Wallet contract instance
+   * @param seqno - Expected seqno after transaction
+   * @returns Transaction hash if resolved, or 'pending' if timeout reached
+   */
   private async waitForTransactionHash(contract: any, seqno: number): Promise<string> {
     const client = this.explorer.getClient();
     const start = Date.now();
-    const timeoutMs = 12_000;
-    const pollMs = 1_000;
+    const timeoutMs = 15_000; // 15 second timeout
+    const initialPollMs = 500;
+    const maxPollMs = 3_000;
+    const backoffMultiplier = 1.5;
+
+    let pollMs = initialPollMs;
+    let attempts = 0;
 
     while (Date.now() - start < timeoutMs) {
+      attempts++;
       try {
         const currentSeqno = await getTonWalletSeqno(contract);
         if (currentSeqno > seqno) {
+          // Transaction was sent, try to get the hash
           const txs = await client.getTransactions(contract.address, { limit: 5 });
           const latest = txs[0];
           const hash = resolveTonTransactionHash(latest);
           if (hash) {
+            console.log(`[TonProvider] Transaction hash resolved after ${attempts} attempts in ${Date.now() - start}ms`);
             return hash;
           }
         }
       } catch (error) {
-        console.warn('[TonProvider] Failed to fetch transaction hash:', error);
+        console.warn(`[TonProvider] Attempt ${attempts} failed to fetch transaction hash:`, error);
       }
+
+      // Wait with exponential backoff
       await new Promise(resolve => setTimeout(resolve, pollMs));
+
+      // Increase poll interval for next attempt (with max cap)
+      pollMs = Math.min(pollMs * backoffMultiplier, maxPollMs);
     }
 
-    return '';
+    // Timeout reached - transaction may still be pending on-chain
+    console.warn(`[TonProvider] Transaction hash resolution timed out after ${attempts} attempts (${Date.now() - start}ms)`);
+    return 'pending';
   }
 
   /**

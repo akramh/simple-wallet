@@ -27,6 +27,7 @@ export class TonExplorer {
   private client: TonClient;
   private networkKey: string;
   private testOnly: boolean;
+  private blockExplorerUrl: string;
 
   /**
    * Create a TON explorer client.
@@ -34,11 +35,16 @@ export class TonExplorer {
    * @param networkKey - Network identifier (e.g., 'ton-mainnet')
    * @param endpoint - Toncenter-compatible HTTP endpoint
    * @param apiKey - Optional API key for Toncenter
+   * @param blockExplorer - Block explorer base URL (e.g., 'https://tonscan.org')
    */
-  constructor(networkKey: string, endpoint: string, apiKey?: string) {
+  constructor(networkKey: string, endpoint: string, apiKey?: string, blockExplorer?: string) {
     this.networkKey = networkKey;
     this.testOnly = networkKey !== 'ton-mainnet';
     this.client = new TonClient({ endpoint, apiKey });
+    // Use configured block explorer or fall back to tonscan.org
+    this.blockExplorerUrl = blockExplorer || (this.testOnly
+      ? 'https://testnet.tonscan.org'
+      : 'https://tonscan.org');
   }
 
   /**
@@ -87,10 +93,7 @@ export class TonExplorer {
    */
   getTransactionUrl(hash: string): string {
     if (!hash) return '';
-    if (this.testOnly) {
-      return `https://testnet.tonscan.org/tx/${hash}`;
-    }
-    return `https://tonscan.org/tx/${hash}`;
+    return `${this.blockExplorerUrl}/tx/${hash}`;
   }
 
   /**
@@ -102,10 +105,7 @@ export class TonExplorer {
   getAddressUrl(address: string): string {
     if (!address) return '';
     const friendly = normalizeAddressForUrl(address, this.testOnly);
-    if (this.testOnly) {
-      return `https://testnet.tonscan.org/address/${friendly}`;
-    }
-    return `https://tonscan.org/address/${friendly}`;
+    return `${this.blockExplorerUrl}/address/${friendly}`;
   }
 }
 
@@ -240,6 +240,50 @@ function extractOutMessages(tx: any): any[] {
 }
 
 /**
+ * Extract total fee from a TON transaction.
+ *
+ * @param tx - Raw transaction payload
+ * @returns Total fee in nanoTON as bigint
+ */
+function extractTxFee(tx: any): bigint {
+  // Try totalFees first (TonClient format)
+  if (tx?.totalFees) {
+    if (typeof tx.totalFees.coins === 'bigint') {
+      return tx.totalFees.coins;
+    }
+    if (typeof tx.totalFees === 'bigint') {
+      return tx.totalFees;
+    }
+    return toBigInt(tx.totalFees.coins ?? tx.totalFees);
+  }
+
+  // Try fee field (Toncenter v2 format)
+  if (tx?.fee !== undefined) {
+    return toBigInt(tx.fee);
+  }
+
+  // Try description.computePhase.gasFees + description.actionPhase.totalFwdFees
+  const desc = tx?.description;
+  if (desc) {
+    let total = 0n;
+    if (desc.computePhase?.gasFees) {
+      total += toBigInt(desc.computePhase.gasFees);
+    }
+    if (desc.actionPhase?.totalFwdFees) {
+      total += toBigInt(desc.actionPhase.totalFwdFees);
+    }
+    if (desc.storageFee) {
+      total += toBigInt(desc.storageFee);
+    }
+    if (total > 0n) {
+      return total;
+    }
+  }
+
+  return 0n;
+}
+
+/**
  * Normalize a raw TON transaction into the wallet display format.
  *
  * @param tx - Raw transaction payload from the TON client
@@ -302,6 +346,7 @@ export function normalizeTonTransaction(
   }
 
   const status = getTransactionStatus(tx, type);
+  const fee = extractTxFee(tx);
 
   return {
     hash: extractTxHash(tx),
@@ -309,6 +354,8 @@ export function normalizeTonTransaction(
     to: toAddress,
     valueNano: value.toString(),
     valueTon: nanoToTon(value),
+    feeNano: fee > 0n ? fee.toString() : undefined,
+    feeTon: fee > 0n ? nanoToTon(fee) : undefined,
     timestamp,
     status,
     type,
@@ -410,13 +457,19 @@ const explorerCache: Map<string, TonExplorer> = new Map();
  * @param networkKey - Network key (e.g., 'ton-mainnet')
  * @param endpoint - Toncenter-compatible HTTP endpoint
  * @param apiKey - Optional API key
+ * @param blockExplorer - Block explorer base URL (e.g., 'https://tonscan.org')
  * @returns TON explorer instance
  */
-export function getTonExplorer(networkKey: string, endpoint: string, apiKey?: string): TonExplorer {
+export function getTonExplorer(
+  networkKey: string,
+  endpoint: string,
+  apiKey?: string,
+  blockExplorer?: string
+): TonExplorer {
   const cacheKey = `${networkKey}:${endpoint}`;
   let explorer = explorerCache.get(cacheKey);
   if (!explorer) {
-    explorer = new TonExplorer(networkKey, endpoint, apiKey);
+    explorer = new TonExplorer(networkKey, endpoint, apiKey, blockExplorer);
     explorerCache.set(cacheKey, explorer);
   }
   return explorer;

@@ -79,6 +79,90 @@ test('normalizeTonAddress returns non-bounceable format', () => {
 });
 
 // ============================================================================
+// Extended Address Validation Tests
+// ============================================================================
+
+test('isValidTonAddress accepts bounceable addresses (EQ prefix)', () => {
+  // Valid bounceable address (burn address)
+  const bounceable = 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c';
+  assert.equal(isValidTonAddress(bounceable), true, 'should accept valid bounceable address');
+});
+
+test('isValidTonAddress accepts non-bounceable addresses (UQ prefix)', () => {
+  // Valid non-bounceable address (burn address)
+  const nonBounceable = 'UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ';
+  assert.equal(isValidTonAddress(nonBounceable), true, 'should accept valid non-bounceable address');
+});
+
+test('isValidTonAddress accepts raw format addresses', () => {
+  // Raw address format: workchain:64-char-hex
+  const rawAddress = '0:0000000000000000000000000000000000000000000000000000000000000000';
+  assert.equal(isValidTonAddress(rawAddress), true, 'should accept raw format address');
+});
+
+test('isValidTonAddress rejects invalid addresses', () => {
+  // Too short
+  assert.equal(isValidTonAddress('UQBshort'), false, 'should reject too short address');
+  // Invalid characters
+  assert.equal(isValidTonAddress('UQ!@#$%^&*()'), false, 'should reject invalid characters');
+  // Ethereum address format
+  assert.equal(isValidTonAddress('0x1234567890abcdef1234567890abcdef12345678'), false, 'should reject Ethereum addresses');
+  // Bitcoin address format
+  assert.equal(isValidTonAddress('bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh'), false, 'should reject Bitcoin addresses');
+  // Invalid checksum (wrong last chars)
+  assert.equal(isValidTonAddress('UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9d'), false, 'should reject invalid checksum');
+});
+
+test('isValidTonAddress handles null and undefined', () => {
+  assert.equal(isValidTonAddress(null), false, 'should reject null');
+  assert.equal(isValidTonAddress(undefined), false, 'should reject undefined');
+});
+
+test('isValidTonAddress handles whitespace', () => {
+  const { address } = deriveTonAddress(TEST_MNEMONIC, 0);
+  // Address with leading/trailing whitespace - validator should handle this
+  // Note: the SDK validator may or may not trim, so we test that it doesn't crash
+  const result = isValidTonAddress(`  ${address}  `);
+  assert.equal(typeof result, 'boolean', 'should return boolean for whitespace input');
+});
+
+test('normalizeTonAddress converts bounceable to non-bounceable', () => {
+  // Bounceable burn address
+  const bounceable = 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c';
+  const normalized = normalizeTonAddress(bounceable);
+
+  assert.ok(normalized.startsWith('UQ'), 'should convert to non-bounceable');
+  assert.equal(isValidTonAddress(normalized), true);
+});
+
+test('normalizeTonAddress handles raw format addresses', () => {
+  const rawAddress = '0:0000000000000000000000000000000000000000000000000000000000000000';
+  const normalized = normalizeTonAddress(rawAddress);
+
+  assert.ok(normalized.startsWith('UQ'), 'should normalize raw address to non-bounceable friendly format');
+  assert.equal(isValidTonAddress(normalized), true);
+});
+
+test('parseTonAddress throws for invalid addresses', () => {
+  // parseTonAddress throws for invalid input - error message may vary
+  assert.throws(() => parseTonAddress('invalid'));
+  assert.throws(() => parseTonAddress(''));
+});
+
+test('formatTonAddress produces correct format based on options', () => {
+  const { address } = deriveTonAddress(TEST_MNEMONIC, 0);
+  const parsed = parseTonAddress(address);
+
+  const bounceable = formatTonAddress(parsed, { bounceable: true });
+  const nonBounceable = formatTonAddress(parsed, { bounceable: false });
+
+  assert.ok(bounceable.startsWith('EQ'), 'bounceable should start with EQ');
+  assert.ok(nonBounceable.startsWith('UQ'), 'non-bounceable should start with UQ');
+  assert.equal(bounceable.length, 48, 'friendly addresses should be 48 chars');
+  assert.equal(nonBounceable.length, 48, 'friendly addresses should be 48 chars');
+});
+
+// ============================================================================
 // Unit Conversion Tests
 // ============================================================================
 

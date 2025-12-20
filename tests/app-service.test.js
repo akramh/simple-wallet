@@ -185,7 +185,8 @@ test('sendTonTransaction passes current account index to provider', async () => 
     }
   };
 
-  await svc.sendTonTransaction('UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c', '1', 'password');
+  // Use valid TON burn address (non-bounceable format for workchain 0, all zeros)
+  await svc.sendTonTransaction('UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ', '1', 'password');
   assert.equal(calls.length, 1);
   assert.equal(calls[0][5], 1);
 });

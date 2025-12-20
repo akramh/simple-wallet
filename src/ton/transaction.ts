@@ -33,8 +33,24 @@ export interface TonTransferParams {
 /**
  * Build a TON internal message for a transfer.
  *
- * @param params - Transfer parameters
- * @returns Internal message suitable for wallet transfer
+ * Creates an internal message suitable for use with WalletContractV4.sendTransfer().
+ * Handles bounce flag derivation from friendly address format when not explicitly specified.
+ *
+ * @param params - Transfer parameters including recipient, amount, and optional comment
+ * @param params.toAddress - Recipient TON address (friendly or raw format)
+ * @param params.amountTon - Amount to send in TON (decimal string, e.g., "1.5")
+ * @param params.comment - Optional text comment to attach to the transaction
+ * @param params.bounce - Whether to bounce if recipient is uninitialized; derived from address if omitted
+ * @returns Internal message object for wallet transfer
+ * @throws {Error} If the amount is invalid or less than or equal to 0
+ * @throws {Error} If the recipient address cannot be parsed
+ *
+ * @example
+ * const message = buildTonTransferMessage({
+ *   toAddress: "UQBExample...",
+ *   amountTon: "1.5",
+ *   comment: "Payment for services"
+ * });
  */
 export function buildTonTransferMessage(params: TonTransferParams): ReturnType<typeof internal> {
   const { toAddress, amountTon, comment, bounce } = params;

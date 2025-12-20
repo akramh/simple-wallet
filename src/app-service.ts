@@ -431,6 +431,7 @@ export class WalletAppService {
         apiKey: netConfig.rpcApiKey,
         nativeSymbol: netConfig.nativeSymbol,
         nativeName: netConfig.nativeName,
+        blockExplorer: netConfig.blockExplorer,
       });
     }
 

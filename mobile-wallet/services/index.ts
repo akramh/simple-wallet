@@ -35,6 +35,9 @@ export {
   formatLargeNumber,
   formatSupply,
 } from './price-history';
+
+// TON address validation
+export { isValidTonAddress } from './ton-utils';
 export type {
   TimeRange,
   PricePoint,

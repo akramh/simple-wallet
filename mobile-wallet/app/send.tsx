@@ -24,6 +24,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSendScreenSelector } from '../store';
 import type { Token, GasEstimate } from '../services';
+import { isValidTonAddress } from '../services';
 import * as Clipboard from 'expo-clipboard';
 
 export default function SendScreen() {
@@ -164,6 +165,14 @@ export default function SendScreen() {
     }
     if (parseFloat(amount) <= 0) {
       Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+    // Validate TON address format
+    if (isTonNetwork && !isValidTonAddress(recipient)) {
+      Alert.alert(
+        'Invalid Address',
+        'Please enter a valid TON address (e.g., EQ... or UQ... format)'
+      );
       return;
     }
     setStep('confirm');

@@ -547,7 +547,7 @@ class WalletBridge {
 
     const network = this.config!.network;
     const networkConfig = this.config!.networks[network];
-    const { getTokenPrices, calculateTotalValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice } =
+    const { getTokenPrices, calculateTotalValue, getPriceByNetworkType } =
       await import('./price-service');
 
     const cacheKey = this.makeBalanceCacheKey(network);
@@ -583,16 +583,10 @@ class WalletBridge {
       // EVM: fetch both native + ERC-20 prices in one call (CoinGecko-cached in shared price-service).
       const map = await getTokenPrices(networkConfig.chainId, tokensForPricing);
       for (const [k, v] of map.entries()) priceMap.set(k, v);
-    } else if (networkConfig?.type === 'bitcoin') {
-      priceMap.set('native', await getBitcoinPrice(network));
-    } else if (networkConfig?.type === 'solana') {
-      priceMap.set('native', await getSolanaPrice(network));
-    } else if (networkConfig?.type === 'xrp') {
-      priceMap.set('native', await getXRPPrice(network));
-    } else if (networkConfig?.type === 'ton') {
-      priceMap.set('native', await getTonPrice(network));
     } else {
-      priceMap.set('native', null);
+      // Non-EVM networks: use unified price fetcher
+      const price = await getPriceByNetworkType(networkConfig?.type, network);
+      priceMap.set('native', price);
     }
 
     const prices: Record<string, number | null> = {};
@@ -1061,7 +1055,8 @@ class WalletBridge {
 
       // Totals by network (USD) using price-service
       const totalsByNetwork: Record<string, number> = {};
-      const { getTokenPrices, calculateTotalValue } = await import('./price-service');
+      const { getTokenPrices, calculateTotalValue, getPriceByNetworkType, calculateNativeTotal } =
+        await import('./price-service');
 
       for (const networkKey of enabledNetworks) {
         const netConfig = this.config!.networks[networkKey];
@@ -1071,32 +1066,10 @@ class WalletBridge {
           continue;
         }
 
-        if (netConfig.type === 'bitcoin') {
-          const { getBitcoinPrice } = await import('./price-service');
-          const price = await getBitcoinPrice(networkKey);
-          const total = assets.reduce((acc, a) => acc + (parseFloat(a.balance || '0') * (price || 0)), 0);
-          totalsByNetwork[networkKey] = total;
-          continue;
-        }
-        if (netConfig.type === 'solana') {
-          const { getSolanaPrice } = await import('./price-service');
-          const price = await getSolanaPrice(networkKey);
-          const total = assets.reduce((acc, a) => acc + (parseFloat(a.balance || '0') * (price || 0)), 0);
-          totalsByNetwork[networkKey] = total;
-          continue;
-        }
-        if (netConfig.type === 'xrp') {
-          const { getXRPPrice } = await import('./price-service');
-          const price = await getXRPPrice(networkKey);
-          const total = assets.reduce((acc, a) => acc + (parseFloat(a.balance || '0') * (price || 0)), 0);
-          totalsByNetwork[networkKey] = total;
-          continue;
-        }
-        if (netConfig.type === 'ton') {
-          const { getTonPrice } = await import('./price-service');
-          const price = await getTonPrice(networkKey);
-          const total = assets.reduce((acc, a) => acc + (parseFloat(a.balance || '0') * (price || 0)), 0);
-          totalsByNetwork[networkKey] = total;
+        // Non-EVM networks: use unified price fetcher
+        if (netConfig.type && ['bitcoin', 'solana', 'xrp', 'ton'].includes(netConfig.type)) {
+          const price = await getPriceByNetworkType(netConfig.type, networkKey);
+          totalsByNetwork[networkKey] = calculateNativeTotal(assets, price);
           continue;
         }
 
