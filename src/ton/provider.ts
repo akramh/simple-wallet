@@ -24,6 +24,54 @@ import { buildTonTransferMessage } from './transaction.js';
 import { nanoToTon } from './types.js';
 
 /**
+ * Resolve a TON transaction hash from a Toncenter/ton client payload.
+ *
+ * @param tx - Transaction payload from Toncenter or TonClient.
+ * @returns Transaction hash as hex string, or empty string if unavailable.
+ */
+export function resolveTonTransactionHash(tx: any): string {
+  const rawHash = tx?.transaction_id?.hash ?? tx?.transactionId?.hash ?? tx?.hash;
+  if (typeof rawHash === 'string') {
+    try {
+      return Buffer.from(rawHash, 'base64').toString('hex');
+    } catch {
+      return rawHash;
+    }
+  }
+
+  if (typeof rawHash === 'function') {
+    const hashResult = rawHash();
+    if (hashResult instanceof Uint8Array) {
+      return Buffer.from(hashResult).toString('hex');
+    }
+    if (typeof hashResult === 'string') {
+      return hashResult;
+    }
+  }
+
+  if (rawHash instanceof Uint8Array) {
+    return Buffer.from(rawHash).toString('hex');
+  }
+
+  return '';
+}
+
+/**
+ * Safely read the wallet seqno, defaulting to 0 if the contract isn't deployed yet.
+ *
+ * @param contract - Opened wallet contract instance.
+ * @returns Sequence number (0 if unavailable).
+ */
+export async function getTonWalletSeqno(contract: { getSeqno: () => Promise<number> }): Promise<number> {
+  try {
+    return await contract.getSeqno();
+  } catch (error) {
+    console.warn('[TonProvider] Failed to read seqno, defaulting to 0:', error);
+    return 0;
+  }
+}
+
+/**
  * Portfolio result for TON (matches EVM/Bitcoin pattern).
  */
 export interface TonPortfolioResult {
@@ -198,7 +246,8 @@ export class TonProvider {
   async estimateFee(
     toAddress: string,
     amountTon: string,
-    mnemonic?: string
+    mnemonic?: string,
+    accountIndex?: number
   ): Promise<TonFeeEstimate> {
     if (!isValidTonAddress(toAddress)) {
       throw new Error('Invalid TON recipient address');
@@ -208,7 +257,7 @@ export class TonProvider {
       return { feeNano: '0', feeTon: '0' };
     }
 
-    const keypair = deriveTonKeypair(mnemonic, this.accountIndex);
+    const keypair = deriveTonKeypair(mnemonic, accountIndex ?? this.accountIndex);
     const publicKey = Buffer.from(keypair.publicKey);
     const secretKey = Buffer.from(keypair.secretKey);
     const wallet = WalletContractV4.create({
@@ -218,23 +267,31 @@ export class TonProvider {
 
     const client = this.explorer.getClient();
     const contract = client.open(wallet) as any;
-    const seqno = await contract.getSeqno();
+    const seqno = await getTonWalletSeqno(contract);
 
     const message = buildTonTransferMessage({
       toAddress,
       amountTon,
-      bounce: true,
     });
 
-    const estimateFee = (client as any).estimateExternalMessageFee as ((address: any, message: any) => Promise<any>) | undefined;
-    if (typeof estimateFee === 'function') {
+    if (typeof (client as any).estimateExternalMessageFee === 'function') {
       const transfer = await contract.createTransfer({
         seqno,
         secretKey,
         messages: [message],
       });
-      const fee = await estimateFee(wallet.address, transfer);
-      const total = BigInt(fee?.source_fees?.total ?? 0);
+      const init = wallet.init ?? null;
+      const fee = await (client as any).estimateExternalMessageFee(wallet.address, {
+        body: transfer,
+        initCode: init?.code ?? null,
+        initData: init?.data ?? null,
+        ignoreSignature: false,
+      });
+      const fees = fee?.source_fees ?? {};
+      const total = BigInt(fees.in_fwd_fee ?? 0)
+        + BigInt(fees.storage_fee ?? 0)
+        + BigInt(fees.gas_fee ?? 0)
+        + BigInt(fees.fwd_fee ?? 0);
       return {
         feeNano: total.toString(),
         feeTon: nanoToTon(total),
@@ -259,7 +316,8 @@ export class TonProvider {
     toAddress: string,
     amountTon: string,
     mnemonic: string,
-    comment?: string
+    comment?: string,
+    accountIndex?: number
   ): Promise<{ hash: string }>
   {
     if (!isValidTonAddress(toAddress)) {
@@ -271,7 +329,7 @@ export class TonProvider {
       throw new Error('No TON address available');
     }
 
-    const keypair = deriveTonKeypair(mnemonic, this.accountIndex);
+    const keypair = deriveTonKeypair(mnemonic, accountIndex ?? this.accountIndex);
     const publicKey = Buffer.from(keypair.publicKey);
     const secretKey = Buffer.from(keypair.secretKey);
     const wallet = WalletContractV4.create({
@@ -281,13 +339,12 @@ export class TonProvider {
 
     const client = this.explorer.getClient();
     const contract = client.open(wallet) as any;
-    const seqno = await contract.getSeqno();
+    const seqno = await getTonWalletSeqno(contract);
 
     const message = buildTonTransferMessage({
       toAddress,
       amountTon,
       comment,
-      bounce: true,
     });
 
     await contract.sendTransfer({
@@ -296,7 +353,34 @@ export class TonProvider {
       messages: [message],
     });
 
-    return { hash: '' };
+    const hash = await this.waitForTransactionHash(contract, seqno);
+    return { hash };
+  }
+
+  private async waitForTransactionHash(contract: any, seqno: number): Promise<string> {
+    const client = this.explorer.getClient();
+    const start = Date.now();
+    const timeoutMs = 12_000;
+    const pollMs = 1_000;
+
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const currentSeqno = await getTonWalletSeqno(contract);
+        if (currentSeqno > seqno) {
+          const txs = await client.getTransactions(contract.address, { limit: 5 });
+          const latest = txs[0];
+          const hash = resolveTonTransactionHash(latest);
+          if (hash) {
+            return hash;
+          }
+        }
+      } catch (error) {
+        console.warn('[TonProvider] Failed to fetch transaction hash:', error);
+      }
+      await new Promise(resolve => setTimeout(resolve, pollMs));
+    }
+
+    return '';
   }
 
   /**

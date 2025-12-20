@@ -12,6 +12,11 @@ import {
   getTonDerivationPath,
   isValidTonAddress,
   normalizeTonAddress,
+  formatTonAddress,
+  parseTonAddress,
+  buildTonTransferMessage,
+  resolveTonTransactionHash,
+  getTonWalletSeqno,
   tonToNano,
   nanoToTon,
   NANO_TON,
@@ -28,7 +33,7 @@ test('deriveTonAddress derives address from mnemonic', () => {
   const result = deriveTonAddress(TEST_MNEMONIC, 0);
 
   assert.ok(result.address, 'should return an address');
-  assert.ok(result.address.startsWith('EQ'), 'TON address should be bounceable by default');
+  assert.ok(result.address.startsWith('UQ'), 'TON address should be non-bounceable by default');
   assert.ok(result.publicKeyHex, 'should return a public key');
   assert.ok(result.derivationPath.includes("44'/607'"), 'should use TON BIP-44 path');
 });
@@ -65,11 +70,11 @@ test('isValidTonAddress rejects empty string', () => {
   assert.equal(isValidTonAddress(''), false);
 });
 
-test('normalizeTonAddress returns bounceable format', () => {
+test('normalizeTonAddress returns non-bounceable format', () => {
   const { address } = deriveTonAddress(TEST_MNEMONIC, 0);
   const normalized = normalizeTonAddress(address);
 
-  assert.ok(normalized.startsWith('EQ'), 'normalized TON address should be bounceable');
+  assert.ok(normalized.startsWith('UQ'), 'normalized TON address should be non-bounceable');
   assert.equal(isValidTonAddress(normalized), true);
 });
 
@@ -92,4 +97,37 @@ test('nanoToTon converts nanoTON to TON', () => {
 test('tonToNano rejects invalid input', () => {
   assert.throws(() => tonToNano('1.0000000001'), /too many decimal/i);
   assert.throws(() => tonToNano('abc'), /Invalid TON amount/i);
+});
+
+test('buildTonTransferMessage uses bounce flag from friendly address', () => {
+  const derived = deriveTonAddress(TEST_MNEMONIC, 0);
+  const parsed = parseTonAddress(derived.address);
+  const bounceable = formatTonAddress(parsed, { bounceable: true });
+
+  const nonBounceMessage = buildTonTransferMessage({
+    toAddress: derived.address,
+    amountTon: '1',
+  });
+  const bounceMessage = buildTonTransferMessage({
+    toAddress: bounceable,
+    amountTon: '1',
+  });
+
+  assert.equal(nonBounceMessage.info.bounce, false);
+  assert.equal(bounceMessage.info.bounce, true);
+});
+
+test('resolveTonTransactionHash decodes base64 tx hash', () => {
+  const tx = { transaction_id: { hash: 'j7r/Hh+E2L/LyFdLLeOsUeEBx5UnSXuPOuA1ikAN59Y=' } };
+  const hash = resolveTonTransactionHash(tx);
+  assert.equal(hash, '8fbaff1e1f84d8bfcbc8574b2de3ac51e101c79527497b8f3ae0358a400de7d6');
+});
+
+test('getTonWalletSeqno falls back to 0 when seqno is unavailable', async () => {
+  const seqno = await getTonWalletSeqno({
+    getSeqno: async () => {
+      throw new Error('Contract is not deployed');
+    }
+  });
+  assert.equal(seqno, 0);
 });

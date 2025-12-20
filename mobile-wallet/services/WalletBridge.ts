@@ -115,10 +115,12 @@ export interface NetworkConfig {
   blockExplorer?: string;
   explorerApiUrl?: string;
   explorerApiKey?: string;
-  type?: 'evm' | 'bitcoin' | 'solana' | 'xrp';
+  type?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
   bitcoinNetwork?: 'mainnet' | 'testnet';
   solanaCluster?: 'mainnet-beta' | 'devnet' | 'testnet';
   xrpNetwork?: 'mainnet' | 'testnet' | 'devnet';
+  tonNetwork?: 'mainnet' | 'testnet';
+  rpcApiKey?: string;
 }
 
 export interface Config {
@@ -240,7 +242,7 @@ class WalletBridge {
    * @param password - Master password used to encrypt the wallet mnemonic.
    * @param name - Wallet name to save under (`wallets.json` key).
    * @param showMnemonic - If true, returns the mnemonic in the result for display once.
-   * @returns Wallet address and (optionally) mnemonic.
+   * @returns Wallet address for the active network and (optionally) mnemonic.
    * @throws If the wallet name is invalid or SDK initialization fails.
    */
   async createWallet(
@@ -282,9 +284,11 @@ class WalletBridge {
     this._isUnlocked = true;
     this.resetAutoLockTimer();
 
+    const address = this.service.getAddress();
+
     return {
       success: true,
-      address: result.address,
+      address,
       mnemonic: showMnemonic ? result.mnemonic : undefined,
     };
   }
@@ -295,7 +299,7 @@ class WalletBridge {
    * @param mnemonic - BIP39 mnemonic phrase to import.
    * @param password - Master password used to encrypt the imported mnemonic.
    * @param name - Wallet name to save under (`wallets.json` key).
-   * @returns Imported wallet address.
+   * @returns Imported wallet address for the active network.
    * @throws If mnemonic is invalid, wallet name invalid, or load fails.
    */
   async importWallet(
@@ -331,9 +335,11 @@ class WalletBridge {
     this._isUnlocked = true;
     this.resetAutoLockTimer();
 
+    const address = this.service.getAddress();
+
     return {
       success: true,
-      address: result.address,
+      address,
     };
   }
 
@@ -344,7 +350,7 @@ class WalletBridge {
    *
    * @param password - Master password for decrypting the stored mnemonic.
    * @param name - Wallet name to unlock (defaults to `default`).
-   * @returns Unlocked wallet address and wallet name.
+   * @returns Unlocked wallet address for the active network and wallet name.
    * @throws If password is invalid or wallet is not found.
    */
   async unlockWallet(password: string, name: string = 'default'): Promise<UnlockWalletResult> {
@@ -375,9 +381,11 @@ class WalletBridge {
     this._isUnlocked = true;
     this.resetAutoLockTimer();
 
+    const address = this.service.getAddress();
+
     return {
       success: true,
-      address: loaded.address,
+      address,
       walletName: name,
     };
   }
@@ -539,7 +547,7 @@ class WalletBridge {
 
     const network = this.config!.network;
     const networkConfig = this.config!.networks[network];
-    const { getTokenPrices, calculateTotalValue, getBitcoinPrice, getSolanaPrice, getXRPPrice } =
+    const { getTokenPrices, calculateTotalValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice } =
       await import('./price-service');
 
     const cacheKey = this.makeBalanceCacheKey(network);
@@ -581,6 +589,8 @@ class WalletBridge {
       priceMap.set('native', await getSolanaPrice(network));
     } else if (networkConfig?.type === 'xrp') {
       priceMap.set('native', await getXRPPrice(network));
+    } else if (networkConfig?.type === 'ton') {
+      priceMap.set('native', await getTonPrice(network));
     } else {
       priceMap.set('native', null);
     }
@@ -641,6 +651,7 @@ class WalletBridge {
    * @param toAddress - Recipient address.
    * @param amount - Amount in display units.
    * @param destinationTag - XRP destination tag (optional; XRP-only).
+   * @param comment - TON comment payload (optional; TON-only).
    * @returns Transaction hash/signature.
    * @throws If wallet is locked or SDK send fails.
    */
@@ -648,7 +659,8 @@ class WalletBridge {
     token: Token,
     toAddress: string,
     amount: string,
-    destinationTag?: number
+    destinationTag?: number,
+    comment?: string
   ): Promise<SendTransactionResult> {
     this.requireUnlocked();
     this.resetAutoLockTimer();
@@ -679,6 +691,16 @@ class WalletBridge {
         amount,
         this.sessionPassword!,
         destinationTag
+      );
+      return { hash: result.hash, status: 'pending' };
+    }
+
+    if (networkConfig.type === 'ton') {
+      const result = await this.service.sendTonTransaction(
+        toAddress,
+        amount,
+        this.sessionPassword!,
+        comment
       );
       return { hash: result.hash, status: 'pending' };
     }
@@ -726,6 +748,10 @@ class WalletBridge {
 
       if (networkConfig.type === 'xrp') {
         return await this.getXRPTransactions(address, network, limit);
+      }
+
+      if (networkConfig.type === 'ton') {
+        return await this.getTonTransactions(address, network, limit);
       }
 
       // Default: EVM networks
@@ -805,7 +831,7 @@ class WalletBridge {
     const nativeSymbol = networkConfig.nativeSymbol || 'XRP';
 
     const txs = await this.service.getXRPTransactionHistory(limit);
-    
+
     return txs.map((tx: any) => ({
       hash: tx.hash,
       from: tx.from,
@@ -817,6 +843,33 @@ class WalletBridge {
       timestamp: tx.timestamp,
       tokenSymbol: nativeSymbol,
       fee: tx.feeXrp,
+    }));
+  }
+
+  /**
+   * Get TON transaction history.
+   */
+  private async getTonTransactions(
+    address: string,
+    network: string,
+    limit: number
+  ): Promise<Transaction[]> {
+    const networkConfig = this.config!.networks[network];
+    const nativeSymbol = networkConfig.nativeSymbol || 'TON';
+
+    const txs = await this.service.getTonTransactionHistory(limit);
+
+    return txs.map((tx: any) => ({
+      hash: tx.hash,
+      from: tx.from,
+      to: tx.to || null,
+      value: tx.valueTon,
+      network,
+      status: tx.status as 'pending' | 'confirmed' | 'failed',
+      type: tx.type === 'other' ? 'contract_interaction' : tx.type,
+      timestamp: tx.timestamp,
+      tokenSymbol: nativeSymbol,
+      fee: tx.feeTon,
     }));
   }
 
@@ -1039,6 +1092,13 @@ class WalletBridge {
           totalsByNetwork[networkKey] = total;
           continue;
         }
+        if (netConfig.type === 'ton') {
+          const { getTonPrice } = await import('./price-service');
+          const price = await getTonPrice(networkKey);
+          const total = assets.reduce((acc, a) => acc + (parseFloat(a.balance || '0') * (price || 0)), 0);
+          totalsByNetwork[networkKey] = total;
+          continue;
+        }
 
         // EVM: batch prices per chain
         const chainId = netConfig.chainId;
@@ -1158,8 +1218,10 @@ class WalletBridge {
     // Save the wallet to persist the new account
     this.service.saveWallet(this.currentWalletName);
 
+    const address = this.service.getAddress();
+
     return {
-      address: result.address,
+      address,
       accountIndex: result.accountIndex,
     };
   }
@@ -1175,12 +1237,12 @@ class WalletBridge {
   async switchAccount(index: number): Promise<{ address: string }> {
     this.requireUnlocked();
 
-    const result = this.service.switchAccount(index);
+    this.service.switchAccount(index);
     
     // Persist the current account selection
     this.service.saveWallet(this.currentWalletName);
     
-    return { address: result.address };
+    return { address: this.service.getAddress() };
   }
 
   /**

@@ -79,6 +79,24 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       type: 'sourceFile',
     };
   }
+
+  // Stub react-native-fast-pbkdf2 (required by @ton/crypto-primitives)
+  // Redirect to our implementation using @noble/hashes
+  if (moduleName === 'react-native-fast-pbkdf2') {
+    return {
+      filePath: path.resolve(projectRoot, 'stubs/react-native-fast-pbkdf2.js'),
+      type: 'sourceFile',
+    };
+  }
+
+  // Stub react-native-quick-base64 with pure JS base64-js
+  // The native module returns incorrect data on some devices
+  if (moduleName === 'react-native-quick-base64') {
+    return {
+      filePath: path.resolve(projectRoot, 'stubs/react-native-quick-base64.js'),
+      type: 'sourceFile',
+    };
+  }
   
   // If importing from @wallet or src/, strip .js and try .ts
   if (moduleName.startsWith('.') && moduleName.endsWith('.js')) {
@@ -114,9 +132,14 @@ config.resolver.extraNodeModules = {
   'stream': path.resolve(projectRoot, 'stubs/stream.js'),
   // Node.js polyfills from npm packages
   'events': path.resolve(projectRoot, 'node_modules/events'),
-  'buffer': path.resolve(projectRoot, 'node_modules/buffer'),
+  // Use @craftzdog/react-native-buffer for full Buffer API (includes .copy() needed by @ton/core)
+  'buffer': path.resolve(projectRoot, 'node_modules/@craftzdog/react-native-buffer'),
   // Stub packages that use WebAssembly (not supported in React Native)
   'tiny-secp256k1': path.resolve(projectRoot, 'stubs/tiny-secp256k1.js'),
+  // Stub for TON crypto dependencies
+  'react-native-fast-pbkdf2': path.resolve(projectRoot, 'stubs/react-native-fast-pbkdf2.js'),
+  // Stub react-native-quick-base64 with base64-js
+  'react-native-quick-base64': path.resolve(projectRoot, 'stubs/react-native-quick-base64.js'),
 };
 
 module.exports = withNativeWind(config, { input: './global.css' });

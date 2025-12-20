@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import { Address } from '@ton/core';
 import { deriveTonAddress } from '../dist/ton/index.js';
-import { normalizeTonTransaction } from '../dist/ton/explorer.js';
+import { normalizeTonTransaction, findTonTransaction } from '../dist/ton/explorer.js';
 
 const TEST_MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
@@ -59,8 +59,48 @@ test('normalizeTonTransaction handles TonClient message info format', () => {
   assert.equal(normalized.valueTon, '2');
 });
 
-test('normalizeTonTransaction marks failed when aborted or compute fails', () => {
+test('normalizeTonTransaction classifies external-in with outbound message as send', () => {
   const { address } = deriveTonAddress(TEST_MNEMONIC, 0);
+  const other = deriveTonAddress(TEST_MNEMONIC, 1).address;
+
+  const tx = {
+    now: 1700000150,
+    transaction_id: { hash: 'ton-send-hash' },
+    inMessage: {
+      info: {
+        type: 'external-in',
+        dest: Address.parse(address)
+      }
+    },
+    outMessages: {
+      values: () => [
+        {
+          info: {
+            type: 'internal',
+            src: Address.parse(address),
+            dest: Address.parse(other),
+            value: { coins: 1000000000n }
+          }
+        }
+      ]
+    },
+    description: {
+      type: 'generic',
+      aborted: true,
+      computePhase: { type: 'vm', success: false },
+      actionPhase: { success: false }
+    }
+  };
+
+  const normalized = normalizeTonTransaction(tx, address, 'ton-mainnet', false);
+
+  assert.equal(normalized.type, 'send');
+  assert.equal(normalized.status, 'failed');
+});
+
+test('normalizeTonTransaction marks failed when a send aborts', () => {
+  const { address } = deriveTonAddress(TEST_MNEMONIC, 0);
+  const other = deriveTonAddress(TEST_MNEMONIC, 1).address;
 
   const tx = {
     now: 1700000200,
@@ -69,7 +109,7 @@ test('normalizeTonTransaction marks failed when aborted or compute fails', () =>
       info: {
         type: 'internal',
         src: Address.parse(address),
-        dest: Address.parse(address),
+        dest: Address.parse(other),
         value: { coins: 0n }
       }
     },
@@ -85,4 +125,43 @@ test('normalizeTonTransaction marks failed when aborted or compute fails', () =>
   const normalized = normalizeTonTransaction(tx, address, 'ton-mainnet', false);
 
   assert.equal(normalized.status, 'failed');
+});
+
+test('findTonTransaction matches by to address and amount', () => {
+  const { address } = deriveTonAddress(TEST_MNEMONIC, 0);
+  const other = deriveTonAddress(TEST_MNEMONIC, 1).address;
+
+  const txs = [
+    {
+      hash: 'tx-1',
+      from: other,
+      to: address,
+      valueNano: '1000000000',
+      valueTon: '1',
+      timestamp: 1700000000,
+      status: 'confirmed',
+      type: 'receive',
+      network: 'ton-mainnet'
+    },
+    {
+      hash: 'tx-2',
+      from: address,
+      to: other,
+      valueNano: '250000000',
+      valueTon: '0.25',
+      timestamp: 1700000100,
+      status: 'confirmed',
+      type: 'send',
+      network: 'ton-mainnet'
+    }
+  ];
+
+  const match = findTonTransaction(txs, {
+    toAddress: other,
+    amountTon: '0.25',
+    type: 'send'
+  });
+
+  assert.ok(match);
+  assert.equal(match.hash, 'tx-2');
 });

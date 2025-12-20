@@ -25,7 +25,7 @@ export const NANO_TON = 1_000_000_000n;
  * TON address derivation result.
  */
 export interface TonAddressInfo {
-  /** Friendly TON address (default bounceable). */
+  /** Friendly TON address (default non-bounceable). */
   address: string;
   /** Raw workchain:hex address representation. */
   addressRaw: string;

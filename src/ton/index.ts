@@ -37,12 +37,15 @@ export {
   getTonExplorer,
   clearTonExplorerCache,
   isTonNetwork,
+  findTonTransaction,
 } from './explorer.js';
 
 export {
   TonProvider,
   getTonProvider,
   clearTonProviderCache,
+  resolveTonTransactionHash,
+  getTonWalletSeqno,
   type TonProviderConfig,
   type TonPortfolioResult,
 } from './provider.js';

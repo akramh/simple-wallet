@@ -12,7 +12,7 @@
  * @module ton/transaction
  */
 
-import { internal } from '@ton/core';
+import { Address, internal } from '@ton/core';
 import { parseTonAddress } from './address.js';
 import { tonToNano } from './types.js';
 
@@ -37,7 +37,7 @@ export interface TonTransferParams {
  * @returns Internal message suitable for wallet transfer
  */
 export function buildTonTransferMessage(params: TonTransferParams): ReturnType<typeof internal> {
-  const { toAddress, amountTon, comment, bounce = true } = params;
+  const { toAddress, amountTon, comment, bounce } = params;
   const to = parseTonAddress(toAddress);
   const value = tonToNano(amountTon);
 
@@ -45,10 +45,22 @@ export function buildTonTransferMessage(params: TonTransferParams): ReturnType<t
     throw new Error('Amount must be greater than 0');
   }
 
+  let bounceFlag = bounce;
+  if (typeof bounceFlag === 'undefined' && Address.isFriendly(toAddress)) {
+    try {
+      bounceFlag = Address.parseFriendly(toAddress).isBounceable;
+    } catch {
+      bounceFlag = undefined;
+    }
+  }
+  if (typeof bounceFlag === 'undefined') {
+    bounceFlag = true;
+  }
+
   return internal({
     to,
     value,
-    bounce,
+    bounce: bounceFlag,
     body: comment && comment.trim().length > 0 ? comment : undefined,
   });
 }

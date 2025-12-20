@@ -15,13 +15,15 @@ const TOKEN_ICONS: Record<string, ImageSourcePropType> = {
   BTC: require('../assets/crypto/bitcoin.png'),
   SOL: require('../assets/crypto/solana.png'),
   XRP: require('../assets/crypto/xrp.png'),
+  TON: require('../assets/crypto/ton_symbol.png'),
+  tTON: require('../assets/crypto/ton_symbol.png'),
   AVAX: require('../assets/crypto/avalanche.png'),
   WAVAX: require('../assets/crypto/avalanche.png'),
   BNB: require('../assets/crypto/bnb.png'),
   WBNB: require('../assets/crypto/bnb.png'),
   POL: require('../assets/crypto/pol.png'),
   MATIC: require('../assets/crypto/pol.png'),
-  
+
   // Stablecoins
   USDC: require('../assets/crypto/icon-usdc.png'),
   // USDT and DAI icons not available as PNG - will fallback to letter
@@ -44,6 +46,8 @@ const NETWORK_ICONS: Record<string, ImageSourcePropType> = {
   'xrp-testnet': require('../assets/crypto/xrp.png'),
   'bitcoin-mainnet': require('../assets/crypto/bitcoin.png'),
   'bitcoin-testnet': require('../assets/crypto/bitcoin.png'),
+  'ton-mainnet': require('../assets/crypto/ton_symbol.png'),
+  'ton-testnet': require('../assets/crypto/ton_symbol.png'),
 };
 
 /**

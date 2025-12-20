@@ -595,6 +595,10 @@ export function showTransactionDetails(receipt: TransactionReceipt, networkKey: 
  * Transaction confirmation display parameters.
  */
 interface TransactionConfirmationParams {
+  /** Current balance in native token (optional) */
+  balance?: string | null;
+  /** Balance symbol (optional) */
+  balanceSymbol?: string;
   /** Token symbol being sent */
   tokenSymbol: string;
   /** Amount being sent */
@@ -640,6 +644,8 @@ interface TransactionConfirmationParams {
  */
 export function showTransactionConfirmation(params: TransactionConfirmationParams): void {
   const {
+    balance,
+    balanceSymbol,
     tokenSymbol,
     amount,
     recipient,
@@ -655,6 +661,11 @@ export function showTransactionConfirmation(params: TransactionConfirmationParam
   console.log('\n' + chalk.cyan('═'.repeat(50)));
   console.log(chalk.cyan.bold('        Confirm Transaction'));
   console.log(chalk.cyan('═'.repeat(50)) + '\n');
+
+  if (balance && balanceSymbol) {
+    console.log(chalk.gray('Balance:             ') + chalk.white(`${balance} ${balanceSymbol}`));
+    console.log('');
+  }
 
   // Amount
   console.log(chalk.gray('Amount:              ') + chalk.green.bold(`${amount} ${tokenSymbol}`));

@@ -68,7 +68,7 @@ import type { Config, Token, TokenMetadata } from './types/index.js';
 import { isBitcoinNetwork, isValidBitcoinAddress, satoshisToBtc } from './bitcoin/index.js';
 import { isXRPNetwork, isValidXRPAddress, dropsToXrp, isValidDestinationTag } from './xrp/index.js';
 import { getXRPPrice } from './price-service.js';
-import { isTonNetwork, isValidTonAddress } from './ton/index.js';
+import { findTonTransaction, isTonNetwork, isValidTonAddress } from './ton/index.js';
 
 // ============================================================================
 // Configuration and Global State
@@ -1704,7 +1704,7 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
         when: (a) => !!a.toAddress && a.toAddress.trim() !== '',
         validate: (input) => {
           if (!input || input.trim() === '') return true;
-          if (!/^\\d+(\\.\\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
+          if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
           const num = parseFloat(input);
           if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
           if (input.includes('.') && input.split('.')[1].length > 9) return 'TON supports up to 9 decimals';
@@ -1743,10 +1743,19 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
       tonPrice
     );
 
+    let currentBalance: string | null = null;
+    try {
+      currentBalance = await walletService.getBalance();
+    } catch (error) {
+      console.warn('[TON] Failed to read balance:', error);
+    }
+
     ui.clearScreen();
     ui.showHeader(currentWalletName, wallet.currentAccountIndex, tonNetConfig.name || config.network, address);
 
     ui.showTransactionConfirmation({
+      balance: currentBalance,
+      balanceSymbol: nativeSymbol,
       tokenSymbol: nativeSymbol,
       amount: answers.amount.trim(),
       recipient: answers.toAddress.trim(),
@@ -1803,6 +1812,42 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
       }
     } else {
       console.log(chalk.gray('Hash: ') + chalk.gray('Unavailable (Toncenter response)'));
+
+      const scheduleTonHashRefresh = () => {
+        const maxAttempts = 6;
+        let attempts = 0;
+
+        const poll = async () => {
+          attempts += 1;
+          try {
+            const txs = await walletService.getTonTransactionHistory(10);
+            const match = findTonTransaction(txs, {
+              toAddress: answers.toAddress!.trim(),
+              amountTon: answers.amount!.trim(),
+              type: 'send'
+            });
+            if (match?.hash) {
+              console.log(chalk.gray('Hash: ') + chalk.magenta(match.hash));
+              const txUrl = walletService.getTonTransactionUrl(match.hash);
+              if (txUrl) {
+                console.log(chalk.gray('View: ') + chalk.cyan(txUrl));
+              }
+              console.log('');
+              return;
+            }
+          } catch (error) {
+            console.warn('[TON] Failed to refresh transaction hash:', error);
+          }
+
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 2000);
+          }
+        };
+
+        setTimeout(poll, 2000);
+      };
+
+      scheduleTonHashRefresh();
     }
     console.log('');
 

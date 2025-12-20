@@ -15,7 +15,7 @@
 import { TonClient } from '@ton/ton';
 import { Address } from '@ton/core';
 import { Buffer } from 'buffer';
-import { nanoToTon } from './types.js';
+import { nanoToTon, tonToNano } from './types.js';
 import type { TonBalance, NormalizedTonTransaction } from './types.js';
 import { formatTonAddress, parseTonAddress } from './address.js';
 
@@ -177,7 +177,13 @@ function isFailedDescription(description: any): boolean {
   return false;
 }
 
-function getTransactionStatus(tx: any): 'confirmed' | 'failed' {
+function getTransactionStatus(
+  tx: any,
+  type: 'send' | 'receive' | 'other'
+): 'confirmed' | 'failed' {
+  if (type === 'receive') {
+    return 'confirmed';
+  }
   return isFailedDescription(tx?.description) ? 'failed' : 'confirmed';
 }
 
@@ -268,10 +274,10 @@ export function normalizeTonTransaction(
   const isOutgoing = (inSource && inSource.equals(parsed)) || outSources.some(src => src.equals(parsed));
 
   let type: 'send' | 'receive' | 'other' = 'other';
-  if (isIncoming) {
-    type = 'receive';
-  } else if (isOutgoing) {
+  if (isOutgoing) {
     type = 'send';
+  } else if (isIncoming) {
+    type = 'receive';
   }
 
   const value = type === 'receive'
@@ -295,6 +301,8 @@ export function normalizeTonTransaction(
     toAddress = formatWalletAddress(parsed, testOnly);
   }
 
+  const status = getTransactionStatus(tx, type);
+
   return {
     hash: extractTxHash(tx),
     from: fromAddress,
@@ -302,20 +310,60 @@ export function normalizeTonTransaction(
     valueNano: value.toString(),
     valueTon: nanoToTon(value),
     timestamp,
-    status: getTransactionStatus(tx),
+    status,
     type,
     comment: inInfo.comment,
     network: networkKey,
   };
 }
 
+/**
+ * Find a matching TON transaction from a normalized list.
+ *
+ * @param transactions - Normalized TON transactions (newest first).
+ * @param criteria - Matching criteria for recipient/sender and amount.
+ * @returns Matching transaction or null if none found.
+ */
+export function findTonTransaction(
+  transactions: NormalizedTonTransaction[],
+  criteria: {
+    toAddress?: string;
+    fromAddress?: string;
+    amountTon?: string;
+    type?: 'send' | 'receive' | 'other';
+  }
+): NormalizedTonTransaction | null {
+  const targetTo = criteria.toAddress ? parseTonAddress(criteria.toAddress) : null;
+  const targetFrom = criteria.fromAddress ? parseTonAddress(criteria.fromAddress) : null;
+  const targetValueNano = criteria.amountTon ? tonToNano(criteria.amountTon).toString() : null;
+
+  for (const tx of transactions) {
+    if (criteria.type && tx.type !== criteria.type) continue;
+    if (targetValueNano && tx.valueNano !== targetValueNano) continue;
+
+    if (targetTo) {
+      if (!tx.to) continue;
+      if (!parseTonAddress(tx.to).equals(targetTo)) continue;
+    }
+
+    if (targetFrom) {
+      if (!tx.from) continue;
+      if (!parseTonAddress(tx.from).equals(targetFrom)) continue;
+    }
+
+    return tx;
+  }
+
+  return null;
+}
+
 function normalizeAddressForUrl(address: string, testOnly: boolean): string {
   try {
     const parsed = Address.parse(address);
-    return parsed.toString({ bounceable: true, testOnly, urlSafe: true });
+    return parsed.toString({ bounceable: false, testOnly, urlSafe: true });
   } catch {
     const parsed = Address.parseFriendly(address).address;
-    return parsed.toString({ bounceable: true, testOnly, urlSafe: true });
+    return parsed.toString({ bounceable: false, testOnly, urlSafe: true });
   }
 }
 

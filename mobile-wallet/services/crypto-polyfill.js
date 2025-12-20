@@ -1,15 +1,17 @@
 /**
  * @file crypto-polyfill.js
- * @description Sets up global crypto and Buffer for ethers.js, @solana/web3.js, xrpl, and other libraries
- * 
+ * @description Sets up global crypto and Buffer for ethers.js, @solana/web3.js, xrpl, TON, and other libraries
+ *
  * This must be imported BEFORE ethers.js or any library that uses crypto.
  * It sets up:
- * - global.Buffer from the 'buffer' package
+ * - global.Buffer from @craftzdog/react-native-buffer (full Node.js Buffer API including .copy())
  * - global.crypto.getRandomValues from expo-crypto
- * - global.TextEncoder/TextDecoder for encoding (used by Solana/XRP)
+ * - global.TextEncoder/TextDecoder for encoding (used by Solana/XRP/TON)
  */
 
-import { Buffer } from 'buffer';
+// Use @craftzdog/react-native-buffer for full Buffer API compatibility (includes .copy(), .slice(), etc.)
+// This is required for @ton/core which uses Buffer.copy()
+import { Buffer } from '@craftzdog/react-native-buffer';
 import * as ExpoCrypto from 'expo-crypto';
 
 // Debug: log what's available before polyfill
@@ -86,4 +88,61 @@ if (typeof global.TextDecoder === 'undefined') {
   };
 }
 
-console.log('[crypto-polyfill] Installed Buffer, crypto, and TextEncoder/TextDecoder polyfills');
+// Polyfill base64 conversion functions for @ton/crypto
+// These are React Native-specific globals that @ton/crypto expects
+// NOTE: We must NOT use Buffer here as @craftzdog/react-native-buffer calls these functions internally,
+// which would create infinite recursion. Use pure JS base64 decoding instead.
+if (typeof global.base64ToArrayBuffer === 'undefined') {
+  global.base64ToArrayBuffer = (base64) => {
+    // Pure JS base64 decode without using Buffer (to avoid circular dependency)
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const lookup = new Uint8Array(256);
+    for (let i = 0; i < chars.length; i++) {
+      lookup[chars.charCodeAt(i)] = i;
+    }
+
+    // Remove padding and whitespace
+    const cleanBase64 = base64.replace(/[^A-Za-z0-9+/]/g, '');
+    const len = cleanBase64.length;
+    const bufferLength = Math.floor(len * 3 / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0);
+    const bytes = new Uint8Array(bufferLength);
+
+    let p = 0;
+    for (let i = 0; i < len; i += 4) {
+      const encoded1 = lookup[cleanBase64.charCodeAt(i)];
+      const encoded2 = lookup[cleanBase64.charCodeAt(i + 1)];
+      const encoded3 = lookup[cleanBase64.charCodeAt(i + 2)];
+      const encoded4 = lookup[cleanBase64.charCodeAt(i + 3)];
+
+      bytes[p++] = (encoded1 << 2) | (encoded2 >> 4);
+      if (p < bufferLength) bytes[p++] = ((encoded2 & 15) << 4) | (encoded3 >> 2);
+      if (p < bufferLength) bytes[p++] = ((encoded3 & 3) << 6) | (encoded4 & 63);
+    }
+
+    return bytes.buffer;
+  };
+}
+
+if (typeof global.arrayBufferToBase64 === 'undefined') {
+  global.arrayBufferToBase64 = (arrayBuffer) => {
+    // Pure JS base64 encode without using Buffer (to avoid circular dependency)
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const bytes = new Uint8Array(arrayBuffer);
+    let result = '';
+
+    for (let i = 0; i < bytes.length; i += 3) {
+      const byte1 = bytes[i];
+      const byte2 = bytes[i + 1];
+      const byte3 = bytes[i + 2];
+
+      result += chars[byte1 >> 2];
+      result += chars[((byte1 & 3) << 4) | (byte2 >> 4)];
+      result += i + 1 < bytes.length ? chars[((byte2 & 15) << 2) | (byte3 >> 6)] : '=';
+      result += i + 2 < bytes.length ? chars[byte3 & 63] : '=';
+    }
+
+    return result;
+  };
+}
+
+console.log('[crypto-polyfill] Installed Buffer, crypto, TextEncoder/TextDecoder, and base64 polyfills');

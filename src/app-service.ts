@@ -934,7 +934,9 @@ export class WalletAppService {
 
       try {
         const provider = this.getTonProviderForNetwork(networkKey);
-        const feeEstimate = await provider.estimateFee(toAddress, amount);
+        const mnemonic = this.wallet.mnemonic;
+        const accountIndex = this.wallet.getCurrentAccountIndex();
+        const feeEstimate = await provider.estimateFee(toAddress, amount, mnemonic || undefined, accountIndex);
 
         return {
           gasLimit: '1',
@@ -1782,12 +1784,14 @@ export class WalletAppService {
     const mnemonic = this.wallet.getMnemonic(password);
     const provider = this.getTonProviderForNetwork(this.config.network);
 
+    const accountIndex = this.wallet.getCurrentAccountIndex();
     return provider.sendTransaction(
       tonInfo.address,
       toAddress,
       amountTon,
       mnemonic,
-      comment
+      comment,
+      accountIndex
     );
   }
 }

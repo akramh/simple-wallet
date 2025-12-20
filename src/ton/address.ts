@@ -6,7 +6,7 @@
  *
  * @responsibilities
  * - Derive TON ed25519 keypairs from BIP-39 mnemonics
- * - Produce friendly TON addresses (bounceable by default)
+ * - Produce friendly TON addresses (non-bounceable by default)
  * - Validate and normalize TON addresses
  *
  * @security
@@ -145,7 +145,7 @@ export function deriveTonAddress(
   accountIndex: number = 0,
   options: { workchain?: number; bounceable?: boolean; testOnly?: boolean } = {}
 ): TonAddressInfo {
-  const { workchain = 0, bounceable = true, testOnly = false } = options;
+  const { workchain = 0, bounceable = false, testOnly = false } = options;
   const keypair = deriveTonKeypair(mnemonic, accountIndex);
   const publicKey = Buffer.from(keypair.publicKey);
   const wallet = WalletContractV4.create({ publicKey, workchain });
@@ -209,12 +209,12 @@ export function formatTonAddress(
   address: Address,
   options: { bounceable?: boolean; testOnly?: boolean } = {}
 ): string {
-  const { bounceable = true, testOnly = false } = options;
+  const { bounceable = false, testOnly = false } = options;
   return address.toString({ bounceable, testOnly, urlSafe: true });
 }
 
 /**
- * Normalize a TON address into bounceable friendly format.
+ * Normalize a TON address into non-bounceable friendly format.
  *
  * @param address - Address string (friendly or raw)
  * @param testOnly - Whether to mark as testnet
@@ -222,5 +222,5 @@ export function formatTonAddress(
  */
 export function normalizeTonAddress(address: string, testOnly: boolean = false): string {
   const parsed = parseTonAddress(address);
-  return formatTonAddress(parsed, { bounceable: true, testOnly });
+  return formatTonAddress(parsed, { bounceable: false, testOnly });
 }

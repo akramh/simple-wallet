@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { Wallet } from '../dist/wallet.js';
 import { WalletAppService } from '../dist/app-service.js';
 import { MemoryStorage } from '../dist/storage.js';
+import { deriveTonAddress } from '../dist/ton/index.js';
 
 test('WalletAppService returns native token first and merges built-in/custom', async () => {
   const storage = new MemoryStorage();
@@ -103,4 +104,88 @@ test('setNetwork persists updated config using storage adapter', async () => {
   const persisted = storage.readJSON('config.json', { network: '' });
   assert.equal(persisted.network, 'base');
   assert.equal(wallet.provider.chainId, 8453);
+});
+
+test('getGasEstimate uses in-memory mnemonic for TON fee estimation', async () => {
+  const storage = new MemoryStorage();
+  storage.writeJSON('tokens.json', {});
+  storage.writeJSON('tokens-user.json', {});
+
+  const config = {
+    network: 'ton-mainnet',
+    networks: {
+      'ton-mainnet': {
+        name: 'TON Mainnet',
+        type: 'ton',
+        tonNetwork: 'mainnet',
+        rpcUrl: 'https://ton.example',
+        nativeSymbol: 'TON',
+        nativeName: 'Toncoin'
+      }
+    }
+  };
+
+  const wallet = new Wallet(config, storage);
+  const svc = new WalletAppService(wallet, config, { storage });
+  await svc.initialize();
+
+  wallet.createNewWallet('password');
+  const mnemonic = wallet.mnemonic;
+  const { address } = deriveTonAddress(mnemonic, 0);
+
+  const calls = [];
+  svc.tonProvider = {
+    getNetworkKey: () => 'ton-mainnet',
+    estimateFee: async (...args) => {
+      calls.push(args);
+      return { feeNano: '1000', feeTon: '0.000001' };
+    }
+  };
+
+  const token = { symbol: 'TON', name: 'Toncoin', type: 'native', decimals: 9, address: 'native' };
+  const estimate = await svc.getGasEstimate(token, address, '1.0');
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2], mnemonic);
+  assert.equal(estimate.estimatedCostNative, '0.000001');
+});
+
+test('sendTonTransaction passes current account index to provider', async () => {
+  const storage = new MemoryStorage();
+  storage.writeJSON('tokens.json', {});
+  storage.writeJSON('tokens-user.json', {});
+
+  const config = {
+    network: 'ton-mainnet',
+    networks: {
+      'ton-mainnet': {
+        name: 'TON Mainnet',
+        type: 'ton',
+        tonNetwork: 'mainnet',
+        rpcUrl: 'https://ton.example',
+        nativeSymbol: 'TON',
+        nativeName: 'Toncoin'
+      }
+    }
+  };
+
+  const wallet = new Wallet(config, storage);
+  const svc = new WalletAppService(wallet, config, { storage });
+  await svc.initialize();
+
+  wallet.createNewWallet('password');
+  wallet.switchAccount(1);
+
+  const calls = [];
+  svc.tonProvider = {
+    getNetworkKey: () => 'ton-mainnet',
+    sendTransaction: async (...args) => {
+      calls.push(args);
+      return { hash: 'ton_hash' };
+    }
+  };
+
+  await svc.sendTonTransaction('UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c', '1', 'password');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][5], 1);
 });

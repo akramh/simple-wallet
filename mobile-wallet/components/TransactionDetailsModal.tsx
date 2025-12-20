@@ -36,6 +36,8 @@ const EXPLORER_URLS: Record<string, string> = {
   'solana-devnet': 'https://solscan.io/tx/',
   'xrp-mainnet': 'https://xrpscan.com/tx/',
   'xrp-testnet': 'https://testnet.xrpscan.com/tx/',
+  'ton-mainnet': 'https://tonscan.org/tx/',
+  'ton-testnet': 'https://testnet.tonscan.org/tx/',
 };
 
 interface Props {
@@ -273,4 +275,3 @@ function DetailRow({
 }
 
 export default TransactionDetailsModal;
-

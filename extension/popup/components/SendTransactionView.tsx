@@ -11,6 +11,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Token } from '../../../src/types';
 import { calculateTransactionCosts, formatUSDValue } from '../../../src/price-service';
+import { findTonTransaction } from '../../../src/ton/index.js';
 
 interface SendTransactionViewProps {
   token: Token;
@@ -171,6 +172,55 @@ export function SendTransactionView({
       setTxState({ status: 'failed', error: err.message || 'Transaction failed' });
     }
   }, [token, recipient, amount, networkConfig]);
+
+  useEffect(() => {
+    if (!networkConfig?.isTon) return;
+    if (txState.status !== 'pending' || txState.hash) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 8;
+    const pollDelayMs = 2000;
+
+    const poll = async () => {
+      attempts += 1;
+      try {
+        const addressResponse = await chrome.runtime.sendMessage({ type: 'GET_ADDRESS' });
+        const address = addressResponse?.address;
+        if (!address) return;
+
+        const historyResponse = await chrome.runtime.sendMessage({
+          type: 'GET_EXPLORER_TRANSACTIONS',
+          payload: { address, network: networkConfig.network, pageSize: 10 }
+        });
+        const txs = historyResponse?.transactions || [];
+
+        const match = findTonTransaction(txs, {
+          fromAddress: address,
+          toAddress: recipient,
+          amountTon: amount,
+          type: 'send'
+        });
+
+        if (match?.hash && !cancelled) {
+          setTxState((prev) => ({ ...prev, hash: match.hash }));
+          return;
+        }
+      } catch (error) {
+        console.warn('[TON] Failed to refresh transaction hash:', error);
+      }
+
+      if (!cancelled && attempts < maxAttempts) {
+        setTimeout(poll, pollDelayMs);
+      }
+    };
+
+    const timer = setTimeout(poll, pollDelayMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [txState.status, txState.hash, networkConfig, recipient, amount]);
 
   const copyHash = useCallback(() => {
     if (txState.hash) {
