@@ -388,11 +388,20 @@ export default function SendScreen() {
 
             {gasEstimate && (
               <View className="bg-gray-900 rounded-xl p-4 mb-4">
-                <Text className="text-gray-400 text-sm mb-2">Estimated Fee</Text>
+                <View className="flex-row justify-between items-center mb-2">
+                  <Text className="text-gray-400 text-sm">Estimated Fee</Text>
+                  {gasEstimate.error && (
+                    <TouchableOpacity onPress={estimateGas}>
+                      <Text className="text-purple-400 text-xs">Retry</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
                 <Text className="text-white font-medium">
                   {gasEstimate.error
                     ? 'Unable to estimate'
-                    : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`}
+                    : (isTonNetwork && parseFloat(gasEstimate.estimatedCostNative) === 0)
+                      ? 'Calculating...'
+                      : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`}
                 </Text>
               </View>
             )}

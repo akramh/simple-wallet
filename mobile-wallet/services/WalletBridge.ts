@@ -61,6 +61,7 @@ export interface TokenBalance {
   balance: string | null;
   lastUpdated: number | null;
   isLoading: boolean;
+  isVisible?: boolean;
 }
 
 export interface Token {
@@ -143,8 +144,10 @@ class WalletBridge {
   private isInitialized = false;
   private currentWalletName = 'default';
   private _isUnlocked = false;
+  private hiddenTokens: Set<string> = new Set(); // format: `${networkKey}:${address}`
   // Per-network balance cache: key -> { fetchedAt, height?, portfolio[] }
   private balanceCache: Map<string, { fetchedAt: number; height?: number; portfolio: any[] }> = new Map();
+
   // Aggregated all-network cache
   private aggregateCache: Map<string, { fetchedAt: number; holdings: any[]; totalsByNetwork: Record<string, number>; grandTotal: number }> = new Map();
   // In-flight dedupe maps
@@ -174,6 +177,10 @@ class WalletBridge {
 
       // Load config (bundled or from storage)
       this.config = await this.loadConfig();
+
+      // Load hidden tokens
+      const hidden = mobileStorage.readJSON<string[]>('hidden_tokens.json', []);
+      this.hiddenTokens = new Set(hidden);
 
       // We'll lazily import wallet modules to avoid bundling issues
       // For now, mark as initialized - actual wallet creation happens on unlock/create
@@ -432,13 +439,22 @@ class WalletBridge {
   async getTokens(): Promise<TokenBalance[]> {
     this.requireUnlocked();
 
-    const tokens = this.service.getTokensForNetwork(this.config!.network);
-    return tokens.map((token: Token) => ({
-      token,
-      balance: null, // Will be populated by balance refresh
-      lastUpdated: null,
-      isLoading: true,
-    }));
+    const networkKey = this.config!.network;
+    const tokens = this.service.getTokensForNetwork(networkKey);
+    
+    return tokens.map((token: Token) => {
+      const address = token.address?.toLowerCase();
+      const key = address && token.type !== 'native' ? `${networkKey}:${address}` : null;
+      const isHidden = key ? this.hiddenTokens.has(key) : false;
+
+      return {
+        token,
+        balance: null, // Will be populated by balance refresh
+        lastUpdated: null,
+        isLoading: true,
+        isVisible: !isHidden,
+      };
+    });
   }
 
   /**
@@ -517,12 +533,19 @@ class WalletBridge {
         force: true,
       });
 
-      const balances: TokenBalance[] = portfolio.map((item: any) => ({
-        token: item.token,
-        balance: item.balance || '0',
-        lastUpdated: fetchedAt,
-        isLoading: false,
-      }));
+      const balances: TokenBalance[] = portfolio.map((item: any) => {
+        const address = item.token.address?.toLowerCase();
+        const key = address && item.token.type !== 'native' ? `${networkKey}:${address}` : null;
+        const isHidden = key ? this.hiddenTokens.has(key) : false;
+        
+        return {
+          token: item.token,
+          balance: item.balance || '0',
+          lastUpdated: fetchedAt,
+          isLoading: false,
+          isVisible: !isHidden,
+        };
+      });
 
       cacheService.set('balances', this.makeBalanceCacheKey(networkKey), { balances }, this.BALANCES_CACHE_TTL_MS);
       return balances;
@@ -706,6 +729,49 @@ class WalletBridge {
       status: 'confirmed',
       blockNumber: result.blockNumber,
     };
+  }
+
+  /**
+   * Add a custom token to the current network.
+   *
+   * @param token - Token definition to add.
+   */
+  async addCustomToken(token: Token): Promise<void> {
+    this.requireUnlocked();
+    // Ensure address is lowercase for consistency
+    const normalizedToken = {
+      ...token,
+      address: token.address?.toLowerCase()
+    };
+    await this.service.addCustomToken(this.config!.network, normalizedToken);
+  }
+
+  /**
+   * Toggle token visibility.
+   * 
+   * @param tokenAddress - Address of token to toggle.
+   * @param isVisible - Desired visibility state.
+   */
+  async toggleTokenVisibility(tokenAddress: string, isVisible: boolean): Promise<void> {
+    this.requireUnlocked();
+    
+    const networkKey = this.config!.network;
+    // Format: network:address (address lowercased for consistency)
+    const key = `${networkKey}:${tokenAddress.toLowerCase()}`;
+
+    if (isVisible) {
+      this.hiddenTokens.delete(key);
+    } else {
+      this.hiddenTokens.add(key);
+    }
+
+    // Persist changes
+    mobileStorage.writeJSON('hidden_tokens.json', Array.from(this.hiddenTokens));
+    
+    // Invalidate caches to reflect change immediately
+    const cacheKey = this.makeBalanceCacheKey(networkKey);
+    this.balanceCache.delete(cacheKey);
+    cacheService.delete('balances', cacheKey);
   }
 
   /**
@@ -1050,51 +1116,71 @@ class WalletBridge {
 
       const filtered = includeZero ? holdings : holdings.filter(h => {
         const val = parseFloat(h.balance || '0');
+        // Filter hidden tokens
+        const address = h.token.address?.toLowerCase();
+        if (address && h.token.type !== 'native') {
+          const key = `${h.networkKey}:${address}`;
+          if (this.hiddenTokens.has(key)) return false;
+        }
         return Number.isFinite(val) && val > 0 && h.balance !== 'Error';
       });
 
       // Totals by network (USD) using price-service
       const totalsByNetwork: Record<string, number> = {};
-      const { getTokenPrices, calculateTotalValue, getPriceByNetworkType, calculateNativeTotal } =
+      const enrichedHoldings: any[] = [];
+      const { getTokenPrices, getPriceByNetworkType } =
         await import('./price-service');
 
       for (const networkKey of enabledNetworks) {
         const netConfig = this.config!.networks[networkKey];
         const assets = filtered.filter(h => h.networkKey === networkKey);
+        
         if (!assets.length) {
           totalsByNetwork[networkKey] = 0;
           continue;
         }
 
+        let priceMap = new Map<string, number | null>();
+
         // Non-EVM networks: use unified price fetcher
         if (netConfig.type && ['bitcoin', 'solana', 'xrp', 'ton'].includes(netConfig.type)) {
           const price = await getPriceByNetworkType(netConfig.type, networkKey);
-          totalsByNetwork[networkKey] = calculateNativeTotal(assets, price);
-          continue;
-        }
-
-        // EVM: batch prices per chain
-        const chainId = netConfig.chainId;
-        if (!chainId) {
-          totalsByNetwork[networkKey] = 0;
-          continue;
-        }
-
-        const tokenInfos = assets.map(a => ({
-          token: {
+          priceMap.set('native', price);
+        } else if (netConfig.chainId) {
+          // EVM: batch prices per chain
+          const tokenInfos = assets.map(a => ({
             type: (a.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
             symbol: a.token.symbol,
             address: a.token.address,
             decimals: a.token.decimals
-          },
-          balance: a.balance
-        }));
-        const priceMap = await getTokenPrices(chainId, tokenInfos.map(t => t.token));
-        totalsByNetwork[networkKey] = calculateTotalValue(tokenInfos, priceMap);
+          }));
+          priceMap = await getTokenPrices(netConfig.chainId, tokenInfos.map(t => t));
+        }
+
+        let networkTotal = 0;
+        
+        for (const asset of assets) {
+          const isNative = asset.token.type === 'native' || !asset.token.address || asset.token.address === 'native';
+          // Price map keys: 'native' for native tokens, lowercase address for ERC-20
+          const key = isNative ? 'native' : asset.token.address?.toLowerCase() || '';
+          const price = priceMap.get(key) || 0;
+          const balance = parseFloat(asset.balance || '0');
+          const value = Number.isFinite(balance) ? balance * price : 0;
+          
+          networkTotal += value;
+          
+          enrichedHoldings.push({
+            ...asset,
+            price,
+            value
+          });
+        }
+        
+        totalsByNetwork[networkKey] = networkTotal;
       }
 
       const grandTotal = Object.values(totalsByNetwork).reduce((a, b) => a + b, 0);
-      const aggregate = { holdings: filtered, totalsByNetwork, grandTotal, fetchedAt: Date.now() };
+      const aggregate = { holdings: enrichedHoldings, totalsByNetwork, grandTotal, fetchedAt: Date.now() };
       this.aggregateCache.set(aggregateKey, aggregate);
       cacheService.set(
         'allNetworks',
@@ -1115,10 +1201,30 @@ class WalletBridge {
    */
   private async getNetworkPortfolioWithCache(networkKey: string, opts: { ttlMs: number; force: boolean }): Promise<{ fetchedAt: number; height?: number; portfolio: any[] }> {
     const cacheKey = this.makeBalanceCacheKey(networkKey);
-    const cached = this.balanceCache.get(cacheKey);
     const now = Date.now();
-    if (!opts.force && cached && now - cached.fetchedAt < opts.ttlMs) {
-      return cached;
+
+    // 1. Check in-memory cache
+    const memoryCached = this.balanceCache.get(cacheKey);
+    if (!opts.force && memoryCached && now - memoryCached.fetchedAt < opts.ttlMs) {
+      return memoryCached;
+    }
+
+    // 2. Check persistent cache (if allowed)
+    if (!opts.force) {
+      const persistent = cacheService.getStale<{ balances: TokenBalance[] }>('balances', cacheKey);
+      if (persistent && now - persistent.cachedAt < opts.ttlMs) {
+        // Convert TokenBalance[] back to raw portfolio format if needed, or just use it
+        // Note: The raw portfolio format from service has 'token' and 'balance'.
+        // TokenBalance has 'token', 'balance', 'lastUpdated', 'isLoading', 'isVisible'.
+        // We can map it back.
+        const portfolio = persistent.value.balances.map(b => ({
+          token: b.token,
+          balance: b.balance
+        }));
+        const result = { fetchedAt: persistent.cachedAt, height: undefined, portfolio };
+        this.balanceCache.set(cacheKey, result);
+        return result;
+      }
     }
 
     if (this.inflightBalances.has(cacheKey)) {

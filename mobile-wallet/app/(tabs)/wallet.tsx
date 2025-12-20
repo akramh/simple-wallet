@@ -83,7 +83,7 @@ export default function WalletScreen() {
       )}
 
       <FlatList
-        data={balances}
+        data={balances.filter(b => b.isVisible !== false)}
         keyExtractor={(item, index) => `${item.token.symbol}-${index}`}
         renderItem={({ item }) => {
           const price = prices[item.token.symbol] ?? null;
@@ -192,9 +192,12 @@ export default function WalletScreen() {
               />
             </View>
 
-            {/* Token List Title */}
-            <View className="bg-gray-900/50 rounded-t-3xl px-5 pt-5 pb-2">
+            {/* Token List Title & Manage Button */}
+            <View className="bg-gray-900/50 rounded-t-3xl px-5 pt-5 pb-2 flex-row justify-between items-center">
               <Text className="text-white text-lg font-semibold">Tokens</Text>
+              <TouchableOpacity onPress={() => router.push('/manage-tokens')}>
+                <Text className="text-purple-400 text-sm font-medium">Manage</Text>
+              </TouchableOpacity>
             </View>
           </>
         )}

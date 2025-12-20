@@ -149,6 +149,10 @@ interface WalletStore {
   /** Switch to a different derived account and refresh data for it. */
   switchAccount: (index: number) => Promise<void>;
   
+  // Token management
+  addCustomToken: (token: any) => Promise<void>;
+  toggleTokenVisibility: (tokenAddress: string, isVisible: boolean) => Promise<void>;
+  
   // Transaction actions
   /** Fetch transaction history for the active network/account. */
   loadTransactions: () => Promise<void>;
@@ -529,6 +533,36 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       }
     } catch (err) {
       console.warn('[WalletStore] Failed to load enabled networks', err);
+    }
+  },
+
+  // ============================================================================
+  // Token Management
+  // ============================================================================
+
+  addCustomToken: async (token: any) => {
+    try {
+      set({ isLoading: true, error: null });
+      await walletBridge.addCustomToken(token);
+      await get().refreshBalances();
+      set({ isLoading: false });
+    } catch (error) {
+      console.error('[WalletStore] Add custom token failed:', error);
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to add token',
+      });
+      throw error;
+    }
+  },
+
+  toggleTokenVisibility: async (tokenAddress: string, isVisible: boolean) => {
+    try {
+      await walletBridge.toggleTokenVisibility(tokenAddress, isVisible);
+      // Refresh to sync state
+      get().refreshBalances();
+    } catch (error) {
+      console.error('[WalletStore] Toggle visibility failed:', error);
     }
   },
 
