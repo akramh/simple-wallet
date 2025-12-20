@@ -1,3 +1,16 @@
+/**
+ * @file TransactionDetailsModal.tsx
+ * @description Modal UI for displaying transaction details in the extension.
+ *
+ * @responsibilities
+ * - Render transaction metadata (status, type, addresses, hash, fees)
+ * - Provide copy-to-clipboard affordances for addresses and hashes
+ * - Open the transaction on the appropriate block explorer
+ *
+ * @security
+ * - Opens external block explorer URLs in a new tab
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { useToast } from '../context/ToastContext';
 import { TransactionHistoryManager } from '../../../src/transaction-history.js';
@@ -52,12 +65,22 @@ function TransactionDetailsModal({ isOpen, onClose, transaction, networkConfig }
     return `${hash.substring(0, 10)}...${hash.substring(hash.length - 8)}`;
   };
 
+  const getExplorerUrl = useCallback(() => {
+    if (!transaction.hash) return '';
+    if (networkConfig.blockExplorer) {
+      const base = networkConfig.blockExplorer.replace(/\/$/, '');
+      const suffix = transaction.network === 'solana-devnet' ? '?cluster=devnet' : '';
+      return `${base}/tx/${transaction.hash}${suffix}`;
+    }
+    return TransactionHistoryManager.getExplorerUrl(transaction.network, transaction.hash);
+  }, [transaction.hash, transaction.network, networkConfig.blockExplorer]);
+
   const openInExplorer = useCallback(() => {
-    if (transaction.hash && networkConfig.blockExplorer) {
-      const url = TransactionHistoryManager.getExplorerUrl(transaction.network, transaction.hash);
+    const url = getExplorerUrl();
+    if (url) {
       chrome.tabs.create({ url });
     }
-  }, [transaction.hash, transaction.network, networkConfig.blockExplorer]);
+  }, [getExplorerUrl]);
 
   const copyToClipboard = useCallback((text: string, label: string) => {
     navigator.clipboard.writeText(text).then(() => {

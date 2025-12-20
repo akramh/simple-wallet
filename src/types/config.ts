@@ -14,8 +14,9 @@
  * - 'bitcoin': Bitcoin mainnet and testnet
  * - 'solana': Solana mainnet and devnet
  * - 'xrp': XRP Ledger mainnet and testnet
+ * - 'ton': TON mainnet and testnet
  */
-export type NetworkType = 'evm' | 'bitcoin' | 'solana' | 'xrp';
+export type NetworkType = 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
 
 /**
  * Base configuration shared by all network types.
@@ -87,10 +88,24 @@ export interface XRPNetworkConfig extends BaseNetworkConfig {
 }
 
 /**
+ * Configuration for TON networks.
+ */
+export interface TonNetworkConfig extends BaseNetworkConfig {
+  /** Network type discriminator */
+  type: 'ton';
+  /** TON network variant */
+  tonNetwork: 'mainnet' | 'testnet';
+  /** Toncenter-compatible HTTP endpoint(s) */
+  rpcUrl: string | string[];
+  /** Optional API key for Toncenter */
+  rpcApiKey?: string;
+}
+
+/**
  * Configuration for a single blockchain network.
  * Union type supporting EVM, Bitcoin, Solana, and XRP networks.
  */
-export type NetworkConfig = EVMNetworkConfig | BitcoinNetworkConfig | SolanaNetworkConfig | XRPNetworkConfig;
+export type NetworkConfig = EVMNetworkConfig | BitcoinNetworkConfig | SolanaNetworkConfig | XRPNetworkConfig | TonNetworkConfig;
 
 /**
  * Type guard to check if a network config is for Bitcoin.
@@ -114,10 +129,17 @@ export function isXRPNetworkConfig(config: NetworkConfig): config is XRPNetworkC
 }
 
 /**
+ * Type guard to check if a network config is for TON.
+ */
+export function isTonNetworkConfig(config: NetworkConfig): config is TonNetworkConfig {
+  return config.type === 'ton';
+}
+
+/**
  * Type guard to check if a network config is for EVM.
  */
 export function isEVMNetworkConfig(config: NetworkConfig): config is EVMNetworkConfig {
-  return config.type !== 'bitcoin' && config.type !== 'solana' && config.type !== 'xrp';
+  return config.type !== 'bitcoin' && config.type !== 'solana' && config.type !== 'xrp' && config.type !== 'ton';
 }
 
 /**

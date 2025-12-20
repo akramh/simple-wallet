@@ -1,4 +1,5 @@
 import type { Config, NetworkConfig } from './types/index.js';
+import type { TonNetworkConfig } from './types/config.js';
 
 type EnvRecord = Record<string, string | undefined>;
 
@@ -37,8 +38,18 @@ function withExplorerKey(network: NetworkConfig, apiKey?: string): NetworkConfig
 
 function applyRpcApiKeys(network: NetworkConfig, env: EnvRecord): NetworkConfig {
   // Replace ${HELIUS_API_KEY} placeholder in RPC URLs with actual key from env
-  // Only applies to EVM and Solana networks (Bitcoin doesn't have rpcUrl)
+  // Applies to EVM/Solana; TON uses rpcApiKey and does not rely on URL templating.
   if (network.type === 'bitcoin') return network;
+
+  if (network.type === 'ton') {
+    const networkSuffix = network.tonNetwork === 'mainnet' ? 'TON_MAINNET' : 'TON_TESTNET';
+    const apiKey = getEnvValue(env, `TONCENTER_API_KEY_${networkSuffix}`) ?? getEnvValue(env, 'TONCENTER_API_KEY');
+    const { rpcApiKey: _existing, ...rest } = network as any;
+    if (!apiKey) {
+      return rest as TonNetworkConfig;
+    }
+    return { ...(rest as TonNetworkConfig), rpcApiKey: apiKey };
+  }
   
   const heliusKey = getEnvValue(env, 'HELIUS_API_KEY');
   const networkWithRpc = network as { rpcUrl: string | string[] };

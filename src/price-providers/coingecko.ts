@@ -44,6 +44,7 @@ const SYMBOL_TO_COINGECKO_ID: Record<string, string> = {
   BTC: 'bitcoin',
   SOL: 'solana',
   XRP: 'ripple',
+  TON: 'the-open-network',
   MATIC: 'matic-network',
   AVAX: 'avalanche-2',
   BNB: 'binancecoin',
@@ -418,4 +419,3 @@ export class CoinGeckoProvider implements PriceProvider {
  * Re-export mappings for use in price-service.ts during transition.
  */
 export { SYMBOL_TO_COINGECKO_ID, CHAIN_TO_PLATFORM };
-

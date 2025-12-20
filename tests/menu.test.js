@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import inquirer from 'inquirer';
+import { deriveTonAddress } from '../dist/ton/index.js';
 
 process.env.NODE_ENV = 'test';
 
@@ -40,6 +41,48 @@ test('sendCrypto confirm path executes without error', async () => {
   ];
 
   await withPromptQueue(prompts, () => app.sendCrypto('TestWallet'));
+});
+
+test('sendCrypto handles TON send flow without error', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ quotes: { USD: { price: 2.5, percent_change_24h: 0 } } })
+  });
+
+  const { address } = deriveTonAddress('abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about', 0);
+
+  try {
+    app.config.network = 'ton-mainnet';
+    app.wallet.config.network = 'ton-mainnet';
+    app.wallet.getAddress = () => address;
+    app.wallet.currentAccountIndex = 0;
+    app.walletService.getGasEstimate = async () => ({
+      gasLimit: '1',
+      gasPrice: '0',
+      maxFeePerGas: null,
+      maxPriorityFeePerGas: null,
+      estimatedCostWei: '0',
+      estimatedCostNative: '0',
+      nativeSymbol: 'TON',
+      supportsEIP1559: false,
+      network: 'ton-mainnet'
+    });
+    app.walletService.sendTonTransaction = async () => ({ hash: 'tonhash' });
+
+    const prompts = [
+      { toAddress: address },
+      { amount: '1.2' },
+      { comment: 'hello' },
+      { confirm: true },
+      { password: 'password123' },
+      { continue: '' }
+    ];
+
+    await withPromptQueue(prompts, () => app.sendCrypto('TestWallet'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('checkPortfolioAllNetworks aggregates without error', async () => {

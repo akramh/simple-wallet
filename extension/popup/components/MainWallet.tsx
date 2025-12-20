@@ -31,10 +31,12 @@ import usdtIcon from '../../assets/img/usdt.svg';
 import polIcon from '../../assets/img/pol-token.svg';
 import bitcoinIcon from '../../assets/img/bitcoin-logo.svg';
 import xrpIcon from '../../assets/img/xrp.svg';
+import tonIcon from '../../assets/img/ton_symbol.svg';
 import sendIcon from '../../assets/icons/send.svg';
 import receiveIcon from '../../assets/icons/receive.svg';
 import backIcon from '../../assets/icons/arrow-left.svg';
 import { isValidBitcoinAddress } from '../../../src/bitcoin/index.js';
+import { isValidTonAddress } from '../../../src/ton/index.js';
 import { isValidXRPAddress, isXAddress, isValidDestinationTag } from '../../../src/xrp/index.js';
 
 const ICON_ASSETS: Record<string, string> = {
@@ -49,6 +51,7 @@ const ICON_ASSETS: Record<string, string> = {
   'usdt.svg': usdtIcon,
   'pol-token.svg': polIcon,
   'xrp.svg': xrpIcon,
+  'ton_symbol.svg': tonIcon,
   // Backwards-compatible aliases used by existing token lists/configs.
   'bitcoin-logo.svg': bitcoinIcon,
   'btc.svg': bitcoinIcon
@@ -72,7 +75,9 @@ const SYMBOL_ICON_FALLBACK: Record<string, string> = {
   btc: 'bitcoin-logo.svg',
   tbtc: 'bitcoin-logo.svg',
   xrp: 'xrp.svg',
-  txrp: 'xrp.svg'
+  txrp: 'xrp.svg',
+  ton: 'ton_symbol.svg',
+  tton: 'ton_symbol.svg'
 };
 
 /**
@@ -90,8 +95,12 @@ function isXrpNetwork(networkKey: string): boolean {
   return networkKey.startsWith('xrp-');
 }
 
+function isTonNetwork(networkKey: string): boolean {
+  return networkKey.startsWith('ton-');
+}
+
 function isEvmNetwork(networkKey: string): boolean {
-  return !isBitcoinNetwork(networkKey) && !isSolanaNetwork(networkKey) && !isXrpNetwork(networkKey);
+  return !isBitcoinNetwork(networkKey) && !isSolanaNetwork(networkKey) && !isXrpNetwork(networkKey) && !isTonNetwork(networkKey);
 }
 
 function isValidRecipientAddress(networkKey: string, address: string): boolean {
@@ -107,6 +116,9 @@ function isValidRecipientAddress(networkKey: string, address: string): boolean {
     // Only classic addresses are supported for now (r...). X-addresses are detected for better UX.
     if (isXAddress(address)) return false;
     return isValidXRPAddress(address);
+  }
+  if (isTonNetwork(networkKey)) {
+    return isValidTonAddress(address);
   }
   return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
@@ -179,6 +191,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [gasEstimateLoading, setGasEstimateLoading] = useState(false);
   const [calculatingMax, setCalculatingMax] = useState(false);
   const [destinationTag, setDestinationTag] = useState<string>('');
+  const [comment, setComment] = useState<string>('');
 
   const networkOptions = useMemo(() => {
     return Object.entries(networks).map(([key, net]: [string, any]) => {
@@ -188,6 +201,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       else if (key === 'linea') icon = ICON_ASSETS['linea-logo-mainnet.svg'];
       else if (key.startsWith('solana')) icon = ICON_ASSETS['solana-logo.svg'];
       else if (key.startsWith('bitcoin')) icon = ICON_ASSETS['bitcoin-logo.svg'];
+      else if (key.startsWith('ton')) icon = ICON_ASSETS['ton_symbol.svg'];
       else if (key === 'bsc') icon = ICON_ASSETS['bnb.svg'];
       else if (key === 'avalanche') icon = ICON_ASSETS['avax-token.svg'];
       else if (key === 'polygon') icon = ICON_ASSETS['pol-token.svg'];
@@ -484,7 +498,9 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
             ? 'Invalid Solana address'
             : isXrpNetwork(network)
               ? (isXAddress(recipient) ? 'X-address not supported (use classic r... address)' : 'Invalid XRP address')
-            : 'Invalid Ethereum address'
+              : isTonNetwork(network)
+                ? 'Invalid TON address'
+                : 'Invalid Ethereum address'
       );
       return;
     }
@@ -513,6 +529,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     setRecipient('');
     setAmount('');
     setDestinationTag('');
+    setComment('');
     setSelectedToken(null);
     setView('tokens');
     handleRefresh();
@@ -836,9 +853,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 token={selectedToken}
                 recipient={recipient}
                 amount={amount}
-                destinationTag={
-                  isXrpNetwork(network) && destinationTag.trim() !== '' ? Number(destinationTag) : undefined
-                }
+                destinationTag={isXrpNetwork(network) && destinationTag.trim() !== '' ? Number(destinationTag) : undefined}
+                comment={isTonNetwork(network) ? comment : undefined}
                 onClose={handleSendClose}
                 onSuccess={handleSendComplete}
               />
@@ -881,7 +897,9 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                               ? 'Base58 address...'
                               : isXrpNetwork(network)
                                 ? 'r...'
-                              : '0x...'
+                                : isTonNetwork(network)
+                                  ? 'EQ... or UQ...'
+                                  : '0x...'
                         }
                         style={{ paddingRight: '40px', width: '100%' }}
                       />
@@ -906,6 +924,21 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                       />
                       <div className="form-hint" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                         Required for some exchange deposits. Leave blank if not provided by the recipient.
+                      </div>
+                    </div>
+                  )}
+
+                  {isTonNetwork(network) && selectedToken?.type === 'native' && (
+                    <div className="form-group">
+                      <label>Comment (optional)</label>
+                      <input
+                        type="text"
+                        value={comment}
+                        onChange={(e) => setComment(e.target.value)}
+                        placeholder="Optional message"
+                      />
+                      <div className="form-hint" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                        Included as a plain text payload in the TON transfer.
                       </div>
                     </div>
                   )}
@@ -948,7 +981,13 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                         ) : gasEstimate ? (
                           <>
                             <span className="gas-amount">
-                              ~{parseFloat(gasEstimate.estimatedCostNative).toFixed(isBitcoinNetwork(network) ? 8 : 6)} {gasEstimate.nativeSymbol}
+                              ~{parseFloat(gasEstimate.estimatedCostNative).toFixed(
+                                isBitcoinNetwork(network)
+                                  ? 8
+                                  : (isSolanaNetwork(network) || isTonNetwork(network))
+                                    ? 9
+                                    : 6
+                              )} {gasEstimate.nativeSymbol}
                             </span>
                             {getGasUsdValue() && (
                               <span className="gas-usd">≈ {getGasUsdValue()}</span>

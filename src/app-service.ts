@@ -18,7 +18,7 @@
  */
 
 import type { Config, Token, TokenRegistry, TokenMetadata } from './types/index.js';
-import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig } from './types/config.js';
+import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from './types/config.js';
 import { Wallet } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
@@ -56,6 +56,14 @@ import {
   type XRPAddressInfo,
   type NormalizedXRPTransaction,
 } from './xrp/index.js';
+import {
+  TonProvider,
+  getTonProvider,
+  isTonNetwork,
+  isValidTonAddress,
+  type TonAddressInfo,
+  type NormalizedTonTransaction,
+} from './ton/index.js';
 
 /**
  * Gas estimation result for transaction cost display.
@@ -143,6 +151,8 @@ export class WalletAppService {
   private solanaExplorer: SolanaExplorer | null = null;
   /** XRP provider for XRP Ledger operations */
   private xrpProvider: XRPProvider | null = null;
+  /** TON provider for TON network operations */
+  private tonProvider: TonProvider | null = null;
 
   /**
    * Create a new WalletAppService instance.
@@ -387,6 +397,65 @@ export class WalletAppService {
   }
 
   /**
+   * Check if the current network is a TON network.
+   */
+  isCurrentNetworkTon(): boolean {
+    return isTonNetwork(this.config.network);
+  }
+
+  /**
+   * Check if a specific network is a TON network.
+   */
+  isNetworkTon(networkKey: string): boolean {
+    return isTonNetwork(networkKey);
+  }
+
+  /**
+   * Get or create the TON provider for a network.
+   * @private
+   */
+  private getTonProviderForNetwork(networkKey: string): TonProvider {
+    const netConfig = this.config.networks[networkKey];
+    if (!netConfig || !isTonNetworkConfig(netConfig)) {
+      throw new Error('Not a TON network');
+    }
+
+    const rpcUrls = Array.isArray(netConfig.rpcUrl) ? netConfig.rpcUrl : [netConfig.rpcUrl];
+    const endpoint = rpcUrls[0];
+
+    if (!this.tonProvider || this.tonProvider.getNetworkKey() !== networkKey) {
+      this.tonProvider = getTonProvider({
+        network: netConfig.tonNetwork,
+        networkKey,
+        endpoint,
+        apiKey: netConfig.rpcApiKey,
+        nativeSymbol: netConfig.nativeSymbol,
+        nativeName: netConfig.nativeName,
+      });
+    }
+
+    return this.tonProvider;
+  }
+
+  /**
+   * Get the TON address for the current account.
+   */
+  getTonAddress(): TonAddressInfo | null {
+    if (!this.isCurrentNetworkTon()) {
+      return null;
+    }
+
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+
+    try {
+      return this.wallet.getTonAddress(accountIndex);
+    } catch (error) {
+      console.warn('[WalletAppService] Failed to get TON address:', error);
+      return null;
+    }
+  }
+
+  /**
    * Create a new HD wallet with random mnemonic.
    * @param password - Master password for encryption
    * @returns Wallet info including address and mnemonic
@@ -504,7 +573,7 @@ export class WalletAppService {
 
   /**
    * Get the current wallet address.
-   * Returns the appropriate address for the current network (EVM, Bitcoin, Solana, or XRP).
+   * Returns the appropriate address for the current network (EVM, Bitcoin, Solana, XRP, or TON).
    * @returns Address string
    */
   getAddress(): string {
@@ -520,6 +589,10 @@ export class WalletAppService {
       const xrpInfo = this.getXRPAddress();
       return xrpInfo?.address || '';
     }
+    if (this.isCurrentNetworkTon()) {
+      const tonInfo = this.getTonAddress();
+      return tonInfo?.address || '';
+    }
     return this.wallet.getAddress();
   }
 
@@ -533,7 +606,7 @@ export class WalletAppService {
 
   /**
    * Get native currency balance.
-   * @returns Balance in native currency (ETH for EVM, BTC for Bitcoin, SOL for Solana, XRP for XRP Ledger)
+   * @returns Balance in native currency (ETH for EVM, BTC for Bitcoin, SOL for Solana, XRP for XRP Ledger, TON for TON)
    */
   async getBalance(): Promise<string> {
     if (this.isCurrentNetworkBitcoin()) {
@@ -559,6 +632,14 @@ export class WalletAppService {
       }
       const provider = this.getXRPProviderForNetwork(this.config.network);
       return provider.getBalanceFormatted(xrpInfo.address);
+    }
+    if (this.isCurrentNetworkTon()) {
+      const tonInfo = this.getTonAddress();
+      if (!tonInfo) {
+        return '0';
+      }
+      const provider = this.getTonProviderForNetwork(this.config.network);
+      return provider.getBalanceFormatted(tonInfo.address);
     }
     return this.wallet.getBalance();
   }
@@ -636,6 +717,26 @@ export class WalletAppService {
           availableBalance: p.availableBalance,
           reservedBalance: p.reservedBalance,
           isActivated: p.isActivated,
+          error: p.error,
+        }));
+      } catch (error) {
+        return [{
+          token: this.getNativeToken(networkKey),
+          balance: 'Error',
+          error: (error as Error).message,
+        }];
+      }
+    }
+
+    // Handle TON networks
+    if (this.isNetworkTon(networkKey)) {
+      try {
+        const tonInfo = this.wallet.getTonAddress(this.wallet.getCurrentAccountIndex());
+        const provider = this.getTonProviderForNetwork(networkKey);
+        const portfolio = await provider.getPortfolio(tonInfo.address);
+        return portfolio.map(p => ({
+          token: p.token,
+          balance: p.balance,
           error: p.error,
         }));
       } catch (error) {
@@ -825,6 +926,43 @@ export class WalletAppService {
       }
     }
 
+    // TON networks: estimate fee via Toncenter (best-effort)
+    if (this.isCurrentNetworkTon()) {
+      const networkKey = this.config.network;
+      const netConfig = this.config.networks[networkKey];
+      const nativeSymbol = netConfig?.nativeSymbol || 'TON';
+
+      try {
+        const provider = this.getTonProviderForNetwork(networkKey);
+        const feeEstimate = await provider.estimateFee(toAddress, amount);
+
+        return {
+          gasLimit: '1',
+          gasPrice: feeEstimate.feeNano,
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: feeEstimate.feeNano,
+          estimatedCostNative: feeEstimate.feeTon,
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey,
+        };
+      } catch (error: any) {
+        return {
+          error: error.message || 'Failed to estimate TON fee',
+          gasLimit: '1',
+          gasPrice: '0',
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: '0',
+          estimatedCostNative: '0',
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: networkKey,
+        };
+      }
+    }
+
     const gasNetwork = this.config.network;
     const gasNetworkConfig = this.config.networks[gasNetwork];
     const nativeSymbol = gasNetworkConfig?.nativeSymbol || 'ETH';
@@ -975,7 +1113,15 @@ export class WalletAppService {
     const networkConfig = this.config.networks[networkKey] || {};
     const symbol = networkConfig.nativeSymbol || 'ETH';
     const name = networkConfig.nativeName || networkConfig.name || 'Ether';
-    const decimals = this.isNetworkBitcoin(networkKey) ? 8 : this.isNetworkSolana(networkKey) ? 9 : 18;
+    const decimals = this.isNetworkBitcoin(networkKey)
+      ? 8
+      : this.isNetworkSolana(networkKey)
+        ? 9
+        : this.isNetworkXRP(networkKey)
+          ? 6
+          : this.isNetworkTon(networkKey)
+            ? 9
+            : 18;
     return {
       symbol,
       type: 'native',
@@ -993,8 +1139,8 @@ export class WalletAppService {
    * @returns Array of tokens with native first
    */
   getTokensForNetwork(networkKey: string): Token[] {
-    // Phase 1: Bitcoin/Solana only support native balances (no ERC-20 / SPL).
-    if (this.isNetworkBitcoin(networkKey) || this.isNetworkSolana(networkKey)) {
+    // Phase 1: Bitcoin/Solana/TON only support native balances (no tokens).
+    if (this.isNetworkBitcoin(networkKey) || this.isNetworkSolana(networkKey) || this.isNetworkTon(networkKey)) {
       return [this.getNativeToken(networkKey)];
     }
 
@@ -1119,10 +1265,16 @@ export class WalletAppService {
     } else if (this.isNetworkBitcoin(networkKey)) {
       this.bitcoinProvider = getBitcoinProvider(networkKey);
       this.solanaProvider = null;
+      this.tonProvider = null;
     } else if (this.isNetworkSolana(networkKey)) {
       this.solanaProvider = this.getSolanaProviderForNetwork(networkKey);
       this.solanaExplorer = this.getSolanaExplorerForNetwork(networkKey);
       this.bitcoinProvider = null;
+      this.tonProvider = null;
+    } else if (this.isNetworkTon(networkKey)) {
+      this.tonProvider = this.getTonProviderForNetwork(networkKey);
+      this.bitcoinProvider = null;
+      this.solanaProvider = null;
     }
 
     const nodeEnv = typeof process !== 'undefined' ? process.env?.NODE_ENV : undefined;
@@ -1527,5 +1679,115 @@ export class WalletAppService {
         isActivated: estimate.recipientBalance.isActivated,
       },
     };
+  }
+
+  // ============================================================================
+  // TON-Specific Methods
+  // ============================================================================
+
+  /**
+   * Get TON transaction history for the current address.
+   * Only works when current network is TON.
+   *
+   * @param limit - Maximum number of transactions to return
+   * @returns Array of normalized TON transactions
+   */
+  async getTonTransactionHistory(limit: number = 25): Promise<NormalizedTonTransaction[]> {
+    if (!this.isCurrentNetworkTon()) {
+      return [];
+    }
+
+    const tonInfo = this.getTonAddress();
+    if (!tonInfo) {
+      return [];
+    }
+
+    const provider = this.getTonProviderForNetwork(this.config.network);
+    return provider.getTransactionHistory(tonInfo.address, limit);
+  }
+
+  /**
+   * Get TON transaction history for a specific address and network.
+   *
+   * @param address - TON address (friendly or raw)
+   * @param limit - Maximum number of transactions to return
+   * @param networkKey - TON network key (defaults to current)
+   */
+  async getTonTransactionHistoryForAddress(
+    address: string,
+    limit: number = 25,
+    networkKey: string = this.config.network
+  ): Promise<NormalizedTonTransaction[]> {
+    if (!this.isNetworkTon(networkKey)) {
+      return [];
+    }
+    const provider = this.getTonProviderForNetwork(networkKey);
+    return provider.getTransactionHistory(address, limit);
+  }
+
+  /**
+   * Get block explorer URL for a TON transaction.
+   *
+   * @param hash - Transaction hash
+   * @returns Explorer URL
+   */
+  getTonTransactionUrl(hash: string): string {
+    const provider = this.getTonProviderForNetwork(this.config.network);
+    return provider.getTransactionUrl(hash);
+  }
+
+  /**
+   * Get block explorer URL for a TON address.
+   *
+   * @param address - TON address (optional, uses current if not provided)
+   * @returns Explorer URL
+   */
+  getTonAddressUrl(address?: string): string {
+    const addr = address || this.getTonAddress()?.address;
+    if (!addr) {
+      return '';
+    }
+    const provider = this.getTonProviderForNetwork(this.config.network);
+    return provider.getAddressUrl(addr);
+  }
+
+  /**
+   * Send a TON transaction.
+   *
+   * @param toAddress - Recipient TON address
+   * @param amountTon - Amount in TON string
+   * @param password - Master password for signing
+   * @param comment - Optional comment payload
+   * @returns Transaction result with hash
+   */
+  async sendTonTransaction(
+    toAddress: string,
+    amountTon: string,
+    password: string,
+    comment?: string
+  ): Promise<{ hash: string }> {
+    if (!this.isCurrentNetworkTon()) {
+      throw new Error('Not on a TON network');
+    }
+
+    if (!isValidTonAddress(toAddress)) {
+      throw new Error('Invalid TON recipient address');
+    }
+
+    const tonInfo = this.getTonAddress();
+    if (!tonInfo) {
+      throw new Error('No TON address available');
+    }
+
+    const mnemonic = this.wallet.getMnemonic(password);
+    const provider = this.getTonProviderForNetwork(this.config.network);
+
+    return provider.sendTransaction(
+      tonInfo.address,
+      toAddress,
+      amountTon,
+      mnemonic,
+      comment
+    );
   }
 }

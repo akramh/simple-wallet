@@ -17,6 +17,7 @@ interface SendTransactionViewProps {
   recipient: string;
   amount: string;
   destinationTag?: number;
+  comment?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -37,6 +38,8 @@ interface NetworkConfig {
   isBitcoin?: boolean;
   bitcoinNetwork?: string;
   isXrp?: boolean;
+  isSolana?: boolean;
+  isTon?: boolean;
 }
 
 interface GasEstimate {
@@ -55,6 +58,7 @@ export function SendTransactionView({
   recipient,
   amount,
   destinationTag,
+  comment,
   onClose,
   onSuccess
 }: SendTransactionViewProps) {
@@ -146,7 +150,7 @@ export function SendTransactionView({
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'SEND_TRANSACTION',
-        payload: { token, toAddress: recipient, amount, destinationTag }
+        payload: { token, toAddress: recipient, amount, destinationTag, comment }
       });
 
       if (response.error) {
@@ -155,7 +159,7 @@ export function SendTransactionView({
         // EVM: confirmed (waits for mining). Bitcoin: broadcasted (pending).
         const hash = response.result.hash;
         const blockNumber = response.result.blockNumber;
-        const isPending = response.result.status === 'pending' || (!blockNumber && networkConfig?.isBitcoin);
+        const isPending = response.result.status === 'pending' || (!blockNumber && (networkConfig?.isBitcoin || networkConfig?.isTon));
 
         setTxState({
           status: isPending ? 'pending' : 'confirmed',
@@ -246,6 +250,13 @@ export function SendTransactionView({
                 </div>
               )}
 
+              {comment && networkConfig?.isTon && (
+                <div className="tx-detail-row">
+                  <span className="tx-detail-label">Comment</span>
+                  <span className="tx-detail-value">{comment}</span>
+                </div>
+              )}
+
               <div className="tx-detail-row">
                 <span className="tx-detail-label">Network</span>
                 <span className="tx-detail-value">{networkConfig?.network || 'Loading...'}</span>
@@ -260,7 +271,11 @@ export function SendTransactionView({
                     {gasEstimateStatus === 'loading'
                       ? 'Estimating...'
                       : gasEstimate
-                        ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(networkConfig?.isBitcoin ? 8 : 6)} ${gasEstimate.nativeSymbol}`
+                        ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(
+                          networkConfig?.isBitcoin
+                            ? 8
+                            : (networkConfig?.isTon || networkConfig?.isSolana ? 9 : 6)
+                        )} ${gasEstimate.nativeSymbol}`
                         : '--'}
                   </span>
                   {getGasUsd() && <span className="tx-detail-usd">{getGasUsd()}</span>}
