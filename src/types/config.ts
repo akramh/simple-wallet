@@ -8,6 +8,9 @@
  * @module types/config
  */
 
+import type { Token } from './token.js';
+export type { Token };
+
 /**
  * Network type discriminator.
  * - 'evm': Ethereum and EVM-compatible chains (Polygon, BSC, etc.)
@@ -153,25 +156,6 @@ export interface Config {
   network: string;
   /** Map of network keys to their configurations */
   networks: Record<string, NetworkConfig>;
-}
-
-/**
- * Represents an ERC-20 token or native currency.
- * Used for portfolio display and transaction operations.
- */
-export interface Token {
-  /** Token ticker symbol (e.g., 'USDC', 'ETH') */
-  symbol: string;
-  /** Contract address (empty string for native tokens) */
-  address: string;
-  /** Number of decimal places for display formatting */
-  decimals: number;
- /** Human-readable token name */
-  name: string;
-  /** Distinguishes native currency from ERC-20 tokens */
-  type?: 'native' | 'erc20';
-  /** Optional icon file name for UI display (e.g., 'eth_logo.svg') */
-  icon?: string;
 }
 
 /**

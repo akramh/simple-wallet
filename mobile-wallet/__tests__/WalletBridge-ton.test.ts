@@ -41,7 +41,7 @@ jest.mock('../services/MobileStorageAdapter', () => ({
   __esModule: true,
   mobileStorage: {
     initialize: jest.fn(async () => {}),
-    readJSON: jest.fn(() => ({})),
+    readJSON: jest.fn((path, fallback) => fallback || {}),
     writeJSON: jest.fn(() => {}),
     clear: jest.fn(async () => {}),
   },

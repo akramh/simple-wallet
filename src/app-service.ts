@@ -1154,7 +1154,7 @@ export class WalletAppService {
     tokens.push(nativeToken);
 
     const seenAddresses = new Set<string>();
-    const appendToken = (token: Token): void => {
+    const appendToken = (token: any): void => {
       if (token.type === 'native') {
         return;
       }
@@ -1168,8 +1168,10 @@ export class WalletAppService {
       seenAddresses.add(key);
       tokens.push({
         ...token,
-        address: token.address.toLowerCase()
-      });
+        address: token.address.toLowerCase(),
+        logoURI: token.logoURI || token.icon, // Map legacy icon
+        type: token.type || 'erc20', // Default type
+      } as Token);
     };
 
     (this.builtInTokens[networkKey] || []).forEach(appendToken);

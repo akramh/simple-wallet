@@ -29,6 +29,7 @@
 import { mobileStorage, MobileStorageAdapter } from './MobileStorageAdapter';
 import { mobileCrypto, MobileCryptoAdapter } from './MobileCryptoAdapter';
 import { cacheService } from './CacheService';
+import type { Token } from '@wallet/types/token';
 
 // Types (these match the extension's service-worker types)
 export interface WalletState {
@@ -62,15 +63,6 @@ export interface TokenBalance {
   lastUpdated: number | null;
   isLoading: boolean;
   isVisible?: boolean;
-}
-
-export interface Token {
-  symbol: string;
-  name: string;
-  type: 'native' | 'erc20';
-  address?: string;
-  decimals: number;
-  icon?: string;
 }
 
 export interface Transaction {
@@ -160,6 +152,19 @@ class WalletBridge {
   private readonly PRICES_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
   /** “Fresh” TTL for cached aggregated holdings (SWR still allows stale reads). */
   private readonly ALL_NETWORKS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
+  private mapToSharedToken(token: any): Token {
+    return {
+      symbol: token.symbol,
+      name: token.name,
+      type: token.type || 'erc20', // Default to erc20 if missing/undefined
+      address: token.address,
+      decimals: token.decimals,
+      logoURI: token.logoURI || token.icon, // Map icon -> logoURI
+      // Preserve other fields if they exist on the source but aren't in the type?
+      // For now strict mapping is safer.
+    };
+  }
 
   /**
    * Initialize the wallet bridge.
@@ -442,7 +447,8 @@ class WalletBridge {
     const networkKey = this.config!.network;
     const tokens = this.service.getTokensForNetwork(networkKey);
     
-    return tokens.map((token: Token) => {
+    return tokens.map((t: any) => {
+      const token = this.mapToSharedToken(t);
       const address = token.address?.toLowerCase();
       const key = address && token.type !== 'native' ? `${networkKey}:${address}` : null;
       const isHidden = key ? this.hiddenTokens.has(key) : false;
@@ -534,12 +540,13 @@ class WalletBridge {
       });
 
       const balances: TokenBalance[] = portfolio.map((item: any) => {
-        const address = item.token.address?.toLowerCase();
-        const key = address && item.token.type !== 'native' ? `${networkKey}:${address}` : null;
+        const token = this.mapToSharedToken(item.token);
+        const address = token.address?.toLowerCase();
+        const key = address && token.type !== 'native' ? `${networkKey}:${address}` : null;
         const isHidden = key ? this.hiddenTokens.has(key) : false;
         
         return {
-          token: item.token,
+          token,
           balance: item.balance || '0',
           lastUpdated: fetchedAt,
           isLoading: false,
@@ -656,7 +663,7 @@ class WalletBridge {
   ): Promise<GasEstimate> {
     this.requireUnlocked();
 
-    return await this.service.getGasEstimate(token, toAddress, amount);
+    return await this.service.getGasEstimate(token as any, toAddress, amount);
   }
 
   /**
@@ -723,7 +730,7 @@ class WalletBridge {
     }
 
     // EVM transaction
-    const result = await this.service.sendToken(token, toAddress, amount);
+    const result = await this.service.sendToken(token as any, toAddress, amount);
     return {
       hash: result.hash,
       status: 'confirmed',
@@ -743,7 +750,7 @@ class WalletBridge {
       ...token,
       address: token.address?.toLowerCase()
     };
-    await this.service.addCustomToken(this.config!.network, normalizedToken);
+    await this.service.addCustomToken(this.config!.network, normalizedToken as any);
   }
 
   /**
@@ -1102,6 +1109,7 @@ class WalletBridge {
               const perNetwork = await this.getNetworkPortfolioWithCache(networkKey, { ttlMs, force });
               holdings.push(...perNetwork.portfolio.map((item: any) => ({
                 ...item,
+                token: this.mapToSharedToken(item.token),
                 networkKey,
                 height: perNetwork.height ?? null,
                 fetchedAt: perNetwork.fetchedAt
