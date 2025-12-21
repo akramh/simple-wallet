@@ -2,32 +2,57 @@
  * @fileoverview Backup recovery phrase screen.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   ScrollView,
   Alert,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
+import { useToast } from '../../contexts';
 
 export default function BackupScreen() {
   const router = useRouter();
   const { mnemonic } = useLocalSearchParams<{ mnemonic: string }>();
+  const { showToast } = useToast();
 
   const [revealed, setRevealed] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
 
   const words = mnemonic?.split(' ') || [];
+// Prevent accidental back navigation
+  useEffect(() => {
+    const onBackPress = () => {
+      Alert.alert(
+        'Wait!',
+        'You need to back up your recovery phrase before leaving. If you leave now, you may lose access to your wallet forever.',
+        [
+          { text: 'Stay', style: 'cancel', onPress: () => {} },
+          { 
+            text: 'Leave Anyway', 
+            style: 'destructive', 
+            onPress: () => router.back() 
+          },
+        ]
+      );
+      return true;
+    };
 
+    const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => subscription.remove();
+  }, []);
+
+  
   const handleCopy = async () => {
     if (!mnemonic) return;
     await Clipboard.setStringAsync(mnemonic);
-    Alert.alert('Copied', 'Recovery phrase copied to clipboard. Store it safely!');
+    showToast('Recovery phrase copied to clipboard', 'success');
   };
 
   const handleContinue = () => {
@@ -37,6 +62,7 @@ export default function BackupScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
+      <Stack.Screen options={{ gestureEnabled: false, headerLeft: () => null }} />
       <ScrollView className="flex-1 px-6">
         {/* Header */}
         <View className="pt-4 pb-6">
@@ -57,10 +83,7 @@ export default function BackupScreen() {
             </Text>
           </View>
           <Text className="text-red-400/80 text-sm">
-            • Never share your recovery phrase with anyone{'\n'}
-            • Never enter it on any website{'\n'}
-            • Store it offline in a secure location{'\n'}
-            • Anyone with this phrase can access your funds
+            Keep this phrase safe and offline. Never share it. Anyone with it can steal your funds.
           </Text>
         </View>
 

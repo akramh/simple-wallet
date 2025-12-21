@@ -37,8 +37,16 @@ jest.mock('expo-router', () => ({
   useRouter: () => ({ back: jest.fn() }),
 }));
 
+jest.mock('expo-clipboard', () => ({
+  setStringAsync: jest.fn(() => Promise.resolve()),
+}));
+
 jest.mock('expo-camera', () => ({
-  CameraView: () => null,
+  CameraView: (props: any) => {
+    const React = require('react');
+    const { View } = require('react-native');
+    return <View testID="camera-view" {...props} />;
+  },
   useCameraPermissions: () => [{ granted: true }, jest.fn()],
 }));
 
@@ -92,5 +100,23 @@ describe('SendScreen fee estimate display', () => {
 
     expect(await findByText('View in Explorer')).toBeTruthy();
     jest.useRealTimers();
+  });
+
+  test('scans QR and auto-copies address to clipboard', async () => {
+    const Clipboard = await import('expo-clipboard');
+    const { getByTestId, getByDisplayValue, getByText } = render(<SendScreen />);
+
+    fireEvent.press(getByTestId('open-qr-scanner'));
+
+    const camera = getByTestId('camera-view');
+    await act(async () => {
+      await camera.props.onBarcodeScanned({ data: '0x1234567890abcdef1234567890abcdef12345678' });
+    });
+
+    expect(getByDisplayValue('0x1234567890abcdef1234567890abcdef12345678')).toBeTruthy();
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(
+      '0x1234567890abcdef1234567890abcdef12345678'
+    );
+    expect(getByText('Copied to clipboard')).toBeTruthy();
   });
 });

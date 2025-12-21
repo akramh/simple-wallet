@@ -12,6 +12,9 @@ import {
   Alert,
   Modal,
   FlatList,
+  KeyboardAvoidingView,
+  ScrollView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -105,18 +108,29 @@ export default function UnlockScreen() {
   const selectedWalletInfo = walletList.find(w => w.name === selectedWallet);
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-950 px-6">
-      {/* Logo */}
-      <View className="flex-1 items-center justify-center">
-        <View className="w-20 h-20 rounded-full bg-purple-600 items-center justify-center mb-6">
-          <Ionicons name="lock-closed" size={40} color="white" />
-        </View>
-        <Text className="text-white text-2xl font-bold text-center mb-2">
-          Welcome Back
-        </Text>
-        <Text className="text-gray-400 text-center mb-6">
-          Enter your password to unlock
-        </Text>
+    <SafeAreaView className="flex-1 bg-gray-950">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        className="flex-1"
+      >
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          className="px-6"
+        >
+          {/* Logo */}
+          <View className="items-center justify-center mb-6">
+            <View className="w-20 h-20 rounded-full bg-purple-600 items-center justify-center mb-6">
+              <Ionicons name="lock-closed" size={40} color="white" />
+            </View>
+            <Text className="text-white text-2xl font-bold text-center mb-2">
+              Welcome Back
+            </Text>
+            <Text className="text-gray-400 text-center mb-6">
+              Enter your password to unlock
+            </Text>
+          </View>
 
         {/* Wallet Selector (only show if multiple wallets) */}
         {walletList.length > 1 && (
@@ -198,7 +212,7 @@ export default function UnlockScreen() {
           <TouchableOpacity
             onPress={handleBiometricUnlock}
             disabled={isAuthenticating}
-            className="mt-6 flex-row items-center"
+            className="mt-6 flex-row items-center justify-center"
           >
             {isAuthenticating ? (
               <ActivityIndicator size="small" color="#a855f7" />
@@ -212,20 +226,21 @@ export default function UnlockScreen() {
             </Text>
           </TouchableOpacity>
         )}
-      </View>
 
-      {/* Forgot Password */}
-      <TouchableOpacity className="items-center pb-8">
-        <Text className="text-gray-500">
-          Forgot password?{' '}
-          <Text
-            className="text-purple-400"
-            onPress={() => router.push('/(auth)/import')}
-          >
-            Restore with recovery phrase
+        {/* Forgot Password */}
+        <TouchableOpacity className="items-center pb-8 mt-6">
+          <Text className="text-gray-500">
+            Forgot password?{' '}
+            <Text
+              className="text-purple-400"
+              onPress={() => router.push('/(auth)/import')}
+            >
+              Restore with recovery phrase
+            </Text>
           </Text>
-        </Text>
-      </TouchableOpacity>
+        </TouchableOpacity>
+      </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* Wallet Picker Modal */}
       <Modal

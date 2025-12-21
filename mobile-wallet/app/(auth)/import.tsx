@@ -13,6 +13,8 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -73,7 +75,15 @@ export default function ImportWalletScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      <ScrollView className="flex-1 px-6" keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        className="flex-1"
+      >
+        <ScrollView 
+          className="flex-1 px-6" 
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
         {/* Header */}
         <View className="flex-row items-center pt-4 pb-6">
           <TouchableOpacity onPress={() => router.back()}>
@@ -224,6 +234,7 @@ export default function ImportWalletScreen() {
           )}
         </TouchableOpacity>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

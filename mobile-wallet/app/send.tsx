@@ -52,6 +52,10 @@ export default function SendScreen() {
   const [showScanner, setShowScanner] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const [hasScanned, setHasScanned] = useState(false);
+  const [scanStatus, setScanStatus] = useState<'idle' | 'scanned' | 'copied' | 'error'>('idle');
+  const [scanError, setScanError] = useState('');
+  const [scannedAddress, setScannedAddress] = useState('');
+  const [scannedMeta, setScannedMeta] = useState<{ amount?: string; destinationTag?: string } | null>(null);
 
   // XRP destination tag state
   const [destinationTag, setDestinationTag] = useState('');
@@ -103,6 +107,15 @@ export default function SendScreen() {
   };
 
   // Handle QR code scanning
+  const closeScanner = useCallback(() => {
+    setShowScanner(false);
+    setHasScanned(false);
+    setScanStatus('idle');
+    setScanError('');
+    setScannedAddress('');
+    setScannedMeta(null);
+  }, []);
+
   const handleOpenScanner = async () => {
     if (!permission?.granted) {
       const result = await requestPermission();
@@ -115,48 +128,127 @@ export default function SendScreen() {
       }
     }
     setHasScanned(false);
+    setScanStatus('idle');
+    setScanError('');
+    setScannedAddress('');
+    setScannedMeta(null);
     setShowScanner(true);
   };
 
-  const handleBarCodeScanned = ({ data }: { data: string }) => {
-    if (hasScanned) return;
-    setHasScanned(true);
-
-    // Parse the scanned data - could be a plain address or a URI
-    let address = data;
+  const parseScannedData = (data: string) => {
+    let address = data.trim();
     let scannedDestinationTag: string | undefined;
+    let scannedAmount: string | undefined;
 
-    // Handle various URI formats:
-    // - ethereum:0x... 
-    // - bitcoin:bc1...
-    // - solana:...
-    // - ripple:rAddress?dt=123 or xrpl:rAddress?dt=123
     if (data.includes(':')) {
-      const [scheme, rest] = data.split(':');
-      const [addressPart, queryString] = rest.split('?');
+      const schemeEnd = data.indexOf(':');
+      const scheme = data.slice(0, schemeEnd).toLowerCase();
+      let rest = data.slice(schemeEnd + 1);
+
+      if (rest.startsWith('//')) {
+        rest = rest.slice(2);
+      }
+
+      let [addressPart, queryString] = rest.split('?');
+
+      if (scheme === 'ton') {
+        if (addressPart.startsWith('transfer/')) {
+          addressPart = addressPart.slice('transfer/'.length);
+        } else if (addressPart === 'transfer') {
+          addressPart = '';
+        }
+      }
+
       address = addressPart;
 
-      // Parse query parameters for destination tag (XRP)
       if (queryString) {
         const params = new URLSearchParams(queryString);
         const dt = params.get('dt') || params.get('tag') || params.get('destination_tag');
         if (dt) {
           scannedDestinationTag = dt;
         }
-        // Also check for amount
-        const scannedAmount = params.get('amount');
-        if (scannedAmount) {
-          setAmount(scannedAmount);
+        const amountParam = params.get('amount');
+        if (amountParam) {
+          scannedAmount = amountParam;
+        }
+        if (!address) {
+          address =
+            params.get('address') ||
+            params.get('to') ||
+            params.get('recipient') ||
+            '';
         }
       }
     }
 
+    return { address, scannedDestinationTag, scannedAmount };
+  };
+
+  const handleBarCodeScanned = async ({ data }: { data: string }) => {
+    if (hasScanned) return;
+    setHasScanned(true);
+    setScanStatus('idle');
+    setScanError('');
+
+    // Parse the scanned data - could be a plain address or a URI
+    const { address, scannedDestinationTag, scannedAmount } = parseScannedData(data);
+
+    if (!address || address.length < 6) {
+      setScanStatus('error');
+      setScanError('We could not read this QR code. Try again.');
+      setHasScanned(false);
+      return;
+    }
+
+    setScanStatus('scanned');
     setRecipient(address);
+    setScannedAddress(address);
+    setScannedMeta({
+      amount: scannedAmount,
+      destinationTag: scannedDestinationTag,
+    });
+
     if (scannedDestinationTag && isXRPNetwork) {
       setDestinationTag(scannedDestinationTag);
     }
-    setShowScanner(false);
+    if (scannedAmount) {
+      setAmount(scannedAmount);
+    }
+    try {
+      await Clipboard.setStringAsync(address);
+      setScanStatus('copied');
+    } catch (error) {
+      setScanStatus('error');
+      setScanError('Unable to copy the address. Try again.');
+      setHasScanned(false);
+    }
   };
+
+  const handleScanAgain = () => {
+    setHasScanned(false);
+    setScanStatus('idle');
+    setScanError('');
+    setScannedAddress('');
+    setScannedMeta(null);
+  };
+
+  useEffect(() => {
+    if (scanStatus !== 'copied') return;
+    const timer = setTimeout(() => {
+      closeScanner();
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [scanStatus, closeScanner]);
+
+  useEffect(() => {
+    if (scanStatus !== 'error') return;
+    const timer = setTimeout(() => {
+      if (showScanner) {
+        handleScanAgain();
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [scanStatus, showScanner]);
 
   const handleContinue = () => {
     if (!selectedToken || !recipient || !amount) {
@@ -306,6 +398,7 @@ export default function SendScreen() {
                 <TouchableOpacity
                   onPress={handleOpenScanner}
                   className="px-4 py-4"
+                  testID="open-qr-scanner"
                 >
                   <Ionicons name="qr-code-outline" size={24} color="#a855f7" />
                 </TouchableOpacity>
@@ -482,26 +575,36 @@ export default function SendScreen() {
         <Modal
           visible={showScanner}
           animationType="slide"
-          onRequestClose={() => setShowScanner(false)}
+          onRequestClose={closeScanner}
         >
           <SafeAreaView className="flex-1 bg-black">
-            <View className="flex-row items-center justify-between px-5 pt-4 pb-4">
-              <TouchableOpacity onPress={() => setShowScanner(false)}>
-                <Ionicons name="close" size={28} color="white" />
-              </TouchableOpacity>
-              <Text className="text-white text-xl font-bold">Scan QR Code</Text>
-              <View className="w-7" />
-            </View>
-            
             <View className="flex-1 relative">
-              <CameraView
-                style={StyleSheet.absoluteFillObject}
-                facing="back"
-                barcodeScannerSettings={{
-                  barcodeTypes: ['qr'],
-                }}
-                onBarcodeScanned={hasScanned ? undefined : handleBarCodeScanned}
-              />
+              {permission?.granted ? (
+                <CameraView
+                  style={StyleSheet.absoluteFillObject}
+                  facing="back"
+                  barcodeScannerSettings={{
+                    barcodeTypes: ['qr'],
+                  }}
+                  onBarcodeScanned={scanStatus === 'idle' ? handleBarCodeScanned : undefined}
+                />
+              ) : (
+                <View className="flex-1 items-center justify-center px-8">
+                  <Ionicons name="camera-outline" size={48} color="#9ca3af" />
+                  <Text className="text-white text-lg font-semibold mt-4 text-center">
+                    Camera access needed
+                  </Text>
+                  <Text className="text-gray-400 text-center mt-2">
+                    Enable camera access to scan a wallet QR code.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={requestPermission}
+                    className="bg-purple-600 rounded-xl px-5 py-3 mt-6"
+                  >
+                    <Text className="text-white font-semibold">Enable Camera</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
               
               {/* Scanner overlay */}
               <View className="flex-1 items-center justify-center">
@@ -513,10 +616,76 @@ export default function SendScreen() {
                 </View>
               </View>
               
-              <View className="absolute bottom-10 left-0 right-0 px-10">
-                <Text className="text-white text-center text-sm opacity-80">
-                  Point your camera at a wallet address QR code
-                </Text>
+              <View className="absolute bottom-8 left-0 right-0 px-6">
+                <View className="bg-gray-900/90 border border-gray-800 rounded-2xl px-4 py-4">
+                  <View className="flex-row items-center justify-between mb-2">
+                    <Text className="text-white font-semibold">Scan QR code</Text>
+                    <TouchableOpacity
+                      onPress={closeScanner}
+                      className="w-8 h-8 items-center justify-center rounded-full bg-gray-800"
+                      accessibilityLabel="Close scanner"
+                    >
+                      <Ionicons name="close" size={16} color="#d1d5db" />
+                    </TouchableOpacity>
+                  </View>
+                  {scanStatus === 'idle' && (
+                    <>
+                      <Text className="text-white text-center font-semibold">
+                        Align the QR code inside the frame
+                      </Text>
+                      <Text className="text-gray-400 text-center text-xs mt-2">
+                        Scans will auto-fill the recipient address
+                      </Text>
+                    </>
+                  )}
+
+                  {scanStatus === 'scanned' && (
+                    <>
+                      <View className="items-center">
+                        <Ionicons name="checkmark-circle" size={28} color="#34d399" />
+                        <Text className="text-white text-center font-semibold mt-2">
+                          QR code detected
+                        </Text>
+                        <Text className="text-gray-400 text-center text-xs mt-1">
+                          {`${scannedAddress.slice(0, 10)}...${scannedAddress.slice(-6)}`}
+                        </Text>
+                        {scannedMeta?.amount && (
+                          <Text className="text-gray-400 text-center text-xs mt-1">
+                            Amount: {scannedMeta.amount}
+                          </Text>
+                        )}
+                        {scannedMeta?.destinationTag && isXRPNetwork && (
+                          <Text className="text-gray-400 text-center text-xs mt-1">
+                            Destination Tag: {scannedMeta.destinationTag}
+                          </Text>
+                        )}
+                      </View>
+                    </>
+                  )}
+
+                  {scanStatus === 'copied' && (
+                    <View className="items-center">
+                      <Ionicons name="checkmark-done" size={28} color="#34d399" />
+                      <Text className="text-white text-center font-semibold mt-2">
+                        Copied to clipboard
+                      </Text>
+                      <Text className="text-gray-400 text-center text-xs mt-1">
+                        Returning to Send
+                      </Text>
+                    </View>
+                  )}
+
+                  {scanStatus === 'error' && (
+                    <>
+                      <Text className="text-white text-center font-semibold">
+                        Scan failed
+                      </Text>
+                      <Text className="text-gray-400 text-center text-xs mt-2">
+                        {scanError}
+                      </Text>
+                    </>
+                  )}
+                </View>
               </View>
             </View>
           </SafeAreaView>

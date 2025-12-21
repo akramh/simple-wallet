@@ -12,6 +12,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  ScrollView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -69,9 +72,19 @@ export default function CreateWalletScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-950 px-6">
-      {/* Header */}
-      <View className="flex-row items-center pt-4 pb-6">
+    <SafeAreaView className="flex-1 bg-gray-950">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        className="flex-1"
+      >
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          className="px-6"
+        >
+          {/* Header */}
+          <View className="flex-row items-center pt-4 pb-6">
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
@@ -201,7 +214,7 @@ export default function CreateWalletScreen() {
           <View className="flex-row items-center justify-center">
             <ActivityIndicator color="white" size="small" />
             <Text className="text-white font-semibold ml-3">
-              {isAddingWallet ? 'Adding wallet...' : 'Encrypting wallet...'}
+              Creating wallet...
             </Text>
           </View>
         ) : (
@@ -210,6 +223,8 @@ export default function CreateWalletScreen() {
           </Text>
         )}
       </TouchableOpacity>
+      </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
