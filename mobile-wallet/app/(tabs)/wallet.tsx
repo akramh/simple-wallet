@@ -158,7 +158,7 @@ export default function WalletScreen() {
             </View>
 
             {/* Quick Actions */}
-            <View className="flex-row justify-center gap-4 px-5 mb-6">
+            <View className="flex-row justify-center gap-6 px-5 mb-6">
               <QuickActionButton
                 icon="arrow-up"
                 label="Send"
@@ -236,10 +236,10 @@ function QuickActionButton({
       disabled={disabled}
       className={`items-center ${disabled ? 'opacity-40' : ''}`}
     >
-      <View className="w-14 h-14 rounded-full bg-purple-600 items-center justify-center mb-2">
-        <Ionicons name={icon} size={24} color="white" />
+      <View className="w-16 h-16 rounded-full bg-purple-600 items-center justify-center mb-3">
+        <Ionicons name={icon} size={26} color="white" />
       </View>
-      <Text className="text-gray-300 text-xs">{label}</Text>
+      <Text className="text-gray-300 text-sm">{label}</Text>
     </TouchableOpacity>
   );
 }

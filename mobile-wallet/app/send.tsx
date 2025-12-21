@@ -68,7 +68,7 @@ export default function SendScreen() {
   const networkConfig = networks[network];
   const isXRPNetwork = networkConfig?.type === 'xrp';
   const isTonNetwork = networkConfig?.type === 'ton';
-  const footerHeight = 72;
+  const footerHeight = 132;
   const footerOffset =
     keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom, 0) : insets.bottom;
 
@@ -508,34 +508,6 @@ export default function SendScreen() {
               </View>
             </View>
 
-            {/* Gas Estimate */}
-            {isEstimating && (
-              <View className="flex-row items-center py-2">
-                <ActivityIndicator size="small" color="#a855f7" />
-                <Text className="text-gray-400 ml-2">Estimating gas...</Text>
-              </View>
-            )}
-
-            {gasEstimate && (
-              <View className="bg-gray-900 rounded-xl p-4 mb-4">
-                <View className="flex-row justify-between items-center mb-2">
-                  <Text className="text-gray-400 text-sm">Estimated Fee</Text>
-                  {gasEstimate.error && (
-                    <TouchableOpacity onPress={estimateGas}>
-                      <Text className="text-purple-400 text-xs">Retry</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <Text className="text-white font-medium">
-                  {gasEstimate.error
-                    ? 'Unable to estimate'
-                    : (isTonNetwork && parseFloat(gasEstimate.estimatedCostNative) === 0)
-                      ? 'Calculating...'
-                      : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`}
-                </Text>
-              </View>
-            )}
-
           </KeyboardAwareScrollView>
         )}
 
@@ -545,6 +517,31 @@ export default function SendScreen() {
             style={{ bottom: footerOffset }}
           >
             <View className="bg-gray-950/95 border border-gray-800 rounded-2xl p-3">
+              <View className="flex-row items-center justify-between mb-3">
+                <Text className="text-gray-400 text-sm">Estimated Fee</Text>
+                {gasEstimate?.error && (
+                  <TouchableOpacity onPress={estimateGas}>
+                    <Text className="text-purple-400 text-xs">Retry</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {isEstimating && (
+                <View className="flex-row items-center mb-3">
+                  <ActivityIndicator size="small" color="#a855f7" />
+                  <Text className="text-gray-400 ml-2">Estimating gas...</Text>
+                </View>
+              )}
+              {!isEstimating && (
+                <Text className="text-white font-medium mb-3">
+                  {gasEstimate?.error
+                    ? 'Unable to estimate'
+                    : gasEstimate
+                      ? (isTonNetwork && parseFloat(gasEstimate.estimatedCostNative) === 0)
+                        ? 'Calculating...'
+                        : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`
+                      : 'Enter amount to estimate fees'}
+                </Text>
+              )}
               <TouchableOpacity
                 onPress={handleContinue}
                 disabled={!recipient || !amount}
@@ -562,21 +559,34 @@ export default function SendScreen() {
 
         {/* Step: Confirm */}
         {step === 'confirm' && (
-          <View className="flex-1 px-5 pt-4">
+          <View className="flex-1 px-5 pt-6">
             <View className="flex-1">
-              {/* Summary Card */}
-              <View className="bg-gray-900 rounded-2xl p-5 mb-4">
-                <Text className="text-gray-400 text-center mb-4">You are sending</Text>
-                <Text className="text-white text-4xl font-bold text-center mb-2">
+              <View className="bg-gray-900 rounded-3xl p-6 mb-5">
+                <Text className="text-gray-400 text-center text-sm mb-3">You are sending</Text>
+                <Text className="text-white text-5xl font-bold text-center">
                   {amount} {selectedToken?.symbol}
                 </Text>
-                <Text className="text-gray-500 text-center">≈ $0.00</Text>
+                <Text className="text-gray-500 text-center mt-2">
+                  Estimated value unavailable
+                </Text>
               </View>
 
-              {/* Details */}
-              <View className="bg-gray-900 rounded-xl p-4">
-                <DetailRow label="To" value={`${recipient.slice(0, 10)}...${recipient.slice(-8)}`} />
-                <DetailRow label="Network" value={networkConfig?.name || network} />
+              <View className="bg-gray-900 rounded-2xl p-5 mb-4">
+                <Text className="text-gray-400 text-xs uppercase tracking-widest mb-3">
+                  Recipient
+                </Text>
+                <Text className="text-white text-lg font-semibold mb-2">
+                  {recipient}
+                </Text>
+                <Text className="text-gray-500 text-sm">
+                  {networkConfig?.name || network}
+                </Text>
+              </View>
+
+              <View className="bg-gray-900 rounded-2xl p-5">
+                <Text className="text-gray-400 text-xs uppercase tracking-widest mb-3">
+                  Details
+                </Text>
                 {isXRPNetwork && destinationTag && (
                   <DetailRow label="Destination Tag" value={destinationTag} />
                 )}
@@ -594,8 +604,7 @@ export default function SendScreen() {
               </View>
             </View>
 
-            {/* Action Buttons */}
-            <View className="flex-row gap-3 pb-4">
+            <View className="flex-row gap-3 pb-5">
               <TouchableOpacity
                 onPress={() => setStep('enter-details')}
                 className="flex-1 bg-gray-800 rounded-xl py-4"
