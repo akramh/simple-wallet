@@ -527,16 +527,17 @@ class WalletBridge {
    * @returns Token balances for the active network.
    * @throws If portfolio fetch fails.
    */
-  async refreshBalances(): Promise<TokenBalance[]> {
+  async refreshBalances(options?: { force?: boolean }): Promise<TokenBalance[]> {
     this.requireUnlocked();
+    const force = options?.force ?? true;
 
     const networkKey = this.config!.network;
-    console.log('[WalletBridge] refreshBalances() - network:', networkKey);
+    console.log('[WalletBridge] refreshBalances() - network:', networkKey, 'force:', force);
 
     try {
       const { fetchedAt, portfolio } = await this.getNetworkPortfolioWithCache(networkKey, {
-        ttlMs: 0,
-        force: true,
+        ttlMs: this.BALANCES_CACHE_TTL_MS,
+        force,
       });
 
       const balances: TokenBalance[] = portfolio.map((item: any) => {
@@ -554,6 +555,14 @@ class WalletBridge {
         };
       });
 
+      // Update cache only if we actually fetched (or just re-save to keep consistent)
+      // Actually getNetworkPortfolioWithCache handles the cache saving if it fetched.
+      // We don't need to double-set it here unless we processed it.
+      // But we are returning TokenBalance[] which is derived.
+      // CacheService 'balances' stores TokenBalance[] (derived).
+      // balanceCache stores raw portfolio.
+      
+      // We should update the 'balances' cache (derived UI state) because visibility changed!
       cacheService.set('balances', this.makeBalanceCacheKey(networkKey), { balances }, this.BALANCES_CACHE_TTL_MS);
       return balances;
     } catch (error) {
@@ -593,7 +602,7 @@ class WalletBridge {
     const balancesSnapshot =
       balancesOverride ||
       (cachedBalances?.balances?.length ? cachedBalances.balances : undefined) ||
-      (await this.refreshBalances());
+      (await this.refreshBalances({ force: false })); // Use soft refresh if needed
 
     const nonZeroBalances = balancesSnapshot.filter((b) => {
       const val = parseFloat(b.balance || '0');
@@ -775,10 +784,8 @@ class WalletBridge {
     // Persist changes
     mobileStorage.writeJSON('hidden_tokens.json', Array.from(this.hiddenTokens));
     
-    // Invalidate caches to reflect change immediately
-    const cacheKey = this.makeBalanceCacheKey(networkKey);
-    this.balanceCache.delete(cacheKey);
-    cacheService.delete('balances', cacheKey);
+    // Do NOT invalidate raw balance cache - we just want to re-map visibility.
+    // Calling refreshBalances({ force: false }) will re-use raw cache and re-apply hidden logic.
   }
 
   /**
