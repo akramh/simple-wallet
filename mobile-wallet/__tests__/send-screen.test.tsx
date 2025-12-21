@@ -6,7 +6,7 @@ import React from 'react';
 import { render, fireEvent, act } from '@testing-library/react-native';
 import { jest } from '@jest/globals';
 
-const mockGetGasEstimate = jest.fn();
+const mockGetGasEstimate = jest.fn<() => Promise<any>>();
 const mockSendTransaction = jest.fn(async () => ({ hash: 'ton_hash_123', status: 'pending' }));
 
 jest.mock('../store', () => ({

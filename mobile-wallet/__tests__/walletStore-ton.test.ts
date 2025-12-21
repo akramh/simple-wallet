@@ -87,6 +87,7 @@ jest.mock('../services', () => {
 });
 
 import { useWalletStore } from '../store/walletStore';
+// @ts-ignore - Mock export
 import { _mockSendTransaction } from '../services';
 
 // Get the mock for assertions

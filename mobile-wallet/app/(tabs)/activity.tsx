@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useActivityScreenSelector } from '../../store';
 import { TransactionDetailsModal } from '../../components/TransactionDetailsModal';
+import { Skeleton } from '../../components';
 import type { Transaction } from '../../services';
 
 export default function ActivityScreen() {
@@ -69,9 +70,20 @@ export default function ActivityScreen() {
           <Text className="text-white text-2xl font-bold">Activity</Text>
           <Text className="text-gray-400 mt-1">Your transaction history</Text>
         </View>
-        <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#9333ea" />
-          <Text className="text-gray-400 mt-4">Loading transactions...</Text>
+        <View className="px-5">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <View key={i} className="flex-row items-center py-4 border-b border-surface-highlight">
+              <Skeleton width={40} height={40} borderRadius={20} />
+              <View className="ml-3 flex-1">
+                <Skeleton width="60%" height={16} className="mb-2" />
+                <Skeleton width="40%" height={12} />
+              </View>
+              <View className="items-end">
+                <Skeleton width={60} height={16} className="mb-2" />
+                <Skeleton width={40} height={12} />
+              </View>
+            </View>
+          ))}
         </View>
       </SafeAreaView>
     );
@@ -112,8 +124,8 @@ export default function ActivityScreen() {
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
-            tintColor="#9333ea"
-            colors={['#9333ea']}
+            tintColor="#7c3aed" // brand color
+            colors={['#7c3aed']}
           />
         }
       >

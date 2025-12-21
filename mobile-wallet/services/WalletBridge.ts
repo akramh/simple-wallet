@@ -76,8 +76,11 @@ export interface Transaction {
   timestamp: number;
   blockNumber?: number;
   tokenSymbol?: string;
+  tokenAddress?: string;
   fee?: string;
 }
+
+export type { Token };
 
 export interface GasEstimate {
   gasLimit: string;
@@ -139,6 +142,7 @@ class WalletBridge {
   private _isUnlocked = false;
   private hiddenTokens: Set<string> = new Set(); // format: `${networkKey}:${address}`
   private showTestnets: boolean = false; // Toggle test networks
+  private hideSmallBalances: boolean = false; // Toggle small balances
 
   // Per-network balance cache: key -> { fetchedAt, height?, portfolio[] }
   private balanceCache: Map<string, { fetchedAt: number; height?: number; portfolio: any[] }> = new Map();

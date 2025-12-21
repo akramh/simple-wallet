@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePortfolioScreenSelector } from '../../store';
 import { getTokenIcon } from '../../utils/tokenIcons';
+import { RefreshPill } from '../../components';
 
 export default function PortfolioScreen() {
   const router = useRouter();
@@ -49,18 +50,7 @@ export default function PortfolioScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      {/* Floating Refresh Indicator */}
-      {isRefreshingAllNetworks && (
-        <View 
-          style={{ top: insets.top + 8 }}
-          className="absolute left-0 right-0 z-50 items-center"
-        >
-          <View className="bg-gray-900/90 px-4 py-2 rounded-full border border-purple-500/30 flex-row items-center shadow-2xl">
-            <ActivityIndicator size="small" color="#a855f7" />
-            <Text className="text-white text-xs font-medium ml-2">Refreshing Portfolio</Text>
-          </View>
-        </View>
-      )}
+      <RefreshPill isRefreshing={isRefreshingAllNetworks} label="Refreshing Portfolio" />
 
       {/* Header */}
       <View className="px-5 pt-4 pb-6">

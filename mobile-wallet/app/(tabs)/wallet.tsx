@@ -20,6 +20,7 @@ import { useWalletScreenSelector } from '../../store';
 import { useClipboard } from '../../hooks';
 import { useToast } from '../../contexts';
 import { getTokenIcon } from '../../utils/tokenIcons';
+import { RefreshPill } from '../../components';
 
 export default function WalletScreen() {
   const router = useRouter();
@@ -69,18 +70,8 @@ export default function WalletScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      {/* Floating Refresh Indicator */}
-      {isRefreshingBalances && (
-        <View 
-          style={{ top: insets.top + 8 }}
-          className="absolute left-0 right-0 z-50 items-center"
-        >
-          <View className="bg-gray-900/90 px-4 py-2 rounded-full border border-purple-500/30 flex-row items-center shadow-2xl">
-            <ActivityIndicator size="small" color="#a855f7" />
-            <Text className="text-white text-xs font-medium ml-2">Refreshing balances...</Text>
-          </View>
-        </View>
-      )}
+      <RefreshPill isRefreshing={isRefreshingBalances} label="Refreshing balances..." />
+
 
       <FlatList
         data={balances.filter(b => b.isVisible !== false)}

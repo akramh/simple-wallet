@@ -33,6 +33,14 @@ module.exports = {
           900: '#111827',
           950: '#030712',
         },
+        // Semantic Colors
+        background: '#030712', // gray-950
+        surface: '#111827',    // gray-900
+        'surface-highlight': '#1f2937', // gray-800
+        brand: '#7c3aed',      // purple-600
+        'brand-highlight': '#8b5cf6', // purple-500
+        'text-primary': '#ffffff',
+        'text-secondary': '#9ca3af', // gray-400
       },
     },
   },

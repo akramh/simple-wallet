@@ -30,6 +30,7 @@ import {
   Transaction,
   GasEstimate,
   NetworkConfig,
+  SendTransactionResult,
 } from '../services';
 
 const ENABLED_NETWORKS_KEY = 'enabledNetworks';
@@ -138,7 +139,7 @@ interface WalletStore {
   /** Get an estimated network fee for a proposed transaction. */
   getGasEstimate: (token: Token, to: string, amount: string) => Promise<GasEstimate>;
   /** Send a transaction and schedule follow-up refreshes. */
-  sendTransaction: (token: Token, to: string, amount: string, destinationTag?: number, comment?: string) => Promise<{ hash: string }>;
+  sendTransaction: (token: Token, to: string, amount: string, destinationTag?: number, comment?: string) => Promise<SendTransactionResult>;
   /** Load the list of persisted wallets from secure storage. */
   loadWalletList: () => Promise<void>;
   /** Switch to a different wallet (locks current wallet first). */
@@ -657,7 +658,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         setTimeout(() => get().loadTransactions(), 15000);
       }
 
-      return { hash: result.hash };
+      return result;
     } catch (error) {
       console.error('[WalletStore] Send transaction failed:', error);
       set({
