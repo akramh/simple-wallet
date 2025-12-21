@@ -10,15 +10,14 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  ScrollView,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Modal,
   StyleSheet,
   Linking,
   ToastAndroid,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -26,9 +25,11 @@ import { useSendScreenSelector } from '../store';
 import type { Token, GasEstimate } from '../services';
 import { isValidTonAddress } from '../services';
 import * as Clipboard from 'expo-clipboard';
+import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
 
 export default function SendScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const {
     balances,
     network,
@@ -47,6 +48,7 @@ export default function SendScreen() {
   const [showResultModal, setShowResultModal] = useState(false);
   const [txResult, setTxResult] = useState<{ hash?: string; status: 'pending' | 'confirmed' } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   // QR Scanner state
   const [showScanner, setShowScanner] = useState(false);
@@ -66,6 +68,9 @@ export default function SendScreen() {
   const networkConfig = networks[network];
   const isXRPNetwork = networkConfig?.type === 'xrp';
   const isTonNetwork = networkConfig?.type === 'ton';
+  const footerHeight = 72;
+  const footerOffset =
+    keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom, 0) : insets.bottom;
 
   // Set default token on mount
   useEffect(() => {
@@ -75,12 +80,28 @@ export default function SendScreen() {
     }
   }, [balances]);
 
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
   // Estimate gas when amount and recipient are valid
   const estimateGas = useCallback(async () => {
     if (!selectedToken || !recipient || !amount) return;
 
     // Basic validation
     if (recipient.length < 10) return;
+    if (!isValidAmountInput(amount)) return;
     if (parseFloat(amount) <= 0) return;
 
     try {
@@ -212,7 +233,7 @@ export default function SendScreen() {
       setDestinationTag(scannedDestinationTag);
     }
     if (scannedAmount) {
-      setAmount(scannedAmount);
+      setAmount(normalizeAmountInput(scannedAmount));
     }
     try {
       await Clipboard.setStringAsync(address);
@@ -255,7 +276,7 @@ export default function SendScreen() {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
-    if (parseFloat(amount) <= 0) {
+    if (!isValidAmountInput(amount) || parseFloat(amount) <= 0) {
       Alert.alert('Error', 'Please enter a valid amount');
       return;
     }
@@ -316,12 +337,25 @@ export default function SendScreen() {
     }
   };
 
+  const normalizeAmountInput = (value: string) => {
+    let sanitized = value.replace(/[^0-9.]/g, '');
+    const firstDot = sanitized.indexOf('.');
+    if (firstDot !== -1) {
+      sanitized =
+        sanitized.slice(0, firstDot + 1) +
+        sanitized.slice(firstDot + 1).replace(/\./g, '');
+    }
+    if (sanitized.startsWith('.')) {
+      sanitized = `0${sanitized}`;
+    }
+    return sanitized;
+  };
+
+  const isValidAmountInput = (value: string) => /^\d+(\.\d+)?$/.test(value);
+
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        className="flex-1"
-      >
+      <View className="flex-1">
         {/* Header */}
         <View className="flex-row items-center justify-between px-5 pt-4 pb-4 border-b border-gray-800">
           <TouchableOpacity onPress={() => router.back()}>
@@ -333,7 +367,7 @@ export default function SendScreen() {
 
         {/* Step: Select Token */}
         {step === 'select-token' && (
-          <ScrollView className="flex-1 px-5 pt-4">
+          <KeyboardAwareScrollView className="flex-1 px-5 pt-4">
             <Text className="text-gray-400 mb-4">Select token to send</Text>
             {balances.map((item, index) => (
               <TouchableOpacity
@@ -353,12 +387,15 @@ export default function SendScreen() {
                 </Text>
               </TouchableOpacity>
             ))}
-          </ScrollView>
+          </KeyboardAwareScrollView>
         )}
 
         {/* Step: Enter Details */}
         {step === 'enter-details' && (
-          <ScrollView className="flex-1 px-5 pt-4">
+          <KeyboardAwareScrollView
+            className="flex-1 px-5 pt-4"
+            extraBottomPadding={footerHeight + 16}
+          >
             {/* Selected Token */}
             <TouchableOpacity
               onPress={() => setStep('select-token')}
@@ -461,7 +498,7 @@ export default function SendScreen() {
               <View className="flex-row bg-gray-900 rounded-xl items-center">
                 <TextInput
                   value={amount}
-                  onChangeText={setAmount}
+                  onChangeText={(value) => setAmount(normalizeAmountInput(value))}
                   placeholder="0.0"
                   placeholderTextColor="#6b7280"
                   keyboardType="decimal-pad"
@@ -499,19 +536,28 @@ export default function SendScreen() {
               </View>
             )}
 
-            {/* Continue Button */}
-            <TouchableOpacity
-              onPress={handleContinue}
-              disabled={!recipient || !amount}
-              className={`rounded-xl py-4 mt-4 ${
-                recipient && amount ? 'bg-purple-600' : 'bg-gray-800'
-              }`}
-            >
-              <Text className="text-white font-semibold text-center text-lg">
-                Review Transaction
-              </Text>
-            </TouchableOpacity>
-          </ScrollView>
+          </KeyboardAwareScrollView>
+        )}
+
+        {step === 'enter-details' && (
+          <View
+            className="absolute left-0 right-0 px-5"
+            style={{ bottom: footerOffset }}
+          >
+            <View className="bg-gray-950/95 border border-gray-800 rounded-2xl p-3">
+              <TouchableOpacity
+                onPress={handleContinue}
+                disabled={!recipient || !amount}
+                className={`rounded-xl py-4 ${
+                  recipient && amount ? 'bg-purple-600' : 'bg-gray-800'
+                }`}
+              >
+                <Text className="text-white font-semibold text-center text-lg">
+                  Review Transaction
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         )}
 
         {/* Step: Confirm */}
@@ -690,7 +736,7 @@ export default function SendScreen() {
             </View>
           </SafeAreaView>
         </Modal>
-      </KeyboardAvoidingView>
+      </View>
 
       <Modal
         visible={showResultModal}

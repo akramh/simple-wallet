@@ -103,7 +103,7 @@ describe('SendScreen fee estimate display', () => {
   });
 
   test('scans QR and auto-copies address to clipboard', async () => {
-    const Clipboard = await import('expo-clipboard');
+    const Clipboard = jest.requireMock('expo-clipboard') as { setStringAsync: jest.Mock };
     const { getByTestId, getByDisplayValue, getByText } = render(<SendScreen />);
 
     fireEvent.press(getByTestId('open-qr-scanner'));

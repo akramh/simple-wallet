@@ -17,5 +17,5 @@ export type { ToastType } from './Toast';
 export { PriceChart } from './PriceChart';
 export { RefreshPill } from './RefreshPill';
 export { Skeleton } from './Skeleton';
-
+export { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 
