@@ -11,12 +11,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Token } from '../../../src/types';
 import { calculateTransactionCosts, formatUSDValue } from '../../../src/price-service';
+import { findTonTransaction } from '../../../src/ton/index.js';
 
 interface SendTransactionViewProps {
   token: Token;
   recipient: string;
   amount: string;
   destinationTag?: number;
+  comment?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -37,6 +39,8 @@ interface NetworkConfig {
   isBitcoin?: boolean;
   bitcoinNetwork?: string;
   isXrp?: boolean;
+  isSolana?: boolean;
+  isTon?: boolean;
 }
 
 interface GasEstimate {
@@ -55,6 +59,7 @@ export function SendTransactionView({
   recipient,
   amount,
   destinationTag,
+  comment,
   onClose,
   onSuccess
 }: SendTransactionViewProps) {
@@ -146,7 +151,7 @@ export function SendTransactionView({
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'SEND_TRANSACTION',
-        payload: { token, toAddress: recipient, amount, destinationTag }
+        payload: { token, toAddress: recipient, amount, destinationTag, comment }
       });
 
       if (response.error) {
@@ -155,7 +160,7 @@ export function SendTransactionView({
         // EVM: confirmed (waits for mining). Bitcoin: broadcasted (pending).
         const hash = response.result.hash;
         const blockNumber = response.result.blockNumber;
-        const isPending = response.result.status === 'pending' || (!blockNumber && networkConfig?.isBitcoin);
+        const isPending = response.result.status === 'pending' || (!blockNumber && (networkConfig?.isBitcoin || networkConfig?.isTon));
 
         setTxState({
           status: isPending ? 'pending' : 'confirmed',
@@ -167,6 +172,55 @@ export function SendTransactionView({
       setTxState({ status: 'failed', error: err.message || 'Transaction failed' });
     }
   }, [token, recipient, amount, networkConfig]);
+
+  useEffect(() => {
+    if (!networkConfig?.isTon) return;
+    if (txState.status !== 'pending' || txState.hash) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 8;
+    const pollDelayMs = 2000;
+
+    const poll = async () => {
+      attempts += 1;
+      try {
+        const addressResponse = await chrome.runtime.sendMessage({ type: 'GET_ADDRESS' });
+        const address = addressResponse?.address;
+        if (!address) return;
+
+        const historyResponse = await chrome.runtime.sendMessage({
+          type: 'GET_EXPLORER_TRANSACTIONS',
+          payload: { address, network: networkConfig.network, pageSize: 10 }
+        });
+        const txs = historyResponse?.transactions || [];
+
+        const match = findTonTransaction(txs, {
+          fromAddress: address,
+          toAddress: recipient,
+          amountTon: amount,
+          type: 'send'
+        });
+
+        if (match?.hash && !cancelled) {
+          setTxState((prev) => ({ ...prev, hash: match.hash }));
+          return;
+        }
+      } catch (error) {
+        console.warn('[TON] Failed to refresh transaction hash:', error);
+      }
+
+      if (!cancelled && attempts < maxAttempts) {
+        setTimeout(poll, pollDelayMs);
+      }
+    };
+
+    const timer = setTimeout(poll, pollDelayMs);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [txState.status, txState.hash, networkConfig, recipient, amount]);
 
   const copyHash = useCallback(() => {
     if (txState.hash) {
@@ -246,6 +300,13 @@ export function SendTransactionView({
                 </div>
               )}
 
+              {comment && networkConfig?.isTon && (
+                <div className="tx-detail-row">
+                  <span className="tx-detail-label">Comment</span>
+                  <span className="tx-detail-value">{comment}</span>
+                </div>
+              )}
+
               <div className="tx-detail-row">
                 <span className="tx-detail-label">Network</span>
                 <span className="tx-detail-value">{networkConfig?.network || 'Loading...'}</span>
@@ -260,7 +321,11 @@ export function SendTransactionView({
                     {gasEstimateStatus === 'loading'
                       ? 'Estimating...'
                       : gasEstimate
-                        ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(networkConfig?.isBitcoin ? 8 : 6)} ${gasEstimate.nativeSymbol}`
+                        ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(
+                          networkConfig?.isBitcoin
+                            ? 8
+                            : (networkConfig?.isTon || networkConfig?.isSolana ? 9 : 6)
+                        )} ${gasEstimate.nativeSymbol}`
                         : '--'}
                   </span>
                   {getGasUsd() && <span className="tx-detail-usd">{getGasUsd()}</span>}

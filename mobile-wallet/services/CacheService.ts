@@ -160,6 +160,16 @@ export class CacheService {
     };
     mobileStorage.writeJSON(path, env);
   }
+  /**
+   * Remove a value from cache.
+   *
+   * @param namespace - Logical namespace (e.g. `balances`, `prices`).
+   * @param key - Cache key.
+   */
+  delete(namespace: string, key: CacheKey): void {
+    const path = makeCachePath(namespace, key);
+    mobileStorage.delete(path);
+  }
 }
 
 // Bump version to invalidate older cached snapshots (e.g., incorrect multi-network EVM holdings).

@@ -125,8 +125,9 @@ export default function PortfolioScreen() {
                     </View>
                     {items.map((item, index) => {
                       const balance = parseFloat(item.balance || '0');
+                      const itemValue = item.value || 0;
                       const networkTotal = subtotal || totalValue;
-                      const percentage = networkTotal > 0 ? ( (balance * (prices[item.token.symbol] ?? 0)) / networkTotal) * 100 : 0;
+                      const percentage = networkTotal > 0 ? (itemValue / networkTotal) * 100 : 0;
                       const isNative = item.token.address === 'native' || !item.token.address;
 
                       const handlePress = () => {
@@ -150,7 +151,7 @@ export default function PortfolioScreen() {
                           symbol={item.token.symbol}
                           name={item.token.name}
                           balance={item.balance || '0'}
-                          value={(prices[item.token.symbol] ?? 0) * balance}
+                          value={itemValue}
                           percentage={percentage}
                           change24h={0}
                           onPress={handlePress}

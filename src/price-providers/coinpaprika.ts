@@ -44,6 +44,7 @@ const SYMBOL_TO_COINPAPRIKA_ID: Record<string, string> = {
   BTC: 'btc-bitcoin',
   SOL: 'sol-solana',
   XRP: 'xrp-xrp',
+  TON: 'ton-toncoin',
   MATIC: 'matic-polygon',
   AVAX: 'avax-avalanche',
   BNB: 'bnb-binance-coin',
@@ -382,4 +383,3 @@ export class CoinPaprikaProvider implements PriceProvider {
     };
   }
 }
-

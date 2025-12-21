@@ -4,7 +4,7 @@
  * This module provides the main Wallet class that acts as a manager for:
  * - Key management (Mnemonic encryption/decryption)
  * - Account management (BIP-44)
- * - Delegation to chain-specific providers (Ethereum, Bitcoin, Solana, XRP)
+ * - Delegation to chain-specific providers (Ethereum, Bitcoin, Solana, XRP, TON)
  * 
  * @module wallet
  */
@@ -24,6 +24,7 @@ import type { ProviderFactory } from './providers.js';
 import { deriveBitcoinAddress, getBitcoinPrivateKey, type BitcoinAddressInfo } from './bitcoin/index.js';
 import { deriveSolanaAddress, type SolanaAddressInfo } from './solana/index.js';
 import { deriveXRPAddress, getXRPPrivateKey, type XRPAddressInfo } from './xrp/index.js';
+import { deriveTonAddress, type TonAddressInfo } from './ton/index.js';
 import { EthereumProvider } from './ethereum/provider.js';
 import { deriveEthereumWallet } from './ethereum/address.js';
 
@@ -683,5 +684,23 @@ export class Wallet {
     );
 
     return getXRPPrivateKey(mnemonic, this.currentAccountIndex);
+  }
+
+  // ============================================================================
+  // TON Support
+  // ============================================================================
+
+  /**
+   * Get the TON address for a given account index.
+   *
+   * @param accountIndex - BIP-44 account index
+   * @returns TON address info
+   */
+  getTonAddress(accountIndex?: number): TonAddressInfo {
+    if (!this.mnemonic) {
+      throw new Error('No mnemonic loaded');
+    }
+    const index = accountIndex ?? this.currentAccountIndex;
+    return deriveTonAddress(this.mnemonic, index);
   }
 }

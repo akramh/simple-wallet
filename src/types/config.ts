@@ -8,14 +8,18 @@
  * @module types/config
  */
 
+import type { Token } from './token.js';
+export type { Token };
+
 /**
  * Network type discriminator.
  * - 'evm': Ethereum and EVM-compatible chains (Polygon, BSC, etc.)
  * - 'bitcoin': Bitcoin mainnet and testnet
  * - 'solana': Solana mainnet and devnet
  * - 'xrp': XRP Ledger mainnet and testnet
+ * - 'ton': TON mainnet and testnet
  */
-export type NetworkType = 'evm' | 'bitcoin' | 'solana' | 'xrp';
+export type NetworkType = 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
 
 /**
  * Base configuration shared by all network types.
@@ -35,6 +39,8 @@ interface BaseNetworkConfig {
   explorerApiKey?: string;
   /** Human-readable network name for display */
   name?: string;
+  /** Whether this is a test network (default: false) */
+  isTestnet?: boolean;
 }
 
 /**
@@ -87,10 +93,24 @@ export interface XRPNetworkConfig extends BaseNetworkConfig {
 }
 
 /**
+ * Configuration for TON networks.
+ */
+export interface TonNetworkConfig extends BaseNetworkConfig {
+  /** Network type discriminator */
+  type: 'ton';
+  /** TON network variant */
+  tonNetwork: 'mainnet' | 'testnet';
+  /** Toncenter-compatible HTTP endpoint(s) */
+  rpcUrl: string | string[];
+  /** Optional API key for Toncenter */
+  rpcApiKey?: string;
+}
+
+/**
  * Configuration for a single blockchain network.
  * Union type supporting EVM, Bitcoin, Solana, and XRP networks.
  */
-export type NetworkConfig = EVMNetworkConfig | BitcoinNetworkConfig | SolanaNetworkConfig | XRPNetworkConfig;
+export type NetworkConfig = EVMNetworkConfig | BitcoinNetworkConfig | SolanaNetworkConfig | XRPNetworkConfig | TonNetworkConfig;
 
 /**
  * Type guard to check if a network config is for Bitcoin.
@@ -114,10 +134,17 @@ export function isXRPNetworkConfig(config: NetworkConfig): config is XRPNetworkC
 }
 
 /**
+ * Type guard to check if a network config is for TON.
+ */
+export function isTonNetworkConfig(config: NetworkConfig): config is TonNetworkConfig {
+  return config.type === 'ton';
+}
+
+/**
  * Type guard to check if a network config is for EVM.
  */
 export function isEVMNetworkConfig(config: NetworkConfig): config is EVMNetworkConfig {
-  return config.type !== 'bitcoin' && config.type !== 'solana' && config.type !== 'xrp';
+  return config.type !== 'bitcoin' && config.type !== 'solana' && config.type !== 'xrp' && config.type !== 'ton';
 }
 
 /**
@@ -129,27 +156,10 @@ export interface Config {
   defaultNetwork: string;
   /** Currently selected network key */
   network: string;
+  /** Whether to show test networks in selectors */
+  showTestnets?: boolean;
   /** Map of network keys to their configurations */
   networks: Record<string, NetworkConfig>;
-}
-
-/**
- * Represents an ERC-20 token or native currency.
- * Used for portfolio display and transaction operations.
- */
-export interface Token {
-  /** Token ticker symbol (e.g., 'USDC', 'ETH') */
-  symbol: string;
-  /** Contract address (empty string for native tokens) */
-  address: string;
-  /** Number of decimal places for display formatting */
-  decimals: number;
- /** Human-readable token name */
-  name: string;
-  /** Distinguishes native currency from ERC-20 tokens */
-  type?: 'native' | 'erc20';
-  /** Optional icon file name for UI display (e.g., 'eth_logo.svg') */
-  icon?: string;
 }
 
 /**

@@ -117,6 +117,14 @@ const XRP_NETWORK_TO_ID: Record<string, string> = {
   'xrp-devnet': 'ripple',
 };
 
+/**
+ * Maps TON network keys to symbol
+ */
+const TON_NETWORK_TO_ID: Record<string, string> = {
+  'ton-mainnet': 'ton',
+  'ton-testnet': 'ton',
+};
+
 // ============================================================================
 // Legacy Price Cache (for ERC-20 batch operations)
 // ============================================================================
@@ -205,6 +213,13 @@ export function isXRPNetworkKey(networkKey: string): boolean {
 }
 
 /**
+ * Check if a network key is a TON network.
+ */
+export function isTonNetworkKey(networkKey: string): boolean {
+  return networkKey in TON_NETWORK_TO_ID;
+}
+
+/**
  * Fetches the Solana price.
  * Works for both solana-mainnet and solana-devnet (uses mainnet price).
  *
@@ -225,6 +240,18 @@ export async function getSolanaPrice(networkKey?: string): Promise<number | null
  */
 export async function getXRPPrice(networkKey?: string): Promise<number | null> {
   const result = await priceProviderManager.getCurrentPrice('XRP');
+  return result?.price ?? null;
+}
+
+/**
+ * Fetches the TON price.
+ * Works for ton-mainnet and ton-testnet (uses mainnet price).
+ *
+ * @param networkKey - TON network key (e.g., 'ton-mainnet')
+ * @returns TON price in USD, or null if unavailable
+ */
+export async function getTonPrice(networkKey?: string): Promise<number | null> {
+  const result = await priceProviderManager.getCurrentPrice('TON');
   return result?.price ?? null;
 }
 

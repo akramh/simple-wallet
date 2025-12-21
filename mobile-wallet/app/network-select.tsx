@@ -2,7 +2,7 @@
  * @fileoverview Network selection modal.
  */
 
-import { View, Text, TouchableOpacity, ScrollView, Image } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Image, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,7 +11,14 @@ import { getNetworkIcon } from '../utils/tokenIcons';
 
 export default function NetworkSelectScreen() {
   const router = useRouter();
-  const { network, networks, switchNetwork, isLoading } = useNetworkSelectScreenSelector();
+  const { 
+    network, 
+    networks, 
+    switchNetwork, 
+    isLoading,
+    showTestnets,
+    toggleShowTestnets 
+  } = useNetworkSelectScreenSelector();
 
   const handleNetworkSelect = async (networkKey: string) => {
     if (networkKey === network) {
@@ -27,12 +34,19 @@ export default function NetworkSelectScreen() {
     }
   };
 
+  const shouldShow = (key: string, config: any) => {
+    // Always show current network
+    if (key === network) return true;
+    // Show if showTestnets is on OR if it's not a testnet
+    return showTestnets || !config.isTestnet;
+  };
+
   // Group networks by type
   const evmNetworks = Object.entries(networks).filter(
-    ([_, config]) => !config.type || config.type === 'evm'
+    ([key, config]) => (!config.type || config.type === 'evm') && shouldShow(key, config)
   );
   const otherNetworks = Object.entries(networks).filter(
-    ([_, config]) => config.type && config.type !== 'evm'
+    ([key, config]) => config.type && config.type !== 'evm' && shouldShow(key, config)
   );
 
   return (
@@ -48,21 +62,25 @@ export default function NetworkSelectScreen() {
 
       <ScrollView className="flex-1 px-5 pt-4">
         {/* EVM Networks */}
-        <Text className="text-gray-400 text-sm uppercase mb-3">EVM Networks</Text>
-        <View className="bg-gray-900 rounded-2xl overflow-hidden mb-6">
-          {evmNetworks.map(([key, config], index) => (
-            <NetworkRow
-              key={key}
-              networkKey={key}
-              name={config.name}
-              symbol={config.nativeSymbol}
-              chainId={config.chainId}
-              isSelected={key === network}
-              isLast={index === evmNetworks.length - 1}
-              onPress={() => handleNetworkSelect(key)}
-            />
-          ))}
-        </View>
+        {evmNetworks.length > 0 && (
+          <>
+            <Text className="text-gray-400 text-sm uppercase mb-3">EVM Networks</Text>
+            <View className="bg-gray-900 rounded-2xl overflow-hidden mb-6">
+              {evmNetworks.map(([key, config], index) => (
+                <NetworkRow
+                  key={key}
+                  networkKey={key}
+                  name={config.name}
+                  symbol={config.nativeSymbol}
+                  chainId={config.chainId}
+                  isSelected={key === network}
+                  isLast={index === evmNetworks.length - 1}
+                  onPress={() => handleNetworkSelect(key)}
+                />
+              ))}
+            </View>
+          </>
+        )}
 
         {/* Other Networks */}
         {otherNetworks.length > 0 && (
@@ -85,8 +103,19 @@ export default function NetworkSelectScreen() {
           </>
         )}
 
+        {/* Testnet Toggle */}
+        <View className="flex-row items-center justify-between bg-gray-900 rounded-2xl px-4 py-3 mb-6">
+          <Text className="text-white font-medium">Show Test Networks</Text>
+          <Switch
+            value={showTestnets}
+            onValueChange={toggleShowTestnets}
+            trackColor={{ false: '#374151', true: '#a855f7' }}
+            thumbColor="#fff"
+          />
+        </View>
+
         {/* Add Custom Network */}
-        <TouchableOpacity className="flex-row items-center justify-center py-4">
+        <TouchableOpacity className="flex-row items-center justify-center py-4 mb-8">
           <Ionicons name="add-circle-outline" size={20} color="#a855f7" />
           <Text className="text-purple-400 ml-2">Add Custom Network</Text>
         </TouchableOpacity>

@@ -7,7 +7,8 @@ const baseConfig = {
   network: 'mainnet',
   networks: {
     mainnet: { chainId: 1, rpcUrl: 'https://rpc.example.com', nativeSymbol: 'ETH', nativeName: 'Ether' },
-    sepolia: { chainId: 11155111, rpcUrl: 'https://rpc.sepolia.org', nativeSymbol: 'ETH', nativeName: 'Sepolia Ether' }
+    sepolia: { chainId: 11155111, rpcUrl: 'https://rpc.sepolia.org', nativeSymbol: 'ETH', nativeName: 'Sepolia Ether' },
+    'ton-mainnet': { type: 'ton', tonNetwork: 'mainnet', rpcUrl: 'https://toncenter.com/api/v2/jsonRPC', nativeSymbol: 'TON', nativeName: 'Toncoin' }
   }
 };
 
@@ -35,4 +36,14 @@ test('accepts Vite-prefixed explorer API keys for extension builds', () => {
   assert.equal(globalApiKey, undefined);
   assert.equal(config.networks.mainnet.explorerApiKey, 'vite-mainnet-key');
   assert.ok(!config.networks.sepolia.explorerApiKey);
+});
+
+test('applies Toncenter API key from env to TON networks', () => {
+  const env = {
+    TONCENTER_API_KEY_TON_MAINNET: 'ton-mainnet-key'
+  };
+
+  const { config } = applyExplorerApiKeys(baseConfig, env);
+
+  assert.equal(config.networks['ton-mainnet'].rpcApiKey, 'ton-mainnet-key');
 });

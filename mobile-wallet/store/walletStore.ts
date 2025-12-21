@@ -91,6 +91,7 @@ interface WalletStore {
   // Networks
   networks: Record<string, NetworkConfig>;
   enabledNetworks: string[];
+  showTestnets: boolean;
 
   // Error handling
   error: string | null;
@@ -110,7 +111,7 @@ interface WalletStore {
   /** Lock the current wallet and clear all in-memory derived state. */
   lock: () => Promise<void>;
   /** Refresh portfolio balances for the active network/account. */
-  refreshBalances: () => Promise<void>;
+  refreshBalances: (options?: { force?: boolean }) => Promise<void>;
   /** Refresh fiat prices and derived portfolio totals. */
   refreshPrices: () => Promise<void>;
   /** Refresh aggregated holdings across enabled networks. */
@@ -126,6 +127,8 @@ interface WalletStore {
   setEnabledNetworks: (networks: string[]) => Promise<void>;
   /** Load enabled networks from storage. */
   loadEnabledNetworks: () => Promise<void>;
+  /** Toggle visibility of test networks. */
+  toggleShowTestnets: (enabled: boolean) => Promise<void>;
   /**
    * Switch the active network.
    *
@@ -135,7 +138,7 @@ interface WalletStore {
   /** Get an estimated network fee for a proposed transaction. */
   getGasEstimate: (token: Token, to: string, amount: string) => Promise<GasEstimate>;
   /** Send a transaction and schedule follow-up refreshes. */
-  sendTransaction: (token: Token, to: string, amount: string, destinationTag?: number) => Promise<{ hash: string }>;
+  sendTransaction: (token: Token, to: string, amount: string, destinationTag?: number, comment?: string) => Promise<{ hash: string }>;
   /** Load the list of persisted wallets from secure storage. */
   loadWalletList: () => Promise<void>;
   /** Switch to a different wallet (locks current wallet first). */
@@ -148,6 +151,10 @@ interface WalletStore {
   createAccount: () => Promise<{ address: string; index: number }>;
   /** Switch to a different derived account and refresh data for it. */
   switchAccount: (index: number) => Promise<void>;
+  
+  // Token management
+  addCustomToken: (token: any) => Promise<void>;
+  toggleTokenVisibility: (tokenAddress: string, isVisible: boolean) => Promise<void>;
   
   // Transaction actions
   /** Fetch transaction history for the active network/account. */
@@ -207,6 +214,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
   networks: {},
   enabledNetworks: [],
+  showTestnets: false,
 
   error: null,
 
@@ -223,6 +231,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       await walletBridge.initialize();
       const state = await walletBridge.getState();
       const networks = await walletBridge.getNetworks();
+      const showTestnets = walletBridge.getShowTestnets();
       // Load enabled networks (persisted) or default to mainnets (exclude testnets by name)
       let enabledNetworks: string[] = [];
       try {
@@ -256,6 +265,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         currentWalletName: state.currentWalletName,
         networks,
         enabledNetworks,
+        showTestnets,
         walletList,
       });
     } catch (error) {
@@ -418,14 +428,14 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   // Balances
   // ============================================================================
 
-  refreshBalances: async () => {
+  refreshBalances: async (options) => {
     if (get().isRefreshingBalances) return;
 
     try {
       set({ isRefreshingBalances: true });
 
       console.log('[WalletStore] refreshBalances - calling walletBridge...');
-      const balances = await walletBridge.refreshBalances();
+      const balances = await walletBridge.refreshBalances(options);
       console.log('[WalletStore] refreshBalances - received balances:', JSON.stringify(balances, null, 2));
 
       set({
@@ -532,6 +542,59 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     }
   },
 
+  toggleShowTestnets: async (enabled: boolean) => {
+    try {
+      set({ showTestnets: enabled });
+      await walletBridge.setShowTestnets(enabled);
+    } catch (err) {
+      console.warn('[WalletStore] Failed to toggle testnets', err);
+    }
+  },
+
+  // ============================================================================
+  // Token Management
+  // ============================================================================
+
+  addCustomToken: async (token: any) => {
+    try {
+      set({ isLoading: true, error: null });
+      await walletBridge.addCustomToken(token);
+      await get().refreshBalances();
+      set({ isLoading: false });
+    } catch (error) {
+      console.error('[WalletStore] Add custom token failed:', error);
+      set({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to add token',
+      });
+      throw error;
+    }
+  },
+
+  toggleTokenVisibility: async (tokenAddress: string, isVisible: boolean) => {
+    // 1. Optimistic Update: Update UI state immediately
+    set((state) => ({
+      balances: state.balances.map((b) => {
+        if (b.token.address?.toLowerCase() === tokenAddress.toLowerCase()) {
+          return { ...b, isVisible };
+        }
+        return b;
+      }),
+    }));
+
+    try {
+      // 2. Persist & Sync
+      await walletBridge.toggleTokenVisibility(tokenAddress, isVisible);
+      // Soft refresh to ensure data consistency (e.g. if bridge logic differs)
+      get().refreshBalances({ force: false });
+    } catch (error) {
+      console.error('[WalletStore] Toggle visibility failed:', error);
+      // Ideally revert optimistic update here if needed, but for visibility toggle
+      // a simple refresh on next load is usually acceptable recovery.
+      get().refreshBalances({ force: false });
+    }
+  },
+
   // ============================================================================
   // Network
   // ============================================================================
@@ -579,15 +642,20 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     return await walletBridge.getGasEstimate(token, to, amount);
   },
 
-  sendTransaction: async (token: Token, to: string, amount: string, destinationTag?: number) => {
+  sendTransaction: async (token: Token, to: string, amount: string, destinationTag?: number, comment?: string) => {
     try {
-      const result = await walletBridge.sendTransaction(token, to, amount, destinationTag);
+      const result = await walletBridge.sendTransaction(token, to, amount, destinationTag, comment);
 
       // Refresh balances after successful transaction
       setTimeout(() => get().refreshBalances(), 2000);
       
       // Refresh transactions after a short delay to include the new one
       setTimeout(() => get().loadTransactions(), 5000);
+      const { network, networks } = get();
+      if (networks[network]?.type === 'ton') {
+        // TON confirmations can lag; add a follow-up refresh.
+        setTimeout(() => get().loadTransactions(), 15000);
+      }
 
       return { hash: result.hash };
     } catch (error) {

@@ -19,6 +19,7 @@
  * - GET_STATE, CREATE_WALLET, IMPORT_WALLET, UNLOCK_WALLET, LOCK_WALLET
  * - GET_BALANCE, GET_PORTFOLIO, SEND_TRANSACTION, GET_TRANSACTION_HISTORY
  * - SWITCH_WALLET, SWITCH_ACCOUNT, SWITCH_NETWORK
+ * - GET_NETWORKS, GET_SHOW_TESTNETS, SET_SHOW_TESTNETS
  * - ETH_ACCOUNTS, ETH_REQUEST_ACCOUNTS, ETH_SEND_TRANSACTION
  * - PERSONAL_SIGN, ETH_SIGN_TYPED_DATA_V4, PERSONAL_EC_RECOVER
  * - GET_SECRET_PHRASE, GET_PRIVATE_KEY
@@ -48,8 +49,8 @@ import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
-import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, type TokenInfo } from '../../src/price-service.js';
-import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig } from '../../src/types/config.js';
+import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
+import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
 import { getBitcoinExplorer, getBitcoinProvider, satoshisToBtc } from '../../src/bitcoin/index.js';
@@ -428,7 +429,12 @@ async function refreshBalancesForCurrentNetwork(): Promise<void> {
   const network = walletService.config.network;
   const networkConfig = walletService.config.networks[network];
 
-  if (isBitcoinNetworkConfig(networkConfig) || isSolanaNetworkConfig(networkConfig) || isXRPNetworkConfig(networkConfig)) {
+  if (
+    isBitcoinNetworkConfig(networkConfig) ||
+    isSolanaNetworkConfig(networkConfig) ||
+    isXRPNetworkConfig(networkConfig) ||
+    isTonNetworkConfig(networkConfig)
+  ) {
     const portfolio = await walletService.getPortfolioForNetwork(network);
 
     for (const item of portfolio) {
@@ -1439,6 +1445,35 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         }
       }
 
+      // Handle TON networks (native TON only)
+      if (isTonNetworkKey(priceNetwork)) {
+        try {
+          const tonPrice = await getTonPrice();
+          const cached = getCachedBalance(priceNetwork, { type: 'native' });
+          const balance = cached?.balance || '0';
+          const tonAmount = parseFloat(balance);
+          const totalValue = tonPrice ? tonAmount * tonPrice : 0;
+
+          return {
+            prices: { native: tonPrice },
+            totalValue,
+            formattedTotal: formatUSDValue(totalValue),
+            network: priceNetwork,
+            isTon: true
+          };
+        } catch (error) {
+          console.warn('[GET_TOKEN_PRICES] TON price error:', error);
+          return {
+            prices: {},
+            totalValue: 0,
+            formattedTotal: '$0.00',
+            network: priceNetwork,
+            isTon: true,
+            error: 'Failed to fetch TON price'
+          };
+        }
+      }
+
       // EVM networks
       const chainId = 'chainId' in networkConfig ? networkConfig.chainId : 1;
 
@@ -1635,6 +1670,45 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
           };
         }
 
+        // TON send path (broadcast + pending)
+        if (isTonNetworkConfig(sendNetworkConfig)) {
+          const tonPassword = getSessionPassword();
+          if (!tonPassword) {
+            throw new Error('Session password not available. Please unlock wallet again.');
+          }
+
+          const result = await walletService!.sendTonTransaction(
+            payload.toAddress,
+            payload.amount,
+            tonPassword,
+            payload.comment
+          );
+
+          if (transactionHistory && result.hash) {
+            transactionHistory.addTransaction({
+              hash: result.hash,
+              from: fromAddress,
+              to: payload.toAddress,
+              value: payload.amount,
+              network: network,
+              status: TransactionStatus.PENDING,
+              type: TransactionType.SEND,
+              timestamp: Date.now(),
+              tokenSymbol: sendNetworkConfig.nativeSymbol || 'TON',
+              tokenAddress: ''
+            });
+          }
+
+          broadcastTransactionStatus(result.hash, 'pending', network);
+
+          return {
+            result: {
+              hash: result.hash,
+              status: 'pending'
+            }
+          };
+        }
+
         // EVM path: call sendToken - this waits for confirmation
         const result = await walletService!.sendToken(payload.token, payload.toAddress, payload.amount);
 
@@ -1687,6 +1761,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const isBitcoin = isBitcoinNetworkConfig(netConfigData);
       const isSolana = isSolanaNetworkConfig(netConfigData);
       const isXrp = isXRPNetworkConfig(netConfigData);
+      const isTon = isTonNetworkConfig(netConfigData);
       return {
         network: netConfigNetwork,
         blockExplorer: netConfigData?.blockExplorer || null,
@@ -1694,9 +1769,11 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         isBitcoin,
         isSolana,
         isXrp,
+        isTon,
         bitcoinNetwork: isBitcoin ? (netConfigData as any).bitcoinNetwork : undefined,
         solanaCluster: isSolana ? (netConfigData as any).solanaCluster : undefined,
-        xrpNetwork: isXrp ? (netConfigData as any).xrpNetwork : undefined
+        xrpNetwork: isXrp ? (netConfigData as any).xrpNetwork : undefined,
+        tonNetwork: isTon ? (netConfigData as any).tonNetwork : undefined
       };
     }
 
@@ -1727,6 +1804,20 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'GET_NETWORKS':
       return { networks: walletService!.config.networks };
+
+    case 'GET_SHOW_TESTNETS':
+      return { showTestnets: walletService!.config.showTestnets ?? false };
+
+    case 'SET_SHOW_TESTNETS': {
+      const enabled = Boolean(payload?.showTestnets);
+      walletService!.config.showTestnets = enabled;
+      const storedConfig = walletService!.storage.readJSON<Partial<Config & { network: string; showTestnets?: boolean }>>(
+        'config.json',
+        {}
+      );
+      walletService!.storage.writeJSON('config.json', { ...storedConfig, showTestnets: enabled });
+      return { showTestnets: enabled };
+    }
 
     case 'GET_TRANSACTION_HISTORY':
       if (!isUnlocked) throw new Error('Wallet is locked');
@@ -1815,6 +1906,27 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             tokenSymbol: nativeSymbol,
             fee: tx.feeXrp,
             destinationTag: tx.destinationTag
+          }));
+
+          return { transactions, supported: true };
+        }
+
+        if (isTonNetworkConfig(explorerNetworkConfig)) {
+          const limit = payload.pageSize || 25;
+          const tonTxs = await walletService!.getTonTransactionHistoryForAddress(explorerAddress, limit, explorerNetwork);
+          const nativeSymbol = explorerNetworkConfig.nativeSymbol || 'TON';
+
+          const transactions = tonTxs.map((tx) => ({
+            hash: tx.hash,
+            from: tx.from,
+            to: tx.to || null,
+            value: tx.valueTon,
+            network: explorerNetwork,
+            status: tx.status,
+            type: tx.type === 'other' ? 'contract_interaction' : tx.type,
+            timestamp: tx.timestamp,
+            tokenSymbol: nativeSymbol,
+            fee: undefined
           }));
 
           return { transactions, supported: true };

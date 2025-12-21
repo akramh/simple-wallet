@@ -58,6 +58,7 @@ import {
   getERC20TokenPrice,
   getBitcoinPrice,
   getSolanaPrice,
+  getTonPrice,
   isBitcoinNetworkKey,
   calculateTotalValue,
   calculateTransactionCosts,
@@ -67,6 +68,8 @@ import type { Config, Token, TokenMetadata } from './types/index.js';
 import { isBitcoinNetwork, isValidBitcoinAddress, satoshisToBtc } from './bitcoin/index.js';
 import { isXRPNetwork, isValidXRPAddress, dropsToXrp, isValidDestinationTag } from './xrp/index.js';
 import { getXRPPrice } from './price-service.js';
+import { findTonTransaction, isTonNetwork, isValidTonAddress } from './ton/index.js';
+import { getVisibleNetworkEntries } from './network-visibility.js';
 
 // ============================================================================
 // Configuration and Global State
@@ -845,6 +848,10 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
       // XRP network - get XRP price
       const xrpPrice = await getXRPPrice(config.network);
       prices = new Map([['native', xrpPrice]]);
+    } else if (isTonNetwork(config.network)) {
+      // TON network - get TON price
+      const tonPrice = await getTonPrice(config.network);
+      prices = new Map([['native', tonPrice]]);
     } else {
       // EVM network - get token prices
       const chainId = currentNetConfig && 'chainId' in currentNetConfig ? currentNetConfig.chainId : 1;
@@ -900,6 +907,8 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
       apiHint = 'Verify the Mempool.space API is accessible';
     } else if (isXRPNetwork(config.network)) {
       apiHint = 'Verify the XRP Ledger WebSocket is accessible';
+    } else if (isTonNetwork(config.network)) {
+      apiHint = 'Verify the Toncenter RPC endpoint is accessible';
     }
     ui.showError(
       err.message,
@@ -968,6 +977,10 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
           // XRP network - get XRP price
           const xrpPrice = await getXRPPrice(net);
           prices = new Map([['native', xrpPrice]]);
+        } else if (isTonNetwork(net)) {
+          // TON network - get TON price
+          const tonPrice = await getTonPrice(net);
+          prices = new Map([['native', tonPrice]]);
         } else {
           // EVM network - get token prices
           const netConfig = config.networks[net];
@@ -1173,6 +1186,67 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
         }
 
         ui.showSeparator();
+      }
+    } catch (error) {
+      const err = error as Error;
+      ui.showError('Failed to fetch transactions', [err.message]);
+    }
+
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  // TON history via Toncenter
+  if (isTonNetwork(config.network)) {
+    ui.showLoading('Fetching transactions from Toncenter...');
+    try {
+      const txs = await walletService.getTonTransactionHistory(15);
+      console.log('');
+
+      if (txs.length === 0) {
+        ui.showInfo('No transactions found for this address.');
+      } else {
+        ui.showSuccess(`Found ${txs.length} recent transactions`);
+        console.log('');
+        ui.showSeparator();
+
+        const symbol = config.networks[config.network].nativeSymbol || 'TON';
+        for (const tx of txs) {
+          const isSent = tx.type === 'send';
+          const direction = isSent ? chalk.red('↑ SENT') : tx.type === 'receive' ? chalk.green('↓ RECEIVED') : chalk.gray('• OTHER');
+          const otherAddress = isSent ? tx.to : tx.from;
+          const shortAddr = otherAddress ? `${otherAddress.slice(0, 10)}...${otherAddress.slice(-8)}` : 'Unknown';
+
+          const tonValue = tx.valueTon;
+          const valueStr = `${parseFloat(tonValue).toFixed(9)} ${symbol}`;
+
+          const date = new Date(tx.timestamp);
+          const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          const statusIcon = tx.status === 'confirmed' ? '✓' : tx.status === 'failed' ? '✗' : '○';
+          const statusColor = tx.status === 'confirmed' ? chalk.green : tx.status === 'failed' ? chalk.red : chalk.yellow;
+
+          console.log(`${statusColor(statusIcon)} ${direction}  ${chalk.white(valueStr.padEnd(20))} ${chalk.gray(dateStr)}`);
+          console.log(`  ${chalk.gray(isSent ? 'To:' : 'From:')} ${chalk.cyan(shortAddr)}`);
+          console.log(`  ${chalk.gray('Hash:')} ${chalk.gray(tx.hash.slice(0, 18))}...`);
+          if (tx.comment) {
+            console.log(`  ${chalk.gray('Comment:')} ${chalk.gray(tx.comment)}`);
+          }
+          console.log('');
+        }
+
+        ui.showSeparator();
+        const addrUrl = walletService.getTonAddressUrl(address);
+        if (addrUrl) {
+          console.log(chalk.gray(`View all: ${addrUrl}`));
+          console.log('');
+        }
       }
     } catch (error) {
       const err = error as Error;
@@ -1586,6 +1660,196 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
 
     const txUrl = `${solNetConfig.blockExplorer}/tx/${result.signature}${config.network === 'solana-devnet' ? '?cluster=devnet' : ''}`;
     console.log(chalk.gray('View:      ') + chalk.cyan(txUrl));
+    console.log('');
+
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
+
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  // TON send flow
+  if (isTonNetwork(config.network)) {
+    const tonNetConfig = config.networks[config.network];
+    const nativeSymbol = tonNetConfig.nativeSymbol || 'TON';
+
+    ui.showSection('Send TON');
+    ui.showInfo('Press Ctrl+C to cancel at any time');
+    console.log('');
+
+    const answers = await inquirer.prompt<{
+      toAddress?: string;
+      amount?: string;
+      comment?: string;
+    }>([
+      {
+        type: 'input',
+        name: 'toAddress',
+        message: 'Recipient TON address (or leave empty to cancel):',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          if (!isValidTonAddress(input.trim())) {
+            return 'Please enter a valid TON address (EQ... or UQ...)';
+          }
+          return true;
+        }
+      },
+      {
+        type: 'input',
+        name: 'amount',
+        message: `Amount (in ${nativeSymbol}):`,
+        when: (a) => !!a.toAddress && a.toAddress.trim() !== '',
+        validate: (input) => {
+          if (!input || input.trim() === '') return true;
+          if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
+          const num = parseFloat(input);
+          if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
+          if (input.includes('.') && input.split('.')[1].length > 9) return 'TON supports up to 9 decimals';
+          return true;
+        }
+      },
+      {
+        type: 'input',
+        name: 'comment',
+        message: 'Comment (optional):',
+        when: (a) => !!a.toAddress && a.toAddress.trim() !== '' && !!a.amount && a.amount.trim() !== '',
+      }
+    ]);
+
+    if (!answers.toAddress || answers.toAddress.trim() === '' || !answers.amount || answers.amount.trim() === '') {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Estimating network fee...');
+    const tonToken = walletService.getNativeToken(config.network);
+    const gasEstimate = await walletService.getGasEstimate(tonToken, answers.toAddress.trim(), answers.amount.trim());
+
+    let tonPrice: number | null = null;
+    try {
+      tonPrice = await getTonPrice(config.network);
+    } catch {
+      tonPrice = null;
+    }
+
+    const { amountUsd, gasCostUsd, totalUsd } = calculateTransactionCosts(
+      answers.amount.trim(),
+      tonPrice,
+      gasEstimate.estimatedCostNative,
+      tonPrice
+    );
+
+    let currentBalance: string | null = null;
+    try {
+      currentBalance = await walletService.getBalance();
+    } catch (error) {
+      console.warn('[TON] Failed to read balance:', error);
+    }
+
+    ui.clearScreen();
+    ui.showHeader(currentWalletName, wallet.currentAccountIndex, tonNetConfig.name || config.network, address);
+
+    ui.showTransactionConfirmation({
+      balance: currentBalance,
+      balanceSymbol: nativeSymbol,
+      tokenSymbol: nativeSymbol,
+      amount: answers.amount.trim(),
+      recipient: answers.toAddress.trim(),
+      networkName: tonNetConfig.name || config.network,
+      amountUsd,
+      gasCostNative: gasEstimate.estimatedCostNative,
+      nativeSymbol: gasEstimate.nativeSymbol,
+      gasCostUsd,
+      totalUsd,
+      gasEstimateFailed: !!gasEstimate.error
+    });
+
+    if (answers.comment) {
+      console.log(chalk.gray('Comment:             ') + chalk.gray(answers.comment));
+      console.log('');
+    }
+
+    if (!gasEstimate.error) {
+      console.log(chalk.gray('Fee:                 ') + chalk.white(`${gasEstimate.estimatedCostNative} ${nativeSymbol}`));
+      console.log('');
+    }
+
+    const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: 'Confirm & Send?',
+        default: false
+      }
+    ]);
+
+    if (!confirm) {
+      ui.showWarning('Transaction cancelled');
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    ui.showLoading('Broadcasting transaction to TON...');
+    const password = await ensureMasterPassword();
+    const result = await walletService.sendTonTransaction(
+      answers.toAddress.trim(),
+      answers.amount.trim(),
+      password,
+      answers.comment?.trim() || undefined
+    );
+
+    ui.showSuccess('Transaction broadcasted (pending confirmation)');
+    console.log('');
+    if (result.hash) {
+      console.log(chalk.gray('Hash: ') + chalk.magenta(result.hash));
+      const txUrl = walletService.getTonTransactionUrl(result.hash);
+      if (txUrl) {
+        console.log(chalk.gray('View: ') + chalk.cyan(txUrl));
+      }
+    } else {
+      console.log(chalk.gray('Hash: ') + chalk.gray('Unavailable (Toncenter response)'));
+
+      const scheduleTonHashRefresh = () => {
+        const maxAttempts = 6;
+        let attempts = 0;
+
+        const poll = async () => {
+          attempts += 1;
+          try {
+            const txs = await walletService.getTonTransactionHistory(10);
+            const match = findTonTransaction(txs, {
+              toAddress: answers.toAddress!.trim(),
+              amountTon: answers.amount!.trim(),
+              type: 'send'
+            });
+            if (match?.hash) {
+              console.log(chalk.gray('Hash: ') + chalk.magenta(match.hash));
+              const txUrl = walletService.getTonTransactionUrl(match.hash);
+              if (txUrl) {
+                console.log(chalk.gray('View: ') + chalk.cyan(txUrl));
+              }
+              console.log('');
+              return;
+            }
+          } catch (error) {
+            console.warn('[TON] Failed to refresh transaction hash:', error);
+          }
+
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 2000);
+          }
+        };
+
+        setTimeout(poll, 2000);
+      };
+
+      scheduleTonHashRefresh();
+    }
     console.log('');
 
     await inquirer.prompt<{ continue: string }>([{
@@ -2411,44 +2675,70 @@ async function manageAccounts(currentWalletName: string | null): Promise<void> {
 async function changeNetwork(): Promise<void> {
   console.log('\n⚙️  Change Network\n');
 
-  const { network } = await inquirer.prompt<{ network: string }>([
-    {
-      type: 'list',
-      name: 'network',
-      message: 'Select network:',
-      choices: Object.keys(config.networks).map(key => ({
-        name: config.networks[key].name,
-        value: key
-      }))
+  let showTestnets = config.showTestnets ?? false;
+
+  while (true) {
+    const visibleNetworks = getVisibleNetworkEntries(config.networks, {
+      showTestnets,
+      currentNetwork: config.network
+    });
+    const toggleLabel = showTestnets ? 'Hide Test Networks' : 'Show Test Networks';
+
+    const { network } = await inquirer.prompt<{ network: string }>([
+      {
+        type: 'list',
+        name: 'network',
+        message: 'Select network:',
+        choices: [
+          ...visibleNetworks.map(([key, net]) => ({
+            name: net.name,
+            value: key
+          })),
+          new inquirer.Separator(''),
+          { name: toggleLabel, value: '__toggle_testnets__' }
+        ]
+      }
+    ]);
+
+    if (network === '__toggle_testnets__') {
+      showTestnets = !showTestnets;
+      config.showTestnets = showTestnets;
+      if (process.env.NODE_ENV !== 'test') {
+        storage.writeJSON('config.json', { ...config, showTestnets });
+      }
+      console.log(`\n✅ Test networks ${showTestnets ? 'shown' : 'hidden'}\n`);
+      continue;
     }
-  ]);
 
-  try {
-    await walletService.setNetwork(network, { persist: process.env.NODE_ENV !== 'test' });
-    console.log(`\n✅ Network changed to ${config.networks[network].name}`);
-  } catch (error) {
-    const err = error as Error;
-    ui.showError(`Failed to switch network: ${err.message}`);
-  }
+    try {
+      await walletService.setNetwork(network, { persist: process.env.NODE_ENV !== 'test' });
+      console.log(`\n✅ Network changed to ${config.networks[network].name}`);
+    } catch (error) {
+      const err = error as Error;
+      ui.showError(`Failed to switch network: ${err.message}`);
+    }
 
-  await inquirer.prompt<{ continue: string }>([{
-    type: 'input',
-    name: 'continue',
-    message: 'Press Enter to continue...'
-  }]);
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
 
-  if (process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV === 'test') {
+      return;
+    }
+
+    // Return to appropriate menu based on wallet load state
+    const loadedWallets = wallet.getAllWallets();
+    if (currentWalletName && loadedWallets[currentWalletName]) {
+      await mainMenu(currentWalletName);
+    } else if (Object.keys(loadedWallets).length > 0) {
+      await selectWalletMenu(loadedWallets);
+    } else {
+      await initialMenu();
+    }
+
     return;
-  }
-
-  // Return to appropriate menu based on wallet load state
-  const loadedWallets = wallet.getAllWallets();
-  if (currentWalletName && loadedWallets[currentWalletName]) {
-    await mainMenu(currentWalletName);
-  } else if (Object.keys(loadedWallets).length > 0) {
-    await selectWalletMenu(loadedWallets);
-  } else {
-    await initialMenu();
   }
 }
 
