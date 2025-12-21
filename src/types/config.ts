@@ -156,6 +156,8 @@ export interface Config {
   defaultNetwork: string;
   /** Currently selected network key */
   network: string;
+  /** Whether to show test networks in selectors */
+  showTestnets?: boolean;
   /** Map of network keys to their configurations */
   networks: Record<string, NetworkConfig>;
 }

@@ -44,6 +44,10 @@ jest.mock('../services', () => {
       supportsEIP1559: false,
       network: 'sepolia',
     })),
+    getShowTestnets: jest.fn(() => false),
+    setShowTestnets: jest.fn(async () => {}),
+    addCustomToken: jest.fn(async () => {}),
+    toggleTokenVisibility: jest.fn(async () => {}),
   };
 
   return {

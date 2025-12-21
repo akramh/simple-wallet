@@ -69,6 +69,7 @@ import { isBitcoinNetwork, isValidBitcoinAddress, satoshisToBtc } from './bitcoi
 import { isXRPNetwork, isValidXRPAddress, dropsToXrp, isValidDestinationTag } from './xrp/index.js';
 import { getXRPPrice } from './price-service.js';
 import { findTonTransaction, isTonNetwork, isValidTonAddress } from './ton/index.js';
+import { getVisibleNetworkEntries } from './network-visibility.js';
 
 // ============================================================================
 // Configuration and Global State
@@ -2674,44 +2675,70 @@ async function manageAccounts(currentWalletName: string | null): Promise<void> {
 async function changeNetwork(): Promise<void> {
   console.log('\n⚙️  Change Network\n');
 
-  const { network } = await inquirer.prompt<{ network: string }>([
-    {
-      type: 'list',
-      name: 'network',
-      message: 'Select network:',
-      choices: Object.keys(config.networks).map(key => ({
-        name: config.networks[key].name,
-        value: key
-      }))
+  let showTestnets = config.showTestnets ?? false;
+
+  while (true) {
+    const visibleNetworks = getVisibleNetworkEntries(config.networks, {
+      showTestnets,
+      currentNetwork: config.network
+    });
+    const toggleLabel = showTestnets ? 'Hide Test Networks' : 'Show Test Networks';
+
+    const { network } = await inquirer.prompt<{ network: string }>([
+      {
+        type: 'list',
+        name: 'network',
+        message: 'Select network:',
+        choices: [
+          ...visibleNetworks.map(([key, net]) => ({
+            name: net.name,
+            value: key
+          })),
+          new inquirer.Separator(''),
+          { name: toggleLabel, value: '__toggle_testnets__' }
+        ]
+      }
+    ]);
+
+    if (network === '__toggle_testnets__') {
+      showTestnets = !showTestnets;
+      config.showTestnets = showTestnets;
+      if (process.env.NODE_ENV !== 'test') {
+        storage.writeJSON('config.json', { ...config, showTestnets });
+      }
+      console.log(`\n✅ Test networks ${showTestnets ? 'shown' : 'hidden'}\n`);
+      continue;
     }
-  ]);
 
-  try {
-    await walletService.setNetwork(network, { persist: process.env.NODE_ENV !== 'test' });
-    console.log(`\n✅ Network changed to ${config.networks[network].name}`);
-  } catch (error) {
-    const err = error as Error;
-    ui.showError(`Failed to switch network: ${err.message}`);
-  }
+    try {
+      await walletService.setNetwork(network, { persist: process.env.NODE_ENV !== 'test' });
+      console.log(`\n✅ Network changed to ${config.networks[network].name}`);
+    } catch (error) {
+      const err = error as Error;
+      ui.showError(`Failed to switch network: ${err.message}`);
+    }
 
-  await inquirer.prompt<{ continue: string }>([{
-    type: 'input',
-    name: 'continue',
-    message: 'Press Enter to continue...'
-  }]);
+    await inquirer.prompt<{ continue: string }>([{
+      type: 'input',
+      name: 'continue',
+      message: 'Press Enter to continue...'
+    }]);
 
-  if (process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV === 'test') {
+      return;
+    }
+
+    // Return to appropriate menu based on wallet load state
+    const loadedWallets = wallet.getAllWallets();
+    if (currentWalletName && loadedWallets[currentWalletName]) {
+      await mainMenu(currentWalletName);
+    } else if (Object.keys(loadedWallets).length > 0) {
+      await selectWalletMenu(loadedWallets);
+    } else {
+      await initialMenu();
+    }
+
     return;
-  }
-
-  // Return to appropriate menu based on wallet load state
-  const loadedWallets = wallet.getAllWallets();
-  if (currentWalletName && loadedWallets[currentWalletName]) {
-    await mainMenu(currentWalletName);
-  } else if (Object.keys(loadedWallets).length > 0) {
-    await selectWalletMenu(loadedWallets);
-  } else {
-    await initialMenu();
   }
 }
 

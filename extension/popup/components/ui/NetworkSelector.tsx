@@ -1,3 +1,7 @@
+/**
+ * @fileoverview Network dropdown selector with optional testnet toggle.
+ */
+
 import React, { useState, useRef, useEffect } from 'react';
 
 interface NetworkOption {
@@ -10,10 +14,30 @@ interface Props {
   value: string;
   options: NetworkOption[];
   onChange: (value: string) => void;
+  showTestnets?: boolean;
+  onToggleShowTestnets?: (enabled: boolean) => void;
   className?: string;
 }
 
-export function NetworkSelector({ value, options, onChange, className = '' }: Props) {
+/**
+ * Render a network selector dropdown with an optional testnet toggle.
+ *
+ * @param value - Currently selected network key.
+ * @param options - Visible network options.
+ * @param onChange - Callback for network selection changes.
+ * @param showTestnets - Whether testnets are currently visible.
+ * @param onToggleShowTestnets - Callback to toggle testnet visibility.
+ * @param className - Optional container class names.
+ * @returns JSX element for the selector.
+ */
+export function NetworkSelector({
+  value,
+  options,
+  onChange,
+  showTestnets,
+  onToggleShowTestnets,
+  className = ''
+}: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -64,6 +88,16 @@ export function NetworkSelector({ value, options, onChange, className = '' }: Pr
               <span>{option.label}</span>
             </div>
           ))}
+          {onToggleShowTestnets && (
+            <label className="network-toggle">
+              <span>Show Test Networks</span>
+              <input
+                type="checkbox"
+                checked={Boolean(showTestnets)}
+                onChange={(event) => onToggleShowTestnets(event.target.checked)}
+              />
+            </label>
+          )}
         </div>
       )}
     </div>

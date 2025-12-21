@@ -76,6 +76,10 @@ jest.mock('../services', () => {
         supportsEIP1559: false,
         network: 'ton-mainnet',
       })),
+      getShowTestnets: jest.fn(() => false),
+      setShowTestnets: jest.fn(async () => {}),
+      addCustomToken: jest.fn(async () => {}),
+      toggleTokenVisibility: jest.fn(async () => {}),
     },
     // Export the mock for test access
     _mockSendTransaction: sendTxMock,

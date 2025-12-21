@@ -19,6 +19,7 @@
  * - GET_STATE, CREATE_WALLET, IMPORT_WALLET, UNLOCK_WALLET, LOCK_WALLET
  * - GET_BALANCE, GET_PORTFOLIO, SEND_TRANSACTION, GET_TRANSACTION_HISTORY
  * - SWITCH_WALLET, SWITCH_ACCOUNT, SWITCH_NETWORK
+ * - GET_NETWORKS, GET_SHOW_TESTNETS, SET_SHOW_TESTNETS
  * - ETH_ACCOUNTS, ETH_REQUEST_ACCOUNTS, ETH_SEND_TRANSACTION
  * - PERSONAL_SIGN, ETH_SIGN_TYPED_DATA_V4, PERSONAL_EC_RECOVER
  * - GET_SECRET_PHRASE, GET_PRIVATE_KEY
@@ -1803,6 +1804,20 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'GET_NETWORKS':
       return { networks: walletService!.config.networks };
+
+    case 'GET_SHOW_TESTNETS':
+      return { showTestnets: walletService!.config.showTestnets ?? false };
+
+    case 'SET_SHOW_TESTNETS': {
+      const enabled = Boolean(payload?.showTestnets);
+      walletService!.config.showTestnets = enabled;
+      const storedConfig = walletService!.storage.readJSON<Partial<Config & { network: string; showTestnets?: boolean }>>(
+        'config.json',
+        {}
+      );
+      walletService!.storage.writeJSON('config.json', { ...storedConfig, showTestnets: enabled });
+      return { showTestnets: enabled };
+    }
 
     case 'GET_TRANSACTION_HISTORY':
       if (!isUnlocked) throw new Error('Wallet is locked');

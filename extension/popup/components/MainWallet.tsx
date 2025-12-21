@@ -1,11 +1,15 @@
 /**
- * MainWallet Component
- * 
- * The primary wallet interface displaying:
- * - Portfolio/asset balances
- * - Send/receive functionality
- * - Activity/transaction history
- * - Multi-view navigation (tokens, send, receive, activity, settings)
+ * @fileoverview Main wallet UI for the browser extension popup.
+ *
+ * Handles portfolio display, network selection, send/receive flows,
+ * and activity history for the active account.
+ *
+ * @responsibilities
+ * - Render account balances, activity, and send/receive screens
+ * - Coordinate network selection and visibility preferences
+ *
+ * @security
+ * - Delegates all sensitive operations to the background service worker
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import SettingsView from './SettingsView';
@@ -38,6 +42,7 @@ import backIcon from '../../assets/icons/arrow-left.svg';
 import { isValidBitcoinAddress } from '../../../src/bitcoin/index.js';
 import { isValidTonAddress } from '../../../src/ton/index.js';
 import { isValidXRPAddress, isXAddress, isValidDestinationTag } from '../../../src/xrp/index.js';
+import { getVisibleNetworkEntries } from '../../../src/network-visibility.js';
 
 const ICON_ASSETS: Record<string, string> = {
   'eth_logo.svg': ethIcon,
@@ -175,6 +180,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [showAddToken, setShowAddToken] = useState(false);
   const [currentWalletName, setCurrentWalletName] = useState('default');
   const [currentAccountIndex, setCurrentAccountIndex] = useState(0);
+  const [showTestnets, setShowTestnets] = useState(false);
 
   // Price state
   const [totalBalance, setTotalBalance] = useState<string>('$0.00');
@@ -194,7 +200,11 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
   const [comment, setComment] = useState<string>('');
 
   const networkOptions = useMemo(() => {
-    return Object.entries(networks).map(([key, net]: [string, any]) => {
+    const visibleNetworks = getVisibleNetworkEntries(networks, {
+      showTestnets,
+      currentNetwork: network
+    });
+    return visibleNetworks.map(([key, net]: [string, any]) => {
       let icon;
       if (key === 'base') icon = ICON_ASSETS['base.svg'];
       else if (key === 'arbitrum') icon = ICON_ASSETS['arbitrum.svg'];
@@ -212,7 +222,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       }
       return { value: key, label: net.name, icon };
     });
-  }, [networks]);
+  }, [networks, network, showTestnets]);
 
   // Load tokens immediately, then trigger async balance refresh
   useEffect(() => {
@@ -289,10 +299,11 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
     setLoading(true);
     try {
       // Load tokens instantly with cached balances, networks, and accounts in parallel
-      const [tokensResponse, networksResponse, accountsResponse] = await Promise.all([
+      const [tokensResponse, networksResponse, accountsResponse, showTestnetsResponse] = await Promise.all([
         chrome.runtime.sendMessage({ type: 'GET_TOKENS' }),
         chrome.runtime.sendMessage({ type: 'GET_NETWORKS' }),
-        chrome.runtime.sendMessage({ type: 'GET_ACCOUNTS' })
+        chrome.runtime.sendMessage({ type: 'GET_ACCOUNTS' }),
+        chrome.runtime.sendMessage({ type: 'GET_SHOW_TESTNETS' })
       ]);
 
       // Set tokens with cached balances immediately
@@ -312,6 +323,9 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       if (accountsResponse.currentAccountIndex !== undefined) {
         setCurrentAccountIndex(accountsResponse.currentAccountIndex);
       }
+      if (showTestnetsResponse && typeof showTestnetsResponse.showTestnets === 'boolean') {
+        setShowTestnets(showTestnetsResponse.showTestnets);
+      }
       
       // Trigger async balance refresh (non-blocking)
       chrome.runtime.sendMessage({ type: 'REFRESH_BALANCES' }).catch(() => {});
@@ -323,6 +337,18 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
       console.error('Failed to load data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleTestnets = async (enabled: boolean) => {
+    setShowTestnets(enabled);
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'SET_SHOW_TESTNETS',
+        payload: { showTestnets: enabled }
+      });
+    } catch (error) {
+      console.warn('Failed to update testnet visibility:', error);
     }
   };
 
@@ -750,6 +776,8 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
                 value={network}
                 options={networkOptions}
                 onChange={handleNetworkChange}
+                showTestnets={showTestnets}
+                onToggleShowTestnets={handleToggleTestnets}
               />
             </div>
 

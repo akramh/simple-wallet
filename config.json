@@ -1,5 +1,5 @@
 {
-  "network": "xrp-mainnet",
+  "network": "mainnet",
   "networks": {
     "bitcoin-mainnet": {
       "type": "bitcoin",
@@ -184,5 +184,6 @@
       "blockExplorer": "https://lineascan.build",
       "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     }
-  }
+  },
+  "showTestnets": false
 }
