@@ -39,6 +39,8 @@ interface BaseNetworkConfig {
   explorerApiKey?: string;
   /** Human-readable network name for display */
   name?: string;
+  /** Whether this is a test network (default: false) */
+  isTestnet?: boolean;
 }
 
 /**

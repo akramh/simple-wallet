@@ -374,8 +374,10 @@ export const useNetworkSelectScreenSelector = () =>
       network: state.network,
       networks: state.networks,
       enabledNetworks: state.enabledNetworks,
+      showTestnets: state.showTestnets,
       isLoading: state.isLoading,
       switchNetwork: state.switchNetwork,
       setEnabledNetworks: state.setEnabledNetworks,
+      toggleShowTestnets: state.toggleShowTestnets,
     }))
   );

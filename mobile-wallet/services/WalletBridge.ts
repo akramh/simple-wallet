@@ -114,6 +114,7 @@ export interface NetworkConfig {
   xrpNetwork?: 'mainnet' | 'testnet' | 'devnet';
   tonNetwork?: 'mainnet' | 'testnet';
   rpcApiKey?: string;
+  isTestnet?: boolean;
 }
 
 export interface Config {
@@ -137,6 +138,8 @@ class WalletBridge {
   private currentWalletName = 'default';
   private _isUnlocked = false;
   private hiddenTokens: Set<string> = new Set(); // format: `${networkKey}:${address}`
+  private showTestnets: boolean = false; // Toggle test networks
+
   // Per-network balance cache: key -> { fetchedAt, height?, portfolio[] }
   private balanceCache: Map<string, { fetchedAt: number; height?: number; portfolio: any[] }> = new Map();
 
@@ -203,7 +206,14 @@ class WalletBridge {
    */
   private async loadConfig(): Promise<Config> {
     // Try to load from storage first (user overrides like selected network)
-    const storedConfig = mobileStorage.readJSON<Partial<Config>>('config.json', {});
+    const storedConfig = mobileStorage.readJSON<Partial<Config> & { hideSmallBalances?: boolean; showTestnets?: boolean }>('config.json', {});
+    
+    if (storedConfig.hideSmallBalances !== undefined) {
+      this.hideSmallBalances = storedConfig.hideSmallBalances;
+    }
+    if (storedConfig.showTestnets !== undefined) {
+      this.showTestnets = storedConfig.showTestnets;
+    }
 
     // Load bundled config from parent directory
     // Use require() for Metro/Jest compatibility (avoids Node dynamic import edge cases in tests)
@@ -786,6 +796,22 @@ class WalletBridge {
     
     // Do NOT invalidate raw balance cache - we just want to re-map visibility.
     // Calling refreshBalances({ force: false }) will re-use raw cache and re-apply hidden logic.
+  }
+
+  /**
+   * Set 'Show Testnets' preference.
+   */
+  async setShowTestnets(enabled: boolean): Promise<void> {
+    this.showTestnets = enabled;
+    const currentConfig = mobileStorage.readJSON<any>('config.json', {});
+    mobileStorage.writeJSON('config.json', { ...currentConfig, showTestnets: enabled });
+  }
+
+  /**
+   * Get 'Show Testnets' preference.
+   */
+  getShowTestnets(): boolean {
+    return this.showTestnets;
   }
 
   /**

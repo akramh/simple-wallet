@@ -91,6 +91,7 @@ interface WalletStore {
   // Networks
   networks: Record<string, NetworkConfig>;
   enabledNetworks: string[];
+  showTestnets: boolean;
 
   // Error handling
   error: string | null;
@@ -126,6 +127,8 @@ interface WalletStore {
   setEnabledNetworks: (networks: string[]) => Promise<void>;
   /** Load enabled networks from storage. */
   loadEnabledNetworks: () => Promise<void>;
+  /** Toggle visibility of test networks. */
+  toggleShowTestnets: (enabled: boolean) => Promise<void>;
   /**
    * Switch the active network.
    *
@@ -211,6 +214,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
   networks: {},
   enabledNetworks: [],
+  showTestnets: false,
 
   error: null,
 
@@ -227,6 +231,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       await walletBridge.initialize();
       const state = await walletBridge.getState();
       const networks = await walletBridge.getNetworks();
+      const showTestnets = walletBridge.getShowTestnets();
       // Load enabled networks (persisted) or default to mainnets (exclude testnets by name)
       let enabledNetworks: string[] = [];
       try {
@@ -260,6 +265,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         currentWalletName: state.currentWalletName,
         networks,
         enabledNetworks,
+        showTestnets,
         walletList,
       });
     } catch (error) {
@@ -533,6 +539,15 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       }
     } catch (err) {
       console.warn('[WalletStore] Failed to load enabled networks', err);
+    }
+  },
+
+  toggleShowTestnets: async (enabled: boolean) => {
+    try {
+      set({ showTestnets: enabled });
+      await walletBridge.setShowTestnets(enabled);
+    } catch (err) {
+      console.warn('[WalletStore] Failed to toggle testnets', err);
     }
   },
 

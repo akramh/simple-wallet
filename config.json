@@ -1,5 +1,5 @@
 {
-  "network": "ton-mainnet",
+  "network": "xrp-mainnet",
   "networks": {
     "bitcoin-mainnet": {
       "type": "bitcoin",
@@ -19,6 +19,7 @@
       "nativeName": "Bitcoin Testnet",
       "blockExplorer": "https://mempool.space/testnet",
       "explorerApiUrl": "https://mempool.space/testnet/api",
+      "isTestnet": true,
       "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "solana-mainnet": {
@@ -43,6 +44,7 @@
       "nativeSymbol": "SOL",
       "nativeName": "Solana",
       "blockExplorer": "https://solscan.io",
+      "isTestnet": true,
       "explorerApiKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3NjU2NTE0NjA5NDMsImVtYWlsIjoiYWtyYW1oQGdtYWlsLmNvbSIsImFjdGlvbiI6InRva2VuLWFwaSIsImFwaVZlcnNpb24iOiJ2MiIsImlhdCI6MTc2NTY1MTQ2MH0.1LeH9hM6x838txbuLEmhh3EJpHE_etLAplyaSBm_ZI8"
     },
     "xrp-mainnet": {
@@ -67,6 +69,7 @@
       "nativeSymbol": "XRP",
       "nativeName": "XRP Testnet",
       "blockExplorer": "https://testnet.xrpscan.com",
+      "isTestnet": true,
       "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "ton-mainnet": {
@@ -88,6 +91,7 @@
       "nativeSymbol": "tTON",
       "nativeName": "Toncoin Testnet",
       "blockExplorer": "https://testnet.tonscan.org",
+      "isTestnet": true,
       "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E",
       "rpcApiKey": "e61216951facf3f968f043d75e19264848bd378b514bb14df3861bed3ed140cc"
     },
@@ -104,6 +108,7 @@
       "nativeName": "Sepolia Ether",
       "blockExplorer": "https://sepolia.etherscan.io",
       "explorerApiUrl": "https://api-sepolia.etherscan.io/api",
+      "isTestnet": true,
       "explorerApiKey": "E3DKQIZ1ERCTUTX8ZKN9MMZ7BTB88F9B4E"
     },
     "mainnet": {
