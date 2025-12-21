@@ -110,7 +110,7 @@ interface WalletStore {
   /** Lock the current wallet and clear all in-memory derived state. */
   lock: () => Promise<void>;
   /** Refresh portfolio balances for the active network/account. */
-  refreshBalances: () => Promise<void>;
+  refreshBalances: (options?: { force?: boolean }) => Promise<void>;
   /** Refresh fiat prices and derived portfolio totals. */
   refreshPrices: () => Promise<void>;
   /** Refresh aggregated holdings across enabled networks. */
@@ -422,14 +422,14 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   // Balances
   // ============================================================================
 
-  refreshBalances: async () => {
+  refreshBalances: async (options) => {
     if (get().isRefreshingBalances) return;
 
     try {
       set({ isRefreshingBalances: true });
 
       console.log('[WalletStore] refreshBalances - calling walletBridge...');
-      const balances = await walletBridge.refreshBalances();
+      const balances = await walletBridge.refreshBalances(options);
       console.log('[WalletStore] refreshBalances - received balances:', JSON.stringify(balances, null, 2));
 
       set({
@@ -557,12 +557,26 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   },
 
   toggleTokenVisibility: async (tokenAddress: string, isVisible: boolean) => {
+    // 1. Optimistic Update: Update UI state immediately
+    set((state) => ({
+      balances: state.balances.map((b) => {
+        if (b.token.address?.toLowerCase() === tokenAddress.toLowerCase()) {
+          return { ...b, isVisible };
+        }
+        return b;
+      }),
+    }));
+
     try {
+      // 2. Persist & Sync
       await walletBridge.toggleTokenVisibility(tokenAddress, isVisible);
-      // Refresh to sync state
-      get().refreshBalances();
+      // Soft refresh to ensure data consistency (e.g. if bridge logic differs)
+      get().refreshBalances({ force: false });
     } catch (error) {
       console.error('[WalletStore] Toggle visibility failed:', error);
+      // Ideally revert optimistic update here if needed, but for visibility toggle
+      // a simple refresh on next load is usually acceptable recovery.
+      get().refreshBalances({ force: false });
     }
   },
 
