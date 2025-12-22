@@ -254,6 +254,43 @@ class WalletBridge {
   }
 
   /**
+   * Get the address for a specific network without switching the active network.
+   */
+  getAddressForNetwork(networkKey: string): string | null {
+    if (!this._isUnlocked || !this.wallet || !this.config) {
+      return null;
+    }
+
+    const networkConfig = this.config.networks[networkKey];
+    if (!networkConfig) return null;
+
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+
+    try {
+      switch (networkConfig.type) {
+        case 'bitcoin': {
+          const bitcoinNetwork =
+            networkConfig.bitcoinNetwork ||
+            (networkConfig.isTestnet || networkKey.includes('test') ? 'testnet' : 'mainnet');
+          return this.wallet.getBitcoinAddress(bitcoinNetwork, accountIndex).address;
+        }
+        case 'solana':
+          return this.wallet.getSolanaAddress(accountIndex).address;
+        case 'xrp':
+          return this.wallet.getXRPAddress(accountIndex).address;
+        case 'ton':
+          return this.wallet.getTonAddress(accountIndex).address;
+        case 'evm':
+        default:
+          return this.wallet.getAccountAddress(accountIndex);
+      }
+    } catch (error) {
+      console.warn('[WalletBridge] Failed to derive address for network:', networkKey, error);
+      return null;
+    }
+  }
+
+  /**
    * Check if session is active and return session password for adding wallets.
    * Returns null if not unlocked.
    *

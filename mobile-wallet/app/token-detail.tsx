@@ -156,7 +156,12 @@ export default function TokenDetailScreen() {
   };
 
   const handleReceive = () => {
-    router.push('/receive');
+    router.push({
+      pathname: '/receive',
+      params: {
+        network,
+      },
+    });
   };
 
   const handleMore = () => {

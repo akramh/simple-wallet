@@ -161,6 +161,8 @@ interface WalletStore {
   switchNetwork: (networkKey: string) => Promise<void>;
   /** Get an estimated network fee for a proposed transaction. */
   getGasEstimate: (token: Token, to: string, amount: string) => Promise<GasEstimate>;
+  /** Get the address for a specific network without switching the active network. */
+  getAddressForNetwork: (networkKey: string) => string | null;
   /** Send a transaction and schedule follow-up refreshes. */
   sendTransaction: (token: Token, to: string, amount: string, destinationTag?: number, comment?: string) => Promise<SendTransactionResult>;
   /** Load the list of persisted wallets from secure storage. */
@@ -683,6 +685,14 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
   getGasEstimate: async (token: Token, to: string, amount: string) => {
     return await walletBridge.getGasEstimate(token, to, amount);
+  },
+  getAddressForNetwork: (networkKey: string) => {
+    try {
+      return walletBridge.getAddressForNetwork(networkKey);
+    } catch (error) {
+      console.warn('[WalletStore] Failed to derive address for network:', networkKey, error);
+      return null;
+    }
   },
 
   sendTransaction: async (token: Token, to: string, amount: string, destinationTag?: number, comment?: string) => {
