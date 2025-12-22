@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Open Source Licenses - Simple Wallet</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 40px 20px;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 32px;
+      margin-bottom: 12px;
+      color: #f1f5f9;
+    }
+
+    .subtitle {
+      color: #94a3b8;
+      margin-bottom: 40px;
+      font-size: 16px;
+    }
+
+    .license-section {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+      border: 1px solid #334155;
+    }
+
+    .license-section.lgpl {
+      background: #422006;
+      border-color: #78350f;
+    }
+
+    .license-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .license-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #f1f5f9;
+      margin-bottom: 4px;
+    }
+
+    .license-badge {
+      background: #7c3aed;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .license-badge.lgpl {
+      background: #fbbf24;
+      color: #0f172a;
+    }
+
+    .license-version {
+      color: #94a3b8;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .license-description {
+      color: #cbd5e1;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    .license-meta {
+      border-top: 1px solid #334155;
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+
+    .license-section.lgpl .license-meta {
+      border-top-color: #78350f;
+    }
+
+    .license-meta-item {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+
+    .license-meta-item strong {
+      color: #cbd5e1;
+      font-weight: 600;
+    }
+
+    .license-meta-item a {
+      color: #a78bfa;
+      text-decoration: none;
+    }
+
+    .license-meta-item a:hover {
+      text-decoration: underline;
+    }
+
+    .license-text {
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 16px;
+      font-size: 12px;
+      color: #94a3b8;
+      white-space: pre-wrap;
+      font-family: 'Monaco', 'Courier New', monospace;
+      line-height: 1.8;
+      border: 1px solid #1e293b;
+    }
+
+    .warning-box {
+      background: #422006;
+      border: 1px solid #78350f;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .warning-icon {
+      color: #fbbf24;
+      font-size: 18px;
+    }
+
+    .warning-text {
+      color: #fbbf24;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #334155;
+      color: #64748b;
+      font-size: 13px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Open Source Licenses</h1>
+    <p class="subtitle">This extension uses the following open source software components</p>
+
+    <!-- LGPL License Section -->
+    <div class="license-section lgpl">
+      <div class="warning-box">
+        <span class="warning-icon">⚠️</span>
+        <span class="warning-text">LGPL License</span>
+      </div>
+
+      <div class="license-header">
+        <div>
+          <div class="license-title">rpc-websockets</div>
+          <div class="license-version">Version 9.3.2</div>
+        </div>
+        <span class="license-badge lgpl">LGPL-3.0-only</span>
+      </div>
+
+      <p class="license-description">
+        JSON-RPC 2.0 implementation over WebSockets for Node.js and JavaScript/TypeScript
+      </p>
+
+      <div class="license-meta">
+        <div class="license-meta-item"><strong>Author:</strong> Elpheria j.d.o.o.</div>
+        <div class="license-meta-item"><strong>Repository:</strong> <a href="https://github.com/elpheria/rpc-websockets" target="_blank">github.com/elpheria/rpc-websockets</a></div>
+        <div class="license-meta-item"><strong>Used by:</strong> @solana/web3.js (transitive dependency)</div>
+      </div>
+
+      <div class="license-text">Copyright (c) Elpheria j.d.o.o.
+
+rpc-websockets is an Open Source project licensed under the terms of the LGPLv3 license.
+
+This library is free software; you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License as published by the Free Software Foundation; either version 3 of the License, or (at your option) any later version.
+
+This library is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License along with this library; if not, see &lt;https://www.gnu.org/licenses/lgpl-3.0.html&gt;.
+
+Note: This package is used as a dependency of @solana/web3.js for WebSocket RPC communication.</div>
+    </div>
+
+    <!-- MIT Licenses -->
+    <div class="license-section">
+      <div class="license-header">
+        <div>
+          <div class="license-title">@solana/web3.js</div>
+          <div class="license-version">Version 1.98.4</div>
+        </div>
+        <span class="license-badge">MIT</span>
+      </div>
+      <p class="license-description">Solana JavaScript SDK for interacting with the Solana blockchain</p>
+      <div class="license-meta">
+        <div class="license-meta-item"><strong>Author:</strong> Solana Labs</div>
+        <div class="license-meta-item"><strong>Repository:</strong> <a href="https://github.com/solana-labs/solana-web3.js" target="_blank">github.com/solana-labs/solana-web3.js</a></div>
+      </div>
+    </div>
+
+    <div class="license-section">
+      <div class="license-header">
+        <div>
+          <div class="license-title">ethers</div>
+          <div class="license-version">Version 6.9.0</div>
+        </div>
+        <span class="license-badge">MIT</span>
+      </div>
+      <p class="license-description">Complete Ethereum library for JavaScript</p>
+      <div class="license-meta">
+        <div class="license-meta-item"><strong>Author:</strong> Richard Moore</div>
+        <div class="license-meta-item"><strong>Repository:</strong> <a href="https://github.com/ethers-io/ethers.js" target="_blank">github.com/ethers-io/ethers.js</a></div>
+      </div>
+    </div>
+
+    <div class="license-section">
+      <div class="license-header">
+        <div>
+          <div class="license-title">xrpl</div>
+          <div class="license-version">Version 4.1.0</div>
+        </div>
+        <span class="license-badge">ISC</span>
+      </div>
+      <p class="license-description">JavaScript/TypeScript library for XRP Ledger</p>
+      <div class="license-meta">
+        <div class="license-meta-item"><strong>Author:</strong> Ripple Labs</div>
+        <div class="license-meta-item"><strong>Repository:</strong> <a href="https://github.com/XRPLF/xrpl.js" target="_blank">github.com/XRPLF/xrpl.js</a></div>
+      </div>
+    </div>
+
+    <div class="license-section">
+      <div class="license-header">
+        <div>
+          <div class="license-title">React</div>
+          <div class="license-version">Version 18.2.0</div>
+        </div>
+        <span class="license-badge">MIT</span>
+      </div>
+      <p class="license-description">JavaScript library for building user interfaces</p>
+      <div class="license-meta">
+        <div class="license-meta-item"><strong>Author:</strong> Meta Platforms, Inc.</div>
+        <div class="license-meta-item"><strong>Repository:</strong> <a href="https://github.com/facebook/react" target="_blank">github.com/facebook/react</a></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>All other dependencies are licensed under permissive open source licenses (MIT, Apache-2.0, ISC, BSD).</p>
+      <p style="margin-top: 8px;">For a complete list, see the THIRD_PARTY_LICENSES.md file in the source repository.</p>
+      <p style="margin-top: 16px; color: #475569;">Last updated: December 21, 2025</p>
+    </div>
+  </div>
+</body>
+</html>

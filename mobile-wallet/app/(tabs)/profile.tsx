@@ -221,7 +221,7 @@ export default function ProfileScreen() {
           <SettingsItem
             icon="information-circle-outline"
             title="About"
-            onPress={() => {}}
+            onPress={() => router.push('/licenses' as never)}
           />
         </View>
 
