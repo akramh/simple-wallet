@@ -21,7 +21,7 @@ import {
   TextInput,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -32,6 +32,7 @@ type ScreenState = 'password' | 'revealed';
 
 export default function SecretPhraseScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const [screenState, setScreenState] = useState<ScreenState>('password');
   const [password, setPassword] = useState('');
@@ -85,7 +86,10 @@ export default function SecretPhraseScreen() {
     return (
       <SafeAreaView className="flex-1 bg-gray-950">
         {/* Header */}
-        <View className="flex-row items-center px-4 py-3 border-b border-gray-800">
+        <View
+          className="flex-row items-center px-4 pb-3 border-b border-gray-800"
+          style={{ paddingTop: insets.top + 8 }}
+        >
           <TouchableOpacity onPress={handleBack} className="p-2 -ml-2">
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
@@ -172,7 +176,10 @@ export default function SecretPhraseScreen() {
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
-      <View className="flex-row items-center px-4 py-3 border-b border-gray-800">
+      <View
+        className="flex-row items-center px-4 pb-3 border-b border-gray-800"
+        style={{ paddingTop: insets.top + 8 }}
+      >
         <TouchableOpacity onPress={handleBack} className="p-2 -ml-2">
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
@@ -280,4 +287,3 @@ export default function SecretPhraseScreen() {
     </SafeAreaView>
   );
 }
-

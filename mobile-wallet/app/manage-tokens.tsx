@@ -14,7 +14,7 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
@@ -22,6 +22,7 @@ import { getTokenIcon } from '../utils/tokenIcons';
 
 export default function ManageTokensScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const {
     network,
     networks,
@@ -79,7 +80,10 @@ export default function ManageTokensScreen() {
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
-      <View className="flex-row items-center px-5 pt-4 pb-6">
+      <View
+        className="flex-row items-center px-5 pb-6"
+        style={{ paddingTop: insets.top + 8 }}
+      >
         <TouchableOpacity onPress={() => router.back()} className="mr-4">
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>

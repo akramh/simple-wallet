@@ -71,6 +71,7 @@ export default function SendScreen() {
   const footerHeight = 132;
   const footerOffset =
     keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom, 0) : insets.bottom;
+  const headerPaddingTop = insets.top + 8;
 
   // Set default token on mount
   useEffect(() => {
@@ -357,7 +358,10 @@ export default function SendScreen() {
     <SafeAreaView className="flex-1 bg-gray-950">
       <View className="flex-1">
         {/* Header */}
-        <View className="flex-row items-center justify-between px-5 pt-4 pb-4 border-b border-gray-800">
+        <View
+          className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800"
+          style={{ paddingTop: headerPaddingTop }}
+        >
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="close" size={28} color="white" />
           </TouchableOpacity>
