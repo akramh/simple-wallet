@@ -21,6 +21,7 @@
 
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BIOMETRIC_SECURE_KEYS, INSTALL_ID_KEY } from '../utils/secureStoreKeys';
 
 /**
  * Keys that contain sensitive data and should use SecureStore.
@@ -70,6 +71,8 @@ export class MobileStorageAdapter implements StorageAdapter {
     if (this.initialized) return;
 
     try {
+      await this.ensureFreshInstall();
+
       // Load secure keys
       for (const key of SECURE_KEYS) {
         const storageKey = toStorageKey(key);
@@ -180,6 +183,35 @@ export class MobileStorageAdapter implements StorageAdapter {
           console.error(`[MobileStorageAdapter] Fallback also failed:`, fallbackError);
         }
       }
+    }
+  }
+
+  /**
+   * Clear SecureStore data if this is a fresh install (AsyncStorage is empty).
+   * iOS Keychain can survive app uninstall; this prevents stale secrets.
+   */
+  private async ensureFreshInstall(): Promise<void> {
+    try {
+      const installId = await AsyncStorage.getItem(INSTALL_ID_KEY);
+      if (installId) return;
+
+      for (const key of SECURE_KEYS) {
+        await SecureStore.deleteItemAsync(toStorageKey(key));
+      }
+      for (const key of BIOMETRIC_SECURE_KEYS) {
+        await SecureStore.deleteItemAsync(key);
+      }
+
+      const allKeys = await AsyncStorage.getAllKeys();
+      const walletKeys = allKeys.filter((k) => k.startsWith('wallet_'));
+      if (walletKeys.length > 0) {
+        await AsyncStorage.multiRemove(walletKeys);
+      }
+
+      const newInstallId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await AsyncStorage.setItem(INSTALL_ID_KEY, newInstallId);
+    } catch (error) {
+      console.error('[MobileStorageAdapter] Failed to verify install state:', error);
     }
   }
 

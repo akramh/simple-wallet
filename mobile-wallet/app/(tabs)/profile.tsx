@@ -114,28 +114,6 @@ export default function ProfileScreen() {
     router.replace('/(auth)/unlock');
   };
 
-  const handleClearData = () => {
-    Alert.alert(
-      'Clear All Data',
-      'This will permanently delete ALL wallets and reset the app. Make sure you have backed up your recovery phrases!\n\nThis action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete Everything',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await walletBridge.clearAllData();
-              router.replace('/(auth)/welcome');
-            } catch (error) {
-              Alert.alert('Error', 'Failed to clear data');
-            }
-          },
-        },
-      ]
-    );
-  };
-
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
@@ -244,18 +222,6 @@ export default function ProfileScreen() {
             icon="information-circle-outline"
             title="About"
             onPress={() => {}}
-          />
-        </View>
-
-        {/* Danger Zone */}
-        <View className="px-5 mt-6">
-          <Text className="text-gray-400 text-sm mb-3 uppercase">Danger Zone</Text>
-
-          <SettingsItem
-            icon="trash-outline"
-            title="Clear All Data"
-            subtitle="Delete all wallets and reset app"
-            onPress={handleClearData}
           />
         </View>
 

@@ -17,9 +17,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
-
-const BIOMETRIC_ENABLED_KEY = 'wallet_biometric_enabled';
-const BIOMETRIC_PASSWORD_KEY = 'wallet_biometric_password';
+import { BIOMETRIC_ENABLED_KEY, BIOMETRIC_PASSWORD_KEY } from '../utils/secureStoreKeys';
 
 /** Secure storage options for biometric-protected password */
 const BIOMETRIC_SECURE_OPTIONS: SecureStore.SecureStoreOptions = {

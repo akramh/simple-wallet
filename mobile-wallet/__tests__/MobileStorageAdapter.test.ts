@@ -10,12 +10,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
 import { MobileStorageAdapter } from '../services/MobileStorageAdapter';
+import { INSTALL_ID_KEY } from '../utils/secureStoreKeys';
 
 describe('MobileStorageAdapter', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     // Clear in-memory storage in mocks
     await (AsyncStorage as any).clear?.();
+    await AsyncStorage.setItem(INSTALL_ID_KEY, 'test-install');
+    jest.clearAllMocks();
   });
 
   test('writeJSON wallets.json uses SecureStore', async () => {
@@ -46,5 +49,4 @@ describe('MobileStorageAdapter', () => {
     expect(key).toBe('wallet_config_json');
   });
 });
-
 
