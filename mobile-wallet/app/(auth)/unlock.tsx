@@ -16,11 +16,14 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnlockScreenSelector } from '../../store';
 import { useBiometrics } from '../../hooks';
+
+const BIOMETRIC_OPTIN_KEY = 'wallet_biometric_optin_prompted';
 
 export default function UnlockScreen() {
   const router = useRouter();
@@ -31,6 +34,7 @@ export default function UnlockScreen() {
     biometricType,
     isAuthenticating,
     authenticate,
+    enable,
     getBiometricName,
   } = useBiometrics();
 
@@ -39,6 +43,7 @@ export default function UnlockScreen() {
   const [attempts, setAttempts] = useState(0);
   const [selectedWallet, setSelectedWallet] = useState<string>('default');
   const [showWalletPicker, setShowWalletPicker] = useState(false);
+  const [isEnablingBiometrics, setIsEnablingBiometrics] = useState(false);
 
   // Load wallet list on mount
   useEffect(() => {
@@ -64,12 +69,52 @@ export default function UnlockScreen() {
     if (error) clearError();
   }, [password]);
 
-  const handleUnlock = async () => {
-    if (password.length < 1) return;
+  const maybePromptBiometricOptIn = async (passwordToStore: string) => {
+    if (!biometricsAvailable || biometricsEnabled) return;
+    try {
+      const prompted = await AsyncStorage.getItem(BIOMETRIC_OPTIN_KEY);
+      if (prompted === 'true') return;
+    } catch {
+      // If storage fails, avoid blocking unlock; still allow prompt.
+    }
+
+    Alert.alert(
+      `Enable ${getBiometricName()}?`,
+      'Unlock faster with biometrics. You can change this later in Settings.',
+      [
+        {
+          text: 'Not now',
+          style: 'cancel',
+          onPress: () => {
+            AsyncStorage.setItem(BIOMETRIC_OPTIN_KEY, 'true').catch(() => {});
+          },
+        },
+        {
+          text: `Enable ${getBiometricName()}`,
+          onPress: async () => {
+            const success = await enable(passwordToStore);
+            AsyncStorage.setItem(BIOMETRIC_OPTIN_KEY, 'true').catch(() => {});
+            if (!success) {
+              Alert.alert('Error', `Failed to enable ${getBiometricName()}.`);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const unlockWithPassword = async (
+    passwordToUse: string,
+    options?: { skipBiometricPrompt?: boolean }
+  ) => {
+    if (passwordToUse.length < 1) return;
 
     try {
-      await unlock(password, selectedWallet);
+      await unlock(passwordToUse, selectedWallet);
       router.replace('/(tabs)/wallet');
+      if (!options?.skipBiometricPrompt) {
+        maybePromptBiometricOptIn(passwordToUse);
+      }
     } catch (err) {
       setAttempts((prev) => prev + 1);
       setPassword('');
@@ -82,6 +127,10 @@ export default function UnlockScreen() {
         );
       }
     }
+  };
+
+  const handleUnlock = async () => {
+    await unlockWithPassword(password);
   };
 
   const handleBiometricUnlock = async () => {
@@ -99,6 +148,31 @@ export default function UnlockScreen() {
         );
       }
     }
+  };
+
+  const handleEnableBiometrics = async () => {
+    if (!biometricsAvailable) {
+      Alert.alert(
+        'Biometrics Unavailable',
+        'Biometric authentication is not available on this device.'
+      );
+      return;
+    }
+    if (!password) {
+      Alert.alert('Enter Password', 'Enter your password to enable biometrics.');
+      return;
+    }
+
+    setIsEnablingBiometrics(true);
+    const success = await enable(password);
+    setIsEnablingBiometrics(false);
+    if (!success) {
+      Alert.alert('Error', `Failed to enable ${getBiometricName()}.`);
+      return;
+    }
+
+    AsyncStorage.setItem(BIOMETRIC_OPTIN_KEY, 'true').catch(() => {});
+    await unlockWithPassword(password, { skipBiometricPrompt: true });
   };
 
   const getBiometricIcon = (): keyof typeof Ionicons.glyphMap => {
@@ -210,11 +284,11 @@ export default function UnlockScreen() {
         {/* Biometrics Option */}
         {biometricsAvailable && (
           <TouchableOpacity
-            onPress={handleBiometricUnlock}
-            disabled={isAuthenticating}
+            onPress={biometricsEnabled ? handleBiometricUnlock : handleEnableBiometrics}
+            disabled={isAuthenticating || isEnablingBiometrics}
             className="mt-6 flex-row items-center justify-center"
           >
-            {isAuthenticating ? (
+            {isAuthenticating || isEnablingBiometrics ? (
               <ActivityIndicator size="small" color="#a855f7" />
             ) : (
               <Ionicons name={getBiometricIcon()} size={24} color="#a855f7" />
@@ -226,19 +300,6 @@ export default function UnlockScreen() {
             </Text>
           </TouchableOpacity>
         )}
-
-        {/* Forgot Password */}
-        <TouchableOpacity className="items-center pb-8 mt-6">
-          <Text className="text-gray-500">
-            Forgot password?{' '}
-            <Text
-              className="text-purple-400"
-              onPress={() => router.push('/(auth)/import')}
-            >
-              Restore with recovery phrase
-            </Text>
-          </Text>
-        </TouchableOpacity>
       </ScrollView>
       </KeyboardAvoidingView>
 
