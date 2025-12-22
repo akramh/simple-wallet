@@ -140,6 +140,7 @@ class WalletBridge {
   private isInitialized = false;
   private currentWalletName = 'default';
   private _isUnlocked = false;
+  private lockListeners: Set<() => void> = new Set();
   private hiddenTokens: Set<string> = new Set(); // format: `${networkKey}:${address}`
   private showTestnets: boolean = false; // Toggle test networks
   private hideSmallBalances: boolean = false; // Toggle small balances
@@ -434,6 +435,14 @@ class WalletBridge {
       clearTimeout(this.autoLockTimer);
       this.autoLockTimer = null;
     }
+
+    this.lockListeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (error) {
+        console.error('[WalletBridge] Lock listener failed:', error);
+      }
+    });
   }
 
   /**
@@ -1415,6 +1424,18 @@ class WalletBridge {
   setAutoLockTimeout(minutes: number): void {
     this.autoLockTimeoutMs = minutes * 60 * 1000;
     this.resetAutoLockTimer();
+  }
+
+  /**
+   * Subscribe to lock events (manual or auto-lock).
+   *
+   * @returns Unsubscribe function.
+   */
+  onLock(listener: () => void): () => void {
+    this.lockListeners.add(listener);
+    return () => {
+      this.lockListeners.delete(listener);
+    };
   }
 
   // ============================================================================

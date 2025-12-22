@@ -40,6 +40,7 @@ jest.mock('../services', () => ({
       default: { address: '0xabc', accounts: [{ address: '0xabc' }] },
     })),
     lockWallet: jest.fn(async () => {}),
+    onLock: jest.fn(() => () => {}),
   },
 }));
 

@@ -109,18 +109,9 @@ export default function ProfileScreen() {
     ? `${address.slice(0, 10)}...${address.slice(-8)}`
     : '';
 
-  const handleLock = () => {
-    Alert.alert('Lock Wallet', 'Are you sure you want to lock your wallet?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Lock',
-        style: 'destructive',
-        onPress: async () => {
-          await lock();
-          router.replace('/(auth)/unlock');
-        },
-      },
-    ]);
+  const handleLock = async () => {
+    await lock();
+    router.replace('/(auth)/unlock');
   };
 
   const handleClearData = () => {

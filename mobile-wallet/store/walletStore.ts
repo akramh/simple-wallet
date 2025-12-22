@@ -34,6 +34,24 @@ import {
 } from '../services';
 
 const ENABLED_NETWORKS_KEY = 'enabledNetworks';
+let lockListenerAttached = false;
+
+const getLockedState = () => ({
+  isUnlocked: false,
+  address: null,
+  currentWalletName: null,
+  balances: [],
+  allNetworkHoldings: [],
+  allNetworkTotals: {},
+  allNetworksLastUpdated: null,
+  isRefreshingAllNetworks: false,
+  transactions: [],
+  prices: {},
+  totalValue: 0,
+  formattedTotal: '$0.00',
+  accounts: [],
+  currentAccountIndex: 0,
+});
 
 // ============================================================================
 // Store Types
@@ -230,6 +248,15 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       set({ isLoading: true, error: null });
 
       await walletBridge.initialize();
+      if (!lockListenerAttached) {
+        walletBridge.onLock(() => {
+          set((state) => {
+            if (!state.isUnlocked) return state;
+            return { ...state, ...getLockedState() };
+          });
+        });
+        lockListenerAttached = true;
+      }
       const state = await walletBridge.getState();
       const networks = await walletBridge.getNetworks();
       const showTestnets = walletBridge.getShowTestnets();
@@ -401,22 +428,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     try {
       await walletBridge.lockWallet();
 
-      set({
-        isUnlocked: false,
-        address: null,
-        currentWalletName: null,
-        balances: [],
-        allNetworkHoldings: [],
-        allNetworkTotals: {},
-        allNetworksLastUpdated: null,
-        isRefreshingAllNetworks: false,
-        transactions: [],
-        prices: {},
-        totalValue: 0,
-        formattedTotal: '$0.00',
-        accounts: [],
-        currentAccountIndex: 0,
-      });
+      set((state) => ({ ...state, ...getLockedState() }));
     } catch (error) {
       console.error('[WalletStore] Lock failed:', error);
       set({
