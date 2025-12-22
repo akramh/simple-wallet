@@ -63,7 +63,7 @@ export default function CreateWalletScreen() {
 
       // Navigate to backup screen with mnemonic
       router.push({
-        pathname: '/(auth)/backup',
+        pathname: '/(setup)/backup',
         params: { mnemonic: result.mnemonic },
       });
     } catch (err) {

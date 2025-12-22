@@ -6,7 +6,7 @@
  * - Refresh in the background when data is stale
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -31,6 +31,7 @@ export default function PortfolioScreen() {
     hydrateAllNetworksFromCache,
     networks,
   } = usePortfolioScreenSelector();
+  const isNavigatingRef = useRef(false);
 
   useEffect(() => {
     // Hydrate cached snapshot immediately on tab visit, then revalidate silently if stale.
@@ -121,6 +122,8 @@ export default function PortfolioScreen() {
                       const isNative = item.token.address === 'native' || !item.token.address;
 
                       const handlePress = () => {
+                        if (isNavigatingRef.current) return;
+                        isNavigatingRef.current = true;
                         router.push({
                           pathname: '/token-detail',
                           params: {
@@ -133,6 +136,9 @@ export default function PortfolioScreen() {
                             decimals: item.token.decimals?.toString() || '18',
                           },
                         });
+                        setTimeout(() => {
+                          isNavigatingRef.current = false;
+                        }, 600);
                       };
 
                       return (

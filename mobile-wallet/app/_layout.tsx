@@ -34,7 +34,7 @@ const queryClient = new QueryClient({
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
-  const { initialize, isInitialized, hasWallet, isUnlocked } = useWalletStore();
+  const { initialize, isInitialized, hasWallet, isUnlocked, pendingBackup } = useWalletStore();
 
   useEffect(() => {
     // Initialize wallet on app start
@@ -44,8 +44,23 @@ export default function RootLayout() {
   useEffect(() => {
     if (!isInitialized) return;
     const inAuthGroup = segments[0] === '(auth)';
+    const inSetupGroup = segments[0] === '(setup)';
+    const route = segments[1];
+    const isBackupScreen = inSetupGroup && route === 'backup';
+    const isUnlockScreen = inAuthGroup && route === 'unlock';
 
-    if (!hasWallet && !inAuthGroup) {
+    if (pendingBackup) {
+      if (!isUnlocked && !isUnlockScreen) {
+        router.replace('/(auth)/unlock');
+        return;
+      }
+      if (isUnlocked && !isBackupScreen) {
+        router.replace('/(setup)/backup');
+      }
+      return;
+    }
+
+    if (!hasWallet && !inAuthGroup && !inSetupGroup) {
       router.replace('/(auth)/welcome');
       return;
     }
@@ -58,7 +73,7 @@ export default function RootLayout() {
     if (hasWallet && isUnlocked && inAuthGroup) {
       router.replace('/(tabs)/wallet');
     }
-  }, [isInitialized, hasWallet, isUnlocked, router, segments]);
+  }, [isInitialized, hasWallet, isUnlocked, pendingBackup, router, segments]);
 
   return (
     <SafeAreaProvider>
@@ -76,6 +91,13 @@ export default function RootLayout() {
               {/* Auth flow screens */}
               <Stack.Screen
                 name="(auth)"
+                options={{
+                  headerShown: false,
+                }}
+              />
+              {/* Wallet setup flow */}
+              <Stack.Screen
+                name="(setup)"
                 options={{
                   headerShown: false,
                 }}

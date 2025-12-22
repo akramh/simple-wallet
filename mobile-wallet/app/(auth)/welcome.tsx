@@ -47,7 +47,7 @@ export default function WelcomeScreen() {
       {/* Action Buttons */}
       <View className="pb-4">
         <TouchableOpacity
-          onPress={() => router.push('/(auth)/create')}
+          onPress={() => router.push('/(setup)/create')}
           className="bg-purple-600 rounded-xl py-4 mb-3"
         >
           <Text className="text-white font-semibold text-center text-lg">
@@ -56,7 +56,7 @@ export default function WelcomeScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          onPress={() => router.push('/(auth)/import')}
+          onPress={() => router.push('/(setup)/import')}
           className="bg-gray-800 rounded-xl py-4"
         >
           <Text className="text-white font-semibold text-center text-lg">

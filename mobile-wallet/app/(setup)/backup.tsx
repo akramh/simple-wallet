@@ -15,15 +15,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { useToast } from '../../contexts';
+import * as Haptics from 'expo-haptics';
+import { useWalletStore } from '../../store';
 
 export default function BackupScreen() {
   const router = useRouter();
   const { mnemonic } = useLocalSearchParams<{ mnemonic: string }>();
-  const { showToast } = useToast();
-
+  const { setPendingBackup } = useWalletStore();
   const [revealed, setRevealed] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const words = mnemonic?.split(' ') || [];
 // Prevent accidental back navigation
@@ -52,11 +53,14 @@ export default function BackupScreen() {
   const handleCopy = async () => {
     if (!mnemonic) return;
     await Clipboard.setStringAsync(mnemonic);
-    showToast('Recovery phrase copied to clipboard', 'success');
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleContinue = () => {
     if (!confirmed) return;
+    setPendingBackup(false);
     router.replace('/(tabs)/wallet');
   };
 
@@ -121,10 +125,19 @@ export default function BackupScreen() {
               {/* Copy Button */}
               <TouchableOpacity
                 onPress={handleCopy}
-                className="flex-row items-center justify-center mt-4 py-3 bg-gray-800 rounded-xl"
+                className={`flex-row items-center justify-center mt-4 py-3 rounded-xl ${
+                  copied ? 'bg-purple-600' : 'bg-gray-800'
+                }`}
+                disabled={copied}
               >
-                <Ionicons name="copy-outline" size={18} color="#a855f7" />
-                <Text className="text-purple-400 ml-2">Copy to Clipboard</Text>
+                <Ionicons
+                  name={copied ? 'checkmark-circle' : 'copy-outline'}
+                  size={18}
+                  color={copied ? '#ffffff' : '#a855f7'}
+                />
+                <Text className={`ml-2 ${copied ? 'text-white' : 'text-purple-400'}`}>
+                  {copied ? 'Copied!' : 'Copy to Clipboard'}
+                </Text>
               </TouchableOpacity>
             </>
           )}

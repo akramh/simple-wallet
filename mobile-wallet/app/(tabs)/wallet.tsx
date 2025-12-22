@@ -2,7 +2,7 @@
  * @fileoverview Main wallet screen - shows balances and quick actions.
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -39,6 +39,7 @@ export default function WalletScreen() {
     currentAccountIndex,
     currentWalletName,
   } = useWalletScreenSelector();
+  const isNavigatingRef = useRef(false);
   const { copy } = useClipboard();
   const { showToast } = useToast();
 
@@ -83,6 +84,8 @@ export default function WalletScreen() {
           const isNative = item.token.address === 'native' || !item.token.address;
 
           const handleTokenPress = () => {
+            if (isNavigatingRef.current) return;
+            isNavigatingRef.current = true;
             router.push({
               pathname: '/token-detail',
               params: {
@@ -95,6 +98,9 @@ export default function WalletScreen() {
                 decimals: item.token.decimals?.toString() || '18',
               },
             });
+            setTimeout(() => {
+              isNavigatingRef.current = false;
+            }, 600);
           };
 
           return (

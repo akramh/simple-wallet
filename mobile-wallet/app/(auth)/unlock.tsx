@@ -356,7 +356,7 @@ export default function UnlockScreen() {
                   <TouchableOpacity
                     onPress={() => {
                       setShowWalletPicker(false);
-                      router.push('/(auth)/create');
+                      router.push('/(setup)/create');
                     }}
                     className="mx-4 mt-2 p-4 rounded-xl bg-gray-800 flex-row items-center justify-center"
                   >

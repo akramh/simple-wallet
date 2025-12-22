@@ -34,6 +34,7 @@ import {
 } from '../services';
 
 const ENABLED_NETWORKS_KEY = 'enabledNetworks';
+const PENDING_BACKUP_KEY = 'wallet_pending_backup';
 let lockListenerAttached = false;
 
 const getLockedState = () => ({
@@ -78,6 +79,7 @@ interface WalletStore {
   network: string;
   address: string | null;
   currentWalletName: string | null;
+  pendingBackup: boolean;
 
   // Wallet list
   walletList: WalletInfo[];
@@ -129,6 +131,9 @@ interface WalletStore {
   unlock: (password: string, name?: string) => Promise<void>;
   /** Lock the current wallet and clear all in-memory derived state. */
   lock: () => Promise<void>;
+
+  // Backup state
+  setPendingBackup: (pending: boolean) => Promise<void>;
   /** Refresh portfolio balances for the active network/account. */
   refreshBalances: (options?: { force?: boolean }) => Promise<void>;
   /** Refresh fiat prices and derived portfolio totals. */
@@ -206,6 +211,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   network: 'sepolia',
   address: null,
   currentWalletName: null,
+  pendingBackup: false,
 
   walletList: [],
 
@@ -270,6 +276,13 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       } catch {
         enabledNetworks = [];
       }
+      let pendingBackup = false;
+      try {
+        const storedPending = await AsyncStorage.getItem(PENDING_BACKUP_KEY);
+        pendingBackup = storedPending === 'true';
+      } catch {
+        pendingBackup = false;
+      }
       if (!enabledNetworks.length) {
         enabledNetworks = Object.keys(networks).filter(k => !k.toLowerCase().includes('test'));
         AsyncStorage.setItem(ENABLED_NETWORKS_KEY, JSON.stringify(enabledNetworks)).catch(() => {});
@@ -291,6 +304,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         network: state.network,
         address: state.address,
         currentWalletName: state.currentWalletName,
+        pendingBackup,
         networks,
         enabledNetworks,
         showTestnets,
@@ -316,7 +330,9 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       // Yield to UI to allow loading state to render before blocking crypto op
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      const result = await walletBridge.createWallet(password, name, true);
+  const result = await walletBridge.createWallet(password, name, true);
+
+      await AsyncStorage.setItem(PENDING_BACKUP_KEY, 'true');
 
       set({
         isLoading: false,
@@ -324,6 +340,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         hasWallet: true,
         address: result.address,
         currentWalletName: name,
+        pendingBackup: true,
       });
 
       // Trigger initial balance fetch
@@ -434,6 +451,19 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       set({
         error: error instanceof Error ? error.message : 'Failed to lock wallet',
       });
+    }
+  },
+
+  // ============================================================================
+  // Backup State
+  // ============================================================================
+
+  setPendingBackup: async (pending: boolean) => {
+    try {
+      set({ pendingBackup: pending });
+      await AsyncStorage.setItem(PENDING_BACKUP_KEY, pending ? 'true' : 'false');
+    } catch (error) {
+      console.error('[WalletStore] Failed to persist pending backup flag:', error);
     }
   },
 
