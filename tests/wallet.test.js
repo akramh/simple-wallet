@@ -154,6 +154,41 @@ test('renameWallet moves wallets.json entry', async () => {
   assert.ok(loaded?.address, 'should still be loadable by new name');
 });
 
+test('changePassword re-encrypts wallet data', async () => {
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+
+  const storage = new MemoryStorage();
+  const wallet = new Wallet(config, storage);
+  wallet.providerFactory = {
+    createProvider: () => ({ getBlockNumber: async () => 1 })
+  };
+  await wallet.initialize();
+
+  const oldPassword = 'old-password';
+  const newPassword = 'new-password';
+
+  wallet.createNewWallet(oldPassword);
+  wallet.saveWallet('primary');
+
+  const before = storage.readJSON('wallets.json', {}).primary.encryptedMnemonic;
+
+  wallet.changePassword('primary', oldPassword, newPassword);
+
+  const after = storage.readJSON('wallets.json', {}).primary.encryptedMnemonic;
+  assert.notEqual(before, after, 'encrypted payload should change');
+
+  await assert.rejects(
+    async () => wallet.loadWallet('primary', oldPassword),
+    /Incorrect password/
+  );
+
+  const reloaded = wallet.loadWallet('primary', newPassword);
+  assert.ok(reloaded?.address, 'should load with new password');
+});
+
 test('setNetwork reconnects wallet to new provider', async () => {
   const constructed = [];
 

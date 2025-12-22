@@ -510,6 +510,17 @@ export class WalletAppService {
   }
 
   /**
+   * Change the master password for a stored wallet.
+   *
+   * @param walletName - Name of wallet to update
+   * @param currentPassword - Current master password
+   * @param newPassword - New master password
+   */
+  changePassword(walletName: string, currentPassword: string, newPassword: string): void {
+    this.wallet.changePassword(walletName, currentPassword, newPassword);
+  }
+
+  /**
    * Delete a wallet from storage.
    * @param walletName - Name of wallet to delete
    * @returns True if deletion succeeded

@@ -161,6 +161,8 @@ interface WalletStore {
   switchNetwork: (networkKey: string) => Promise<void>;
   /** Get an estimated network fee for a proposed transaction. */
   getGasEstimate: (token: Token, to: string, amount: string) => Promise<GasEstimate>;
+  /** Change the master password for the current wallet. */
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   /** Get the address for a specific network without switching the active network. */
   getAddressForNetwork: (networkKey: string) => string | null;
   /** Send a transaction and schedule follow-up refreshes. */
@@ -685,6 +687,17 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
   getGasEstimate: async (token: Token, to: string, amount: string) => {
     return await walletBridge.getGasEstimate(token, to, amount);
+  },
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    try {
+      await walletBridge.changePassword(currentPassword, newPassword);
+    } catch (error) {
+      console.error('[WalletStore] Change password failed:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to change password',
+      });
+      throw error;
+    }
   },
   getAddressForNetwork: (networkKey: string) => {
     try {

@@ -199,7 +199,7 @@ export default function ProfileScreen() {
           <SettingsItem
             icon="key-outline"
             title="Change Password"
-            onPress={() => {}}
+            onPress={() => router.push('/change-password' as never)}
           />
         </View>
 

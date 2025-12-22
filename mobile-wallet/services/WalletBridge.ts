@@ -1416,6 +1416,24 @@ class WalletBridge {
   }
 
   /**
+   * Change the master password for the current wallet.
+   *
+   * @param currentPassword - Current master password
+   * @param newPassword - New master password
+   */
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    this.requireUnlocked();
+
+    if (currentPassword !== this.sessionPassword) {
+      throw new Error('Invalid password');
+    }
+
+    this.service.changePassword(this.currentWalletName, currentPassword, newPassword);
+    this.sessionPassword = newPassword;
+    this.resetAutoLockTimer();
+  }
+
+  /**
    * Get secret recovery phrase (requires password confirmation).
    *
    * @param password - Must match the current in-memory session password.
