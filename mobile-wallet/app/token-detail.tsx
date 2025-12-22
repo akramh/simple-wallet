@@ -58,7 +58,7 @@ interface TokenDetailParams {
 
 export default function TokenDetailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<TokenDetailParams>();
+  const params = useLocalSearchParams() as unknown as TokenDetailParams;
   const { showToast } = useToast();
   const { copy } = useClipboard();
 
@@ -156,7 +156,12 @@ export default function TokenDetailScreen() {
   };
 
   const handleReceive = () => {
-    router.push('/receive');
+    router.push({
+      pathname: '/receive',
+      params: {
+        network,
+      },
+    });
   };
 
   const handleMore = () => {
@@ -278,7 +283,7 @@ export default function TokenDetailScreen() {
         <View className="mx-4 mb-4">
           <PriceChart
             data={history?.data ?? []}
-            isPositive={history?.priceChange?.percent >= 0}
+            isPositive={(history?.priceChange?.percent ?? 0) >= 0}
             isLoading={isLoadingHistory}
             height={180}
             showTouch={true}

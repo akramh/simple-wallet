@@ -21,6 +21,7 @@ jest.mock('../services', () => {
     getNetworks: jest.fn(async () => ({ sepolia: { name: 'Sepolia', nativeSymbol: 'ETH' } })),
     getAllWallets: jest.fn(async () => ({})),
     lockWallet: jest.fn(async () => {}),
+    onLock: jest.fn(() => () => {}),
     unlockWallet: jest.fn(async () => ({ success: true, address: '0xabc', walletName: 'default' })),
     getCachedBalances: jest.fn(() => null),
     getCachedPrices: jest.fn(() => null),

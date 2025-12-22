@@ -10,15 +10,14 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  ScrollView,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Modal,
   StyleSheet,
   Linking,
   ToastAndroid,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -26,9 +25,11 @@ import { useSendScreenSelector } from '../store';
 import type { Token, GasEstimate } from '../services';
 import { isValidTonAddress } from '../services';
 import * as Clipboard from 'expo-clipboard';
+import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
 
 export default function SendScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const {
     balances,
     network,
@@ -47,11 +48,16 @@ export default function SendScreen() {
   const [showResultModal, setShowResultModal] = useState(false);
   const [txResult, setTxResult] = useState<{ hash?: string; status: 'pending' | 'confirmed' } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   // QR Scanner state
   const [showScanner, setShowScanner] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const [hasScanned, setHasScanned] = useState(false);
+  const [scanStatus, setScanStatus] = useState<'idle' | 'scanned' | 'copied' | 'error'>('idle');
+  const [scanError, setScanError] = useState('');
+  const [scannedAddress, setScannedAddress] = useState('');
+  const [scannedMeta, setScannedMeta] = useState<{ amount?: string; destinationTag?: string } | null>(null);
 
   // XRP destination tag state
   const [destinationTag, setDestinationTag] = useState('');
@@ -62,6 +68,10 @@ export default function SendScreen() {
   const networkConfig = networks[network];
   const isXRPNetwork = networkConfig?.type === 'xrp';
   const isTonNetwork = networkConfig?.type === 'ton';
+  const footerHeight = 132;
+  const footerOffset =
+    keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom, 0) : insets.bottom;
+  const headerPaddingTop = insets.top + 8;
 
   // Set default token on mount
   useEffect(() => {
@@ -71,12 +81,28 @@ export default function SendScreen() {
     }
   }, [balances]);
 
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
   // Estimate gas when amount and recipient are valid
   const estimateGas = useCallback(async () => {
     if (!selectedToken || !recipient || !amount) return;
 
     // Basic validation
     if (recipient.length < 10) return;
+    if (!isValidAmountInput(amount)) return;
     if (parseFloat(amount) <= 0) return;
 
     try {
@@ -103,6 +129,15 @@ export default function SendScreen() {
   };
 
   // Handle QR code scanning
+  const closeScanner = useCallback(() => {
+    setShowScanner(false);
+    setHasScanned(false);
+    setScanStatus('idle');
+    setScanError('');
+    setScannedAddress('');
+    setScannedMeta(null);
+  }, []);
+
   const handleOpenScanner = async () => {
     if (!permission?.granted) {
       const result = await requestPermission();
@@ -115,55 +150,134 @@ export default function SendScreen() {
       }
     }
     setHasScanned(false);
+    setScanStatus('idle');
+    setScanError('');
+    setScannedAddress('');
+    setScannedMeta(null);
     setShowScanner(true);
   };
 
-  const handleBarCodeScanned = ({ data }: { data: string }) => {
-    if (hasScanned) return;
-    setHasScanned(true);
-
-    // Parse the scanned data - could be a plain address or a URI
-    let address = data;
+  const parseScannedData = (data: string) => {
+    let address = data.trim();
     let scannedDestinationTag: string | undefined;
+    let scannedAmount: string | undefined;
 
-    // Handle various URI formats:
-    // - ethereum:0x... 
-    // - bitcoin:bc1...
-    // - solana:...
-    // - ripple:rAddress?dt=123 or xrpl:rAddress?dt=123
     if (data.includes(':')) {
-      const [scheme, rest] = data.split(':');
-      const [addressPart, queryString] = rest.split('?');
+      const schemeEnd = data.indexOf(':');
+      const scheme = data.slice(0, schemeEnd).toLowerCase();
+      let rest = data.slice(schemeEnd + 1);
+
+      if (rest.startsWith('//')) {
+        rest = rest.slice(2);
+      }
+
+      let [addressPart, queryString] = rest.split('?');
+
+      if (scheme === 'ton') {
+        if (addressPart.startsWith('transfer/')) {
+          addressPart = addressPart.slice('transfer/'.length);
+        } else if (addressPart === 'transfer') {
+          addressPart = '';
+        }
+      }
+
       address = addressPart;
 
-      // Parse query parameters for destination tag (XRP)
       if (queryString) {
         const params = new URLSearchParams(queryString);
         const dt = params.get('dt') || params.get('tag') || params.get('destination_tag');
         if (dt) {
           scannedDestinationTag = dt;
         }
-        // Also check for amount
-        const scannedAmount = params.get('amount');
-        if (scannedAmount) {
-          setAmount(scannedAmount);
+        const amountParam = params.get('amount');
+        if (amountParam) {
+          scannedAmount = amountParam;
+        }
+        if (!address) {
+          address =
+            params.get('address') ||
+            params.get('to') ||
+            params.get('recipient') ||
+            '';
         }
       }
     }
 
+    return { address, scannedDestinationTag, scannedAmount };
+  };
+
+  const handleBarCodeScanned = async ({ data }: { data: string }) => {
+    if (hasScanned) return;
+    setHasScanned(true);
+    setScanStatus('idle');
+    setScanError('');
+
+    // Parse the scanned data - could be a plain address or a URI
+    const { address, scannedDestinationTag, scannedAmount } = parseScannedData(data);
+
+    if (!address || address.length < 6) {
+      setScanStatus('error');
+      setScanError('We could not read this QR code. Try again.');
+      setHasScanned(false);
+      return;
+    }
+
+    setScanStatus('scanned');
     setRecipient(address);
+    setScannedAddress(address);
+    setScannedMeta({
+      amount: scannedAmount,
+      destinationTag: scannedDestinationTag,
+    });
+
     if (scannedDestinationTag && isXRPNetwork) {
       setDestinationTag(scannedDestinationTag);
     }
-    setShowScanner(false);
+    if (scannedAmount) {
+      setAmount(normalizeAmountInput(scannedAmount));
+    }
+    try {
+      await Clipboard.setStringAsync(address);
+      setScanStatus('copied');
+    } catch (error) {
+      setScanStatus('error');
+      setScanError('Unable to copy the address. Try again.');
+      setHasScanned(false);
+    }
   };
+
+  const handleScanAgain = () => {
+    setHasScanned(false);
+    setScanStatus('idle');
+    setScanError('');
+    setScannedAddress('');
+    setScannedMeta(null);
+  };
+
+  useEffect(() => {
+    if (scanStatus !== 'copied') return;
+    const timer = setTimeout(() => {
+      closeScanner();
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [scanStatus, closeScanner]);
+
+  useEffect(() => {
+    if (scanStatus !== 'error') return;
+    const timer = setTimeout(() => {
+      if (showScanner) {
+        handleScanAgain();
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [scanStatus, showScanner]);
 
   const handleContinue = () => {
     if (!selectedToken || !recipient || !amount) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
-    if (parseFloat(amount) <= 0) {
+    if (!isValidAmountInput(amount) || parseFloat(amount) <= 0) {
       Alert.alert('Error', 'Please enter a valid amount');
       return;
     }
@@ -224,14 +338,30 @@ export default function SendScreen() {
     }
   };
 
+  const normalizeAmountInput = (value: string) => {
+    let sanitized = value.replace(/[^0-9.]/g, '');
+    const firstDot = sanitized.indexOf('.');
+    if (firstDot !== -1) {
+      sanitized =
+        sanitized.slice(0, firstDot + 1) +
+        sanitized.slice(firstDot + 1).replace(/\./g, '');
+    }
+    if (sanitized.startsWith('.')) {
+      sanitized = `0${sanitized}`;
+    }
+    return sanitized;
+  };
+
+  const isValidAmountInput = (value: string) => /^\d+(\.\d+)?$/.test(value);
+
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        className="flex-1"
-      >
+      <View className="flex-1">
         {/* Header */}
-        <View className="flex-row items-center justify-between px-5 pt-4 pb-4 border-b border-gray-800">
+        <View
+          className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800"
+          style={{ paddingTop: headerPaddingTop }}
+        >
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="close" size={28} color="white" />
           </TouchableOpacity>
@@ -241,7 +371,7 @@ export default function SendScreen() {
 
         {/* Step: Select Token */}
         {step === 'select-token' && (
-          <ScrollView className="flex-1 px-5 pt-4">
+          <KeyboardAwareScrollView className="flex-1 px-5 pt-4">
             <Text className="text-gray-400 mb-4">Select token to send</Text>
             {balances.map((item, index) => (
               <TouchableOpacity
@@ -261,12 +391,15 @@ export default function SendScreen() {
                 </Text>
               </TouchableOpacity>
             ))}
-          </ScrollView>
+          </KeyboardAwareScrollView>
         )}
 
         {/* Step: Enter Details */}
         {step === 'enter-details' && (
-          <ScrollView className="flex-1 px-5 pt-4">
+          <KeyboardAwareScrollView
+            className="flex-1 px-5 pt-4"
+            extraBottomPadding={footerHeight + 16}
+          >
             {/* Selected Token */}
             <TouchableOpacity
               onPress={() => setStep('select-token')}
@@ -306,6 +439,7 @@ export default function SendScreen() {
                 <TouchableOpacity
                   onPress={handleOpenScanner}
                   className="px-4 py-4"
+                  testID="open-qr-scanner"
                 >
                   <Ionicons name="qr-code-outline" size={24} color="#a855f7" />
                 </TouchableOpacity>
@@ -368,7 +502,7 @@ export default function SendScreen() {
               <View className="flex-row bg-gray-900 rounded-xl items-center">
                 <TextInput
                   value={amount}
-                  onChangeText={setAmount}
+                  onChangeText={(value) => setAmount(normalizeAmountInput(value))}
                   placeholder="0.0"
                   placeholderTextColor="#6b7280"
                   keyboardType="decimal-pad"
@@ -378,66 +512,85 @@ export default function SendScreen() {
               </View>
             </View>
 
-            {/* Gas Estimate */}
-            {isEstimating && (
-              <View className="flex-row items-center py-2">
-                <ActivityIndicator size="small" color="#a855f7" />
-                <Text className="text-gray-400 ml-2">Estimating gas...</Text>
-              </View>
-            )}
+          </KeyboardAwareScrollView>
+        )}
 
-            {gasEstimate && (
-              <View className="bg-gray-900 rounded-xl p-4 mb-4">
-                <View className="flex-row justify-between items-center mb-2">
-                  <Text className="text-gray-400 text-sm">Estimated Fee</Text>
-                  {gasEstimate.error && (
-                    <TouchableOpacity onPress={estimateGas}>
-                      <Text className="text-purple-400 text-xs">Retry</Text>
-                    </TouchableOpacity>
-                  )}
+        {step === 'enter-details' && (
+          <View
+            className="absolute left-0 right-0 px-5"
+            style={{ bottom: footerOffset }}
+          >
+            <View className="bg-gray-950/95 border border-gray-800 rounded-2xl p-3">
+              <View className="flex-row items-center justify-between mb-3">
+                <Text className="text-gray-400 text-sm">Estimated Fee</Text>
+                {gasEstimate?.error && (
+                  <TouchableOpacity onPress={estimateGas}>
+                    <Text className="text-purple-400 text-xs">Retry</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {isEstimating && (
+                <View className="flex-row items-center mb-3">
+                  <ActivityIndicator size="small" color="#a855f7" />
+                  <Text className="text-gray-400 ml-2">Estimating gas...</Text>
                 </View>
-                <Text className="text-white font-medium">
-                  {gasEstimate.error
+              )}
+              {!isEstimating && (
+                <Text className="text-white font-medium mb-3">
+                  {gasEstimate?.error
                     ? 'Unable to estimate'
-                    : (isTonNetwork && parseFloat(gasEstimate.estimatedCostNative) === 0)
-                      ? 'Calculating...'
-                      : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`}
+                    : gasEstimate
+                      ? (isTonNetwork && parseFloat(gasEstimate.estimatedCostNative) === 0)
+                        ? 'Calculating...'
+                        : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`
+                      : 'Enter amount to estimate fees'}
                 </Text>
-              </View>
-            )}
-
-            {/* Continue Button */}
-            <TouchableOpacity
-              onPress={handleContinue}
-              disabled={!recipient || !amount}
-              className={`rounded-xl py-4 mt-4 ${
-                recipient && amount ? 'bg-purple-600' : 'bg-gray-800'
-              }`}
-            >
-              <Text className="text-white font-semibold text-center text-lg">
-                Review Transaction
-              </Text>
-            </TouchableOpacity>
-          </ScrollView>
+              )}
+              <TouchableOpacity
+                onPress={handleContinue}
+                disabled={!recipient || !amount}
+                className={`rounded-xl py-4 ${
+                  recipient && amount ? 'bg-purple-600' : 'bg-gray-800'
+                }`}
+              >
+                <Text className="text-white font-semibold text-center text-lg">
+                  Review Transaction
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         )}
 
         {/* Step: Confirm */}
         {step === 'confirm' && (
-          <View className="flex-1 px-5 pt-4">
+          <View className="flex-1 px-5 pt-6">
             <View className="flex-1">
-              {/* Summary Card */}
-              <View className="bg-gray-900 rounded-2xl p-5 mb-4">
-                <Text className="text-gray-400 text-center mb-4">You are sending</Text>
-                <Text className="text-white text-4xl font-bold text-center mb-2">
+              <View className="bg-gray-900 rounded-3xl p-6 mb-5">
+                <Text className="text-gray-400 text-center text-sm mb-3">You are sending</Text>
+                <Text className="text-white text-5xl font-bold text-center">
                   {amount} {selectedToken?.symbol}
                 </Text>
-                <Text className="text-gray-500 text-center">≈ $0.00</Text>
+                <Text className="text-gray-500 text-center mt-2">
+                  Estimated value unavailable
+                </Text>
               </View>
 
-              {/* Details */}
-              <View className="bg-gray-900 rounded-xl p-4">
-                <DetailRow label="To" value={`${recipient.slice(0, 10)}...${recipient.slice(-8)}`} />
-                <DetailRow label="Network" value={networkConfig?.name || network} />
+              <View className="bg-gray-900 rounded-2xl p-5 mb-4">
+                <Text className="text-gray-400 text-xs uppercase tracking-widest mb-3">
+                  Recipient
+                </Text>
+                <Text className="text-white text-lg font-semibold mb-2">
+                  {recipient}
+                </Text>
+                <Text className="text-gray-500 text-sm">
+                  {networkConfig?.name || network}
+                </Text>
+              </View>
+
+              <View className="bg-gray-900 rounded-2xl p-5">
+                <Text className="text-gray-400 text-xs uppercase tracking-widest mb-3">
+                  Details
+                </Text>
                 {isXRPNetwork && destinationTag && (
                   <DetailRow label="Destination Tag" value={destinationTag} />
                 )}
@@ -455,8 +608,7 @@ export default function SendScreen() {
               </View>
             </View>
 
-            {/* Action Buttons */}
-            <View className="flex-row gap-3 pb-4">
+            <View className="flex-row gap-3 pb-5">
               <TouchableOpacity
                 onPress={() => setStep('enter-details')}
                 className="flex-1 bg-gray-800 rounded-xl py-4"
@@ -482,26 +634,36 @@ export default function SendScreen() {
         <Modal
           visible={showScanner}
           animationType="slide"
-          onRequestClose={() => setShowScanner(false)}
+          onRequestClose={closeScanner}
         >
           <SafeAreaView className="flex-1 bg-black">
-            <View className="flex-row items-center justify-between px-5 pt-4 pb-4">
-              <TouchableOpacity onPress={() => setShowScanner(false)}>
-                <Ionicons name="close" size={28} color="white" />
-              </TouchableOpacity>
-              <Text className="text-white text-xl font-bold">Scan QR Code</Text>
-              <View className="w-7" />
-            </View>
-            
             <View className="flex-1 relative">
-              <CameraView
-                style={StyleSheet.absoluteFillObject}
-                facing="back"
-                barcodeScannerSettings={{
-                  barcodeTypes: ['qr'],
-                }}
-                onBarcodeScanned={hasScanned ? undefined : handleBarCodeScanned}
-              />
+              {permission?.granted ? (
+                <CameraView
+                  style={StyleSheet.absoluteFillObject}
+                  facing="back"
+                  barcodeScannerSettings={{
+                    barcodeTypes: ['qr'],
+                  }}
+                  onBarcodeScanned={scanStatus === 'idle' ? handleBarCodeScanned : undefined}
+                />
+              ) : (
+                <View className="flex-1 items-center justify-center px-8">
+                  <Ionicons name="camera-outline" size={48} color="#9ca3af" />
+                  <Text className="text-white text-lg font-semibold mt-4 text-center">
+                    Camera access needed
+                  </Text>
+                  <Text className="text-gray-400 text-center mt-2">
+                    Enable camera access to scan a wallet QR code.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={requestPermission}
+                    className="bg-purple-600 rounded-xl px-5 py-3 mt-6"
+                  >
+                    <Text className="text-white font-semibold">Enable Camera</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
               
               {/* Scanner overlay */}
               <View className="flex-1 items-center justify-center">
@@ -513,15 +675,81 @@ export default function SendScreen() {
                 </View>
               </View>
               
-              <View className="absolute bottom-10 left-0 right-0 px-10">
-                <Text className="text-white text-center text-sm opacity-80">
-                  Point your camera at a wallet address QR code
-                </Text>
+              <View className="absolute bottom-8 left-0 right-0 px-6">
+                <View className="bg-gray-900/90 border border-gray-800 rounded-2xl px-4 py-4">
+                  <View className="flex-row items-center justify-between mb-2">
+                    <Text className="text-white font-semibold">Scan QR code</Text>
+                    <TouchableOpacity
+                      onPress={closeScanner}
+                      className="w-8 h-8 items-center justify-center rounded-full bg-gray-800"
+                      accessibilityLabel="Close scanner"
+                    >
+                      <Ionicons name="close" size={16} color="#d1d5db" />
+                    </TouchableOpacity>
+                  </View>
+                  {scanStatus === 'idle' && (
+                    <>
+                      <Text className="text-white text-center font-semibold">
+                        Align the QR code inside the frame
+                      </Text>
+                      <Text className="text-gray-400 text-center text-xs mt-2">
+                        Scans will auto-fill the recipient address
+                      </Text>
+                    </>
+                  )}
+
+                  {scanStatus === 'scanned' && (
+                    <>
+                      <View className="items-center">
+                        <Ionicons name="checkmark-circle" size={28} color="#34d399" />
+                        <Text className="text-white text-center font-semibold mt-2">
+                          QR code detected
+                        </Text>
+                        <Text className="text-gray-400 text-center text-xs mt-1">
+                          {`${scannedAddress.slice(0, 10)}...${scannedAddress.slice(-6)}`}
+                        </Text>
+                        {scannedMeta?.amount && (
+                          <Text className="text-gray-400 text-center text-xs mt-1">
+                            Amount: {scannedMeta.amount}
+                          </Text>
+                        )}
+                        {scannedMeta?.destinationTag && isXRPNetwork && (
+                          <Text className="text-gray-400 text-center text-xs mt-1">
+                            Destination Tag: {scannedMeta.destinationTag}
+                          </Text>
+                        )}
+                      </View>
+                    </>
+                  )}
+
+                  {scanStatus === 'copied' && (
+                    <View className="items-center">
+                      <Ionicons name="checkmark-done" size={28} color="#34d399" />
+                      <Text className="text-white text-center font-semibold mt-2">
+                        Copied to clipboard
+                      </Text>
+                      <Text className="text-gray-400 text-center text-xs mt-1">
+                        Returning to Send
+                      </Text>
+                    </View>
+                  )}
+
+                  {scanStatus === 'error' && (
+                    <>
+                      <Text className="text-white text-center font-semibold">
+                        Scan failed
+                      </Text>
+                      <Text className="text-gray-400 text-center text-xs mt-2">
+                        {scanError}
+                      </Text>
+                    </>
+                  )}
+                </View>
               </View>
             </View>
           </SafeAreaView>
         </Modal>
-      </KeyboardAvoidingView>
+      </View>
 
       <Modal
         visible={showResultModal}

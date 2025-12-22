@@ -109,40 +109,9 @@ export default function ProfileScreen() {
     ? `${address.slice(0, 10)}...${address.slice(-8)}`
     : '';
 
-  const handleLock = () => {
-    Alert.alert('Lock Wallet', 'Are you sure you want to lock your wallet?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Lock',
-        style: 'destructive',
-        onPress: async () => {
-          await lock();
-          router.replace('/(auth)/unlock');
-        },
-      },
-    ]);
-  };
-
-  const handleClearData = () => {
-    Alert.alert(
-      'Clear All Data',
-      'This will permanently delete ALL wallets and reset the app. Make sure you have backed up your recovery phrases!\n\nThis action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete Everything',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await walletBridge.clearAllData();
-              router.replace('/(auth)/welcome');
-            } catch (error) {
-              Alert.alert('Error', 'Failed to clear data');
-            }
-          },
-        },
-      ]
-    );
+  const handleLock = async () => {
+    await lock();
+    router.replace('/(auth)/unlock');
   };
 
   return (
@@ -230,7 +199,7 @@ export default function ProfileScreen() {
           <SettingsItem
             icon="key-outline"
             title="Change Password"
-            onPress={() => {}}
+            onPress={() => router.push('/change-password' as never)}
           />
         </View>
 
@@ -252,19 +221,7 @@ export default function ProfileScreen() {
           <SettingsItem
             icon="information-circle-outline"
             title="About"
-            onPress={() => {}}
-          />
-        </View>
-
-        {/* Danger Zone */}
-        <View className="px-5 mt-6">
-          <Text className="text-gray-400 text-sm mb-3 uppercase">Danger Zone</Text>
-
-          <SettingsItem
-            icon="trash-outline"
-            title="Clear All Data"
-            subtitle="Delete all wallets and reset app"
-            onPress={handleClearData}
+            onPress={() => router.push('/licenses' as never)}
           />
         </View>
 

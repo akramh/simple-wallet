@@ -9,8 +9,8 @@ import {
   TouchableOpacity,
   Share,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
 import { useClipboard } from '../hooks';
@@ -18,16 +18,22 @@ import { QRCode, NetworkBadge } from '../components';
 
 export default function ReceiveScreen() {
   const router = useRouter();
-  const { address, network, networks } = useWalletStore();
+  const { network: currentNetwork, networks, getAddressForNetwork, address: currentAddress } = useWalletStore();
   const { copy } = useClipboard();
+  const { network: paramNetwork } = useLocalSearchParams<{ network?: string }>();
   const [copied, setCopied] = useState(false);
+  const insets = useSafeAreaInsets();
 
-  const networkConfig = networks[network];
-  const isTestnet = network.includes('test') || network.includes('sepolia');
+  const resolvedNetwork =
+    typeof paramNetwork === 'string' && networks[paramNetwork] ? paramNetwork : currentNetwork;
+  const networkConfig = networks[resolvedNetwork];
+  const isTestnet = resolvedNetwork.includes('test') || resolvedNetwork.includes('sepolia');
+  const resolvedAddress =
+    (resolvedNetwork ? getAddressForNetwork(resolvedNetwork) : null) || currentAddress;
 
   const handleCopy = async () => {
-    if (!address || copied) return;
-    const success = await copy(address);
+    if (!resolvedAddress || copied) return;
+    const success = await copy(resolvedAddress);
     if (success) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -35,10 +41,10 @@ export default function ReceiveScreen() {
   };
 
   const handleShare = async () => {
-    if (!address) return;
+    if (!resolvedAddress) return;
     try {
       await Share.share({
-        message: address,
+        message: resolvedAddress,
         title: 'My Wallet Address',
       });
     } catch (error) {
@@ -49,7 +55,10 @@ export default function ReceiveScreen() {
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
-      <View className="flex-row items-center justify-between px-5 pt-4 pb-4 border-b border-gray-800">
+      <View
+        className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800"
+        style={{ paddingTop: insets.top + 8 }}
+      >
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="close" size={28} color="white" />
         </TouchableOpacity>
@@ -61,15 +70,15 @@ export default function ReceiveScreen() {
         {/* Network Badge */}
         <View className="mb-6">
           <NetworkBadge
-            name={networkConfig?.name || network}
+            name={networkConfig?.name || resolvedNetwork}
             isTestnet={isTestnet}
           />
         </View>
 
         {/* QR Code */}
-        {address && (
+        {resolvedAddress && (
           <View className="mb-6">
-            <QRCode value={address} size={240} />
+            <QRCode value={resolvedAddress} size={240} />
           </View>
         )}
 
@@ -86,7 +95,7 @@ export default function ReceiveScreen() {
         >
           <Text className="text-gray-400 text-xs mb-1">Your Address</Text>
           <Text className="text-white font-mono text-sm" numberOfLines={1}>
-            {address}
+            {resolvedAddress}
           </Text>
         </TouchableOpacity>
 
@@ -123,7 +132,7 @@ export default function ReceiveScreen() {
           <Ionicons name="warning-outline" size={20} color="#eab308" />
           <Text className="text-yellow-500/80 text-sm ml-3 flex-1">
             Only send{' '}
-            <Text className="font-medium">{networkConfig?.name || network}</Text> assets to this
+            <Text className="font-medium">{networkConfig?.name || resolvedNetwork}</Text> assets to this
             address. Sending other assets may result in permanent loss.
           </Text>
         </View>

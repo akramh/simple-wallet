@@ -6,13 +6,14 @@
  * - Refresh in the background when data is stale
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePortfolioScreenSelector } from '../../store';
 import { getTokenIcon } from '../../utils/tokenIcons';
+import { RefreshPill } from '../../components';
 
 export default function PortfolioScreen() {
   const router = useRouter();
@@ -30,6 +31,7 @@ export default function PortfolioScreen() {
     hydrateAllNetworksFromCache,
     networks,
   } = usePortfolioScreenSelector();
+  const isNavigatingRef = useRef(false);
 
   useEffect(() => {
     // Hydrate cached snapshot immediately on tab visit, then revalidate silently if stale.
@@ -49,18 +51,7 @@ export default function PortfolioScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      {/* Floating Refresh Indicator */}
-      {isRefreshingAllNetworks && (
-        <View 
-          style={{ top: insets.top + 8 }}
-          className="absolute left-0 right-0 z-50 items-center"
-        >
-          <View className="bg-gray-900/90 px-4 py-2 rounded-full border border-purple-500/30 flex-row items-center shadow-2xl">
-            <ActivityIndicator size="small" color="#a855f7" />
-            <Text className="text-white text-xs font-medium ml-2">Refreshing Portfolio</Text>
-          </View>
-        </View>
-      )}
+      <RefreshPill isRefreshing={isRefreshingAllNetworks} label="Refreshing Portfolio" />
 
       {/* Header */}
       <View className="px-5 pt-4 pb-6">
@@ -131,6 +122,8 @@ export default function PortfolioScreen() {
                       const isNative = item.token.address === 'native' || !item.token.address;
 
                       const handlePress = () => {
+                        if (isNavigatingRef.current) return;
+                        isNavigatingRef.current = true;
                         router.push({
                           pathname: '/token-detail',
                           params: {
@@ -143,6 +136,9 @@ export default function PortfolioScreen() {
                             decimals: item.token.decimals?.toString() || '18',
                           },
                         });
+                        setTimeout(() => {
+                          isNavigatingRef.current = false;
+                        }, 600);
                       };
 
                       return (

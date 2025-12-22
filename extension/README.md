@@ -1,11 +1,20 @@
-# Simple Crypto Wallet - Chrome Extension
+# Simple Crypto Wallet - Browser Extension
 
-A browser extension for Ethereum and multi-chain wallet management.
+A Chrome extension for multi-chain cryptocurrency wallet management with dApp integration. Supports Ethereum (EVM chains), Bitcoin, Solana, XRP, and TON.
 
-## Building the Extension
+## Quick Start
 
-1. Install dependencies:
+### Prerequisites
+
+- Node.js 18+
+- Chrome browser
+
+### Installation
+
+1. Clone the repository and install dependencies:
 ```bash
+git clone <repository-url>
+cd simple-wallet
 npm install
 ```
 
@@ -14,23 +23,22 @@ npm install
 npm run build:extension
 ```
 
-This will create a `dist-extension` folder with the compiled extension.
+This creates a `dist-extension` folder with the compiled extension.
 
-## Loading in Chrome
+3. Load in Chrome:
+   - Open Chrome and navigate to `chrome://extensions/`
+   - Enable "Developer mode" (top right toggle)
+   - Click "Load unpacked"
+   - Select the `dist-extension` folder
 
-1. Open Chrome and navigate to `chrome://extensions/`
-2. Enable "Developer mode" in the top right
-3. Click "Load unpacked"
-4. Select the `dist-extension` folder
-
-## Development
+### Development Mode
 
 For active development with auto-rebuild:
 ```bash
 npm run watch:extension
 ```
 
-This will watch for changes and rebuild automatically.
+This watches for changes and rebuilds automatically. Reload the extension in Chrome after each build.
 
 ## Features
 
@@ -41,16 +49,11 @@ This will watch for changes and rebuild automatically.
 - Multi-account support (HD wallet)
 
 ### Multi-Chain Support
-- Ethereum Mainnet
-- Sepolia Testnet
-- Polygon
-- Base
-- Arbitrum
-- Optimism
-- Bitcoin (mainnet/testnet)
-- Solana (mainnet/devnet)
-- XRP Ledger (mainnet/testnet)
-- And more...
+- **Ethereum & EVM Chains** - Mainnet, Sepolia, Polygon, Base, Arbitrum, Optimism, Avalanche, BSC, Linea
+- **Bitcoin** - Mainnet and Testnet
+- **Solana** - Mainnet and Devnet
+- **XRP** - XRP Ledger Mainnet and Testnet
+- **TON** - TON blockchain Mainnet and Testnet
 
 ### Token Management
 - Native token (ETH, MATIC, etc.) balance
@@ -66,12 +69,15 @@ This will watch for changes and rebuild automatically.
 - Gas estimation
 
 ### dApp Integration (EIP-1193)
-- `window.ethereum` provider injection
-- `eth_requestAccounts` - Connect wallet
+The extension provides a `window.ethereum` provider for dApp compatibility:
+
+- `eth_requestAccounts` - Connect wallet to dApp
 - `eth_accounts` - Get connected accounts
 - `eth_chainId` - Get current chain ID
 - `eth_sendTransaction` - Send transactions (with approval UI)
-- More JSON-RPC methods coming soon
+- `personal_sign` - Sign messages
+- `eth_sign_typed_data_v4` - Sign typed data
+- More methods in development
 
 ### Security
 - Auto-lock after 15 minutes of inactivity
@@ -109,28 +115,40 @@ extension/
 5. **Content Script → Provider**: Content script posts response back
 6. **Provider → dApp**: Provider resolves promise with result
 
-## TODO
+## Security Features
 
-- [ ] Add placeholder icons (16x16, 32x32, 48x48, 128x128)
-- [ ] Implement transaction approval popup
-- [ ] Add signing methods (personal_sign, eth_sign, etc.)
-- [ ] Implement wallet_switchEthereumChain
-- [ ] Implement wallet_addEthereumChain
-- [ ] Add transaction history
-- [ ] Add QR code for receive address
-- [ ] Add custom RPC endpoints
-- [ ] Improve error handling
-- [ ] Add tests for UI components
+- **AES-256-GCM Encryption** - Military-grade encryption for wallet data
+- **PBKDF2 Key Derivation** - 100,000 iterations for password hashing
+- **Auto-lock** - Automatically locks after 15 minutes of inactivity
+- **WebCrypto** - Browser-safe cryptography using asmcrypto.js
+- **Chrome Storage** - Secure persistent storage via chrome.storage.local
 
-## Security Notes
+## Integration with Core SDK
 
-This is a demo wallet extension. For production use:
-- Add rate limiting for failed unlock attempts
-- Implement phishing detection
-- Add hardware wallet support
-- Perform security audit
-- Add additional layers of encryption
-- Implement secure key derivation
+The extension uses the shared core SDK (`../src/`) via platform adapters:
+
+- **ChromeStorageAdapter** - Implements `StorageAdapter` for chrome.storage.local
+- **WebCryptoAdapter** - Implements `CryptoAdapter` for browser-safe crypto
+- **Service Worker** - Acts as central message handler and state manager
+
+This architecture enables ~90% code reuse with the CLI and mobile app.
+
+## Security Best Practices
+
+**IMPORTANT:** This is a development wallet. For production use:
+- Use strong, unique passwords (12+ characters)
+- Back up your recovery phrase offline
+- Never share private keys or mnemonics
+- Test on testnets before using mainnet
+- Verify addresses before sending transactions
+
+**For Production Deployment:**
+- Implement rate limiting for failed unlock attempts
+- Add phishing detection
+- Consider hardware wallet integration
+- Perform professional security audit
+- Implement CSP (Content Security Policy)
+- Add transaction simulation before signing
 
 ## License
 

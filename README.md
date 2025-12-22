@@ -1,10 +1,21 @@
 # Simple Crypto Wallet
 
-A multi-chain cryptocurrency wallet with CLI and Chrome extension interfaces, supporting Ethereum (EVM chains), Bitcoin, and Solana. Written in TypeScript with full type safety. Also provides a programmatic SDK for integration into browser extensions, mobile apps, and other applications.
+A multi-platform cryptocurrency wallet supporting Ethereum (EVM chains), Bitcoin, Solana, XRP, and TON. Built with TypeScript and a shared-core architecture, providing CLI, browser extension, and mobile app interfaces.
 
-## Plans / design docs
+## Platform Support
 
-Plan-style docs (feature plans, rollouts, design notes) live in `plans/`.
+- **CLI** - Node.js command-line interface for terminal users
+- **Browser Extension** - Chrome extension with React UI and dApp integration
+- **Mobile App** - React Native app built with Expo for iOS and Android
+- **SDK** - Programmatic API for custom integrations
+
+## Documentation
+
+- **[Architecture Guide](./ARCHITECTURE.md)** - Complete architectural overview and design patterns
+- **[API Reference](./API_REFERENCE.md)** - Comprehensive API documentation with examples
+- **[Extension Setup](./extension/README.md)** - Browser extension installation and features
+- **[Mobile App Guide](./mobile-wallet/README.md)** - Mobile app setup and architecture
+- **[Design Plans](./plans/)** - Feature plans, rollouts, and design notes
 
 ## Features
 
@@ -12,6 +23,8 @@ Plan-style docs (feature plans, rollouts, design notes) live in `plans/`.
 - **Ethereum & EVM Chains** - Mainnet, Sepolia, Polygon, Base, Arbitrum, Optimism, Avalanche, BSC, Linea
 - **Bitcoin** - Mainnet and Testnet support
 - **Solana** - Mainnet and Devnet support
+- **XRP** - XRP Ledger Mainnet and Testnet
+- **TON** - TON blockchain Mainnet and Testnet
 
 ### Core Wallet Features
 - Create new wallet with 12-word BIP-39 mnemonic phrase
@@ -37,6 +50,16 @@ Plan-style docs (feature plans, rollouts, design notes) live in `plans/`.
 - Send SOL transactions
 - Transaction history via Solscan API
 
+### XRP Features
+- XRP address generation and balance checking
+- Send XRP transactions
+- XRP Ledger integration
+
+### TON Features
+- TON address generation and balance checking
+- Send TON transactions
+- TON blockchain integration
+
 ### Additional Features
 - QR code display for receiving
 - Block explorer integration (Etherscan, Solscan, Mempool.space, etc.)
@@ -52,6 +75,8 @@ Plan-style docs (feature plans, rollouts, design notes) live in `plans/`.
 | Sidechains | Polygon, Avalanche, BSC |
 | Bitcoin | Mainnet, Testnet |
 | Solana | Mainnet, Devnet |
+| XRP | Mainnet, Testnet |
+| TON | Mainnet, Testnet |
 
 ## Installation
 
@@ -107,7 +132,7 @@ npm test
 
 These tests run offline with mocked providers/contracts and stubbed prompts (no real RPC calls). The CLI is suppressed when `NODE_ENV=test`.
 
-**19 test files covering:**
+**27 test files covering:**
 - Wallet creation and import
 - Crypto utilities (password validation, encryption/decryption)
 - Balance checking and portfolio aggregation
@@ -115,6 +140,8 @@ These tests run offline with mocked providers/contracts and stubbed prompts (no 
 - Token metadata caching
 - Bitcoin functionality (address, explorer, transactions)
 - Solana functionality (address, explorer, transactions)
+- XRP functionality
+- TON functionality
 - Chrome storage adapter
 - Price service
 - Transaction history

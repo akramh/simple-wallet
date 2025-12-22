@@ -5,8 +5,10 @@
  */
 import React, { useState } from 'react';
 import RevealSecretModal from './RevealSecretModal';
+import ChangePasswordModal from './ChangePasswordModal';
 import mnemonicIcon from '../../assets/icons/mnemonic.svg';
 import keyIcon from '../../assets/icons/key.svg';
+import lockIcon from '../../assets/icons/lock.svg';
 import { applyTheme, getStoredTheme, setStoredTheme, type UiTheme } from '../theme';
 
 interface Props {
@@ -19,6 +21,7 @@ interface Props {
 
 function SettingsView({ onClose }: Props) {
   const [showSecretModal, setShowSecretModal] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [secretType, setSecretType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
   const [uiTheme, setUiTheme] = useState<UiTheme>('light');
 
@@ -147,6 +150,35 @@ function SettingsView({ onClose }: Props) {
               </div>
               <span style={{ color: 'var(--text-tertiary)', fontSize: '18px' }}>›</span>
             </button>
+
+            <button
+              onClick={() => setShowChangePassword(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                width: '100%',
+                padding: '14px 16px',
+                background: 'transparent',
+                border: 'none',
+                borderTop: '1px solid var(--border)',
+                cursor: 'pointer',
+                textAlign: 'left'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <img src={lockIcon} alt="" className="settings-icon" />
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    Change Password
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    Update your wallet password
+                  </div>
+                </div>
+              </div>
+              <span style={{ color: 'var(--text-tertiary)', fontSize: '18px' }}>›</span>
+            </button>
           </div>
         </div>
 
@@ -166,13 +198,43 @@ function SettingsView({ onClose }: Props) {
           <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
             About
           </div>
-          
-          <div className="wallet-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px' }}>Version</div>
-              <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>Simple Wallet Extension</div>
+
+          <div className="wallet-card" style={{ padding: '0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px' }}>Version</div>
+                <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>Simple Wallet Extension</div>
+              </div>
+              <div style={{ fontSize: '14px', color: 'var(--text-tertiary)' }}>1.0.0</div>
             </div>
-            <div style={{ fontSize: '14px', color: 'var(--text-tertiary)' }}>1.0.0</div>
+
+            <button
+              onClick={() => {
+                const url = chrome.runtime.getURL('licenses.html');
+                chrome.tabs.create({ url });
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                width: '100%',
+                padding: '14px 16px',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                textAlign: 'left'
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                  Open Source Licenses
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  Third-party software attributions
+                </div>
+              </div>
+              <span style={{ color: 'var(--text-tertiary)', fontSize: '18px' }}>›</span>
+            </button>
           </div>
         </div>
       </div>
@@ -182,6 +244,11 @@ function SettingsView({ onClose }: Props) {
         isOpen={showSecretModal}
         onClose={() => setShowSecretModal(false)}
         secretType={secretType}
+      />
+
+      <ChangePasswordModal
+        isOpen={showChangePassword}
+        onClose={() => setShowChangePassword(false)}
       />
     </div>
   );

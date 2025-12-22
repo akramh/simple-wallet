@@ -347,6 +347,59 @@ export class Wallet {
   }
 
   /**
+   * Change the master password for a stored wallet.
+   *
+   * Re-encrypts the mnemonic with the new password and updates wallets.json.
+   */
+  changePassword(walletName: string, currentPassword: string, newPassword: string): void {
+    if (!walletName) {
+      throw new Error('Wallet name is required');
+    }
+
+    const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
+    const walletData = wallets[walletName];
+    if (!walletData) {
+      throw new Error('Wallet not found');
+    }
+
+    let mnemonic: string;
+    try {
+      mnemonic = decryptMnemonic(
+        walletData.encryptedMnemonic,
+        currentPassword,
+        walletData.salt,
+        walletData.iv,
+        walletData.authTag
+      );
+    } catch (error) {
+      throw new Error('Incorrect password');
+    }
+
+    if (!validateMnemonic(mnemonic)) {
+      throw new Error('Incorrect password');
+    }
+
+    const { encrypted, salt, iv, authTag } = encryptMnemonic(mnemonic, newPassword);
+
+    wallets[walletName] = {
+      ...walletData,
+      encryptedMnemonic: encrypted,
+      salt,
+      iv,
+      authTag,
+    };
+
+    this.storage.writeJSON('wallets.json', wallets);
+
+    if (this.mnemonic === mnemonic) {
+      this.encryptedMnemonic = encrypted;
+      this.salt = salt;
+      this.iv = iv;
+      this.authTag = authTag;
+    }
+  }
+
+  /**
    * Load wallet synchronously.
    * @deprecated Use loadWalletAsync() for better performance in React Native
    */

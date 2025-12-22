@@ -69,12 +69,12 @@ export default function WalletManageScreen() {
 
   const handleCreateNew = () => {
     setShowAddWalletModal(false);
-    router.push('/(auth)/create');
+    router.push('/(setup)/create');
   };
 
   const handleImportExisting = () => {
     setShowAddWalletModal(false);
-    router.push('/(auth)/import');
+    router.push('/(setup)/import');
   };
 
   return (

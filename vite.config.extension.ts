@@ -24,6 +24,10 @@ export default defineConfig({
         {
           src: 'config.json',
           dest: '.'
+        },
+        {
+          src: 'extension/public/licenses.html',
+          dest: '.'
         }
       ]
     }),

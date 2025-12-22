@@ -14,16 +14,7 @@ export default function AuthLayout() {
       }}
     >
       <Stack.Screen name="welcome" />
-      <Stack.Screen name="create" />
-      <Stack.Screen name="import" />
       <Stack.Screen name="unlock" />
-      <Stack.Screen
-        name="backup"
-        options={{
-          presentation: 'modal',
-          animation: 'slide_from_bottom',
-        }}
-      />
     </Stack>
   );
 }

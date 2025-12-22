@@ -17,7 +17,8 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.simplewallet.app",
+      "bundleIdentifier": "com.akram.monkey",
+      "buildNumber": "1.0.3",
       "infoPlist": {
         "NSCameraUsageDescription": "Simple Wallet needs camera access to scan QR codes for receiving crypto payments.",
         "NSFaceIDUsageDescription": "Simple Wallet uses Face ID to securely unlock your wallet."

@@ -38,6 +38,7 @@ jest.mock('../services', () => {
       })),
       getAllWallets: jest.fn(async () => ({ default: { address: 'EQTestAddress123' } })),
       lockWallet: jest.fn(async () => {}),
+      onLock: jest.fn(() => () => {}),
       unlockWallet: jest.fn(async () => ({
         success: true,
         address: 'EQTestAddress123',
@@ -87,6 +88,7 @@ jest.mock('../services', () => {
 });
 
 import { useWalletStore } from '../store/walletStore';
+// @ts-ignore - Mock export
 import { _mockSendTransaction } from '../services';
 
 // Get the mock for assertions

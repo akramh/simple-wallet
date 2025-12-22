@@ -22,7 +22,7 @@
  * - GET_NETWORKS, GET_SHOW_TESTNETS, SET_SHOW_TESTNETS
  * - ETH_ACCOUNTS, ETH_REQUEST_ACCOUNTS, ETH_SEND_TRANSACTION
  * - PERSONAL_SIGN, ETH_SIGN_TYPED_DATA_V4, PERSONAL_EC_RECOVER
- * - GET_SECRET_PHRASE, GET_PRIVATE_KEY
+ * - GET_SECRET_PHRASE, GET_PRIVATE_KEY, CHANGE_PASSWORD
  * 
  * @security
  * - Session password stored in memory only
@@ -1991,6 +1991,20 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         return { privateKey };
       } catch (err: any) {
         return { error: err.message || 'Failed to retrieve private key' };
+      }
+
+    case 'CHANGE_PASSWORD':
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      if (!payload?.currentPassword || !payload?.newPassword) {
+        throw new Error('Password required');
+      }
+      try {
+        walletService!.changePassword(currentWalletName, payload.currentPassword, payload.newPassword);
+        setSessionPassword(payload.newPassword);
+        return { success: true };
+      } catch (err: any) {
+        return { error: err.message || 'Failed to change password' };
       }
 
     case 'GET_ACCOUNTS':

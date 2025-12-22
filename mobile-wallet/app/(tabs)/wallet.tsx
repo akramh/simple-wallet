@@ -2,7 +2,7 @@
  * @fileoverview Main wallet screen - shows balances and quick actions.
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import { useWalletScreenSelector } from '../../store';
 import { useClipboard } from '../../hooks';
 import { useToast } from '../../contexts';
 import { getTokenIcon } from '../../utils/tokenIcons';
+import { RefreshPill } from '../../components';
 
 export default function WalletScreen() {
   const router = useRouter();
@@ -38,6 +39,7 @@ export default function WalletScreen() {
     currentAccountIndex,
     currentWalletName,
   } = useWalletScreenSelector();
+  const isNavigatingRef = useRef(false);
   const { copy } = useClipboard();
   const { showToast } = useToast();
 
@@ -69,18 +71,8 @@ export default function WalletScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      {/* Floating Refresh Indicator */}
-      {isRefreshingBalances && (
-        <View 
-          style={{ top: insets.top + 8 }}
-          className="absolute left-0 right-0 z-50 items-center"
-        >
-          <View className="bg-gray-900/90 px-4 py-2 rounded-full border border-purple-500/30 flex-row items-center shadow-2xl">
-            <ActivityIndicator size="small" color="#a855f7" />
-            <Text className="text-white text-xs font-medium ml-2">Refreshing balances...</Text>
-          </View>
-        </View>
-      )}
+      <RefreshPill isRefreshing={isRefreshingBalances} label="Refreshing balances..." />
+
 
       <FlatList
         data={balances.filter(b => b.isVisible !== false)}
@@ -92,6 +84,8 @@ export default function WalletScreen() {
           const isNative = item.token.address === 'native' || !item.token.address;
 
           const handleTokenPress = () => {
+            if (isNavigatingRef.current) return;
+            isNavigatingRef.current = true;
             router.push({
               pathname: '/token-detail',
               params: {
@@ -104,6 +98,9 @@ export default function WalletScreen() {
                 decimals: item.token.decimals?.toString() || '18',
               },
             });
+            setTimeout(() => {
+              isNavigatingRef.current = false;
+            }, 600);
           };
 
           return (
@@ -167,7 +164,7 @@ export default function WalletScreen() {
             </View>
 
             {/* Quick Actions */}
-            <View className="flex-row justify-center gap-4 px-5 mb-6">
+            <View className="flex-row justify-center gap-6 px-5 mb-6">
               <QuickActionButton
                 icon="arrow-up"
                 label="Send"
@@ -245,10 +242,10 @@ function QuickActionButton({
       disabled={disabled}
       className={`items-center ${disabled ? 'opacity-40' : ''}`}
     >
-      <View className="w-14 h-14 rounded-full bg-purple-600 items-center justify-center mb-2">
-        <Ionicons name={icon} size={24} color="white" />
+      <View className="w-16 h-16 rounded-full bg-purple-600 items-center justify-center mb-3">
+        <Ionicons name={icon} size={26} color="white" />
       </View>
-      <Text className="text-gray-300 text-xs">{label}</Text>
+      <Text className="text-gray-300 text-sm">{label}</Text>
     </TouchableOpacity>
   );
 }

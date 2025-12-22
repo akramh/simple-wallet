@@ -11,7 +11,7 @@
  */
 
 import { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -32,12 +32,48 @@ const queryClient = new QueryClient({
 });
 
 export default function RootLayout() {
-  const { initialize, isInitialized } = useWalletStore();
+  const router = useRouter();
+  const segments = useSegments();
+  const { initialize, isInitialized, hasWallet, isUnlocked, pendingBackup } = useWalletStore();
 
   useEffect(() => {
     // Initialize wallet on app start
     initialize();
   }, [initialize]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    const inAuthGroup = segments[0] === '(auth)';
+    const inSetupGroup = segments[0] === '(setup)';
+    const route = segments[1];
+    const isBackupScreen = inSetupGroup && route === 'backup';
+    const isUnlockScreen = inAuthGroup && route === 'unlock';
+
+    if (pendingBackup) {
+      if (!isUnlocked && !isUnlockScreen) {
+        router.replace('/(auth)/unlock');
+        return;
+      }
+      if (isUnlocked && !isBackupScreen) {
+        router.replace('/(setup)/backup');
+      }
+      return;
+    }
+
+    if (!hasWallet && !inAuthGroup && !inSetupGroup) {
+      router.replace('/(auth)/welcome');
+      return;
+    }
+
+    if (hasWallet && !isUnlocked && !inAuthGroup) {
+      router.replace('/(auth)/unlock');
+      return;
+    }
+
+    if (hasWallet && isUnlocked && inAuthGroup) {
+      router.replace('/(tabs)/wallet');
+    }
+  }, [isInitialized, hasWallet, isUnlocked, pendingBackup, router, segments]);
 
   return (
     <SafeAreaProvider>
@@ -55,6 +91,13 @@ export default function RootLayout() {
               {/* Auth flow screens */}
               <Stack.Screen
                 name="(auth)"
+                options={{
+                  headerShown: false,
+                }}
+              />
+              {/* Wallet setup flow */}
+              <Stack.Screen
+                name="(setup)"
                 options={{
                   headerShown: false,
                 }}
