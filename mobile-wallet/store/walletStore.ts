@@ -32,6 +32,7 @@ import {
   NetworkConfig,
   SendTransactionResult,
 } from '../services';
+import { batchUpdates } from '../utils';
 
 const ENABLED_NETWORKS_KEY = 'enabledNetworks';
 const PENDING_BACKUP_KEY = 'wallet_pending_backup';
@@ -136,10 +137,28 @@ interface WalletStore {
 
   // Backup state
   setPendingBackup: (pending: boolean) => Promise<void>;
-  /** Refresh portfolio balances for the active network/account. */
-  refreshBalances: (options?: { force?: boolean }) => Promise<void>;
-  /** Refresh fiat prices and derived portfolio totals. */
-  refreshPrices: () => Promise<void>;
+  /**
+   * Refresh portfolio balances for the active network/account.
+   *
+   * @param options.force - Force refresh bypassing cache TTL
+   * @param options.silent - When true, does not set isRefreshingBalances (background refresh)
+   */
+  refreshBalances: (options?: { force?: boolean; silent?: boolean }) => Promise<void>;
+  /**
+   * Refresh fiat prices and derived portfolio totals.
+   *
+   * @param options.silent - When true, does not set isLoadingPrices (background refresh)
+   */
+  refreshPrices: (options?: { silent?: boolean }) => Promise<void>;
+  /**
+   * Refresh both balances and prices with optimized batching.
+   * Fetches balances first (required for price calculation), then prices.
+   * All state updates are batched to minimize re-renders.
+   *
+   * @param options.force - Force refresh bypassing cache TTL
+   * @param options.silent - When true, does not show loading indicators (background refresh)
+   */
+  refreshBalancesAndPrices: (options?: { force?: boolean; silent?: boolean }) => Promise<void>;
   /** Refresh aggregated holdings across enabled networks. */
   refreshAllNetworks: (options?: { silent?: boolean; force?: boolean }) => Promise<void>;
   /**
@@ -364,8 +383,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         pendingBackup: true,
       });
 
-      // Trigger initial balance fetch
-      get().refreshBalances();
+      // Trigger initial balance fetch (silent - don't block UI)
+      get().refreshBalances({ silent: true });
 
       return { mnemonic: result.mnemonic!, address: result.address };
     } catch (error) {
@@ -396,7 +415,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         lastWalletName: name,
       });
 
-      get().refreshBalances();
+      get().refreshBalances({ silent: true });
 
       return { address: result.address };
     } catch (error) {
@@ -452,8 +471,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         });
       }
 
-      // Refresh balances (don't await - can run in background)
-      get().refreshBalances();
+      // Refresh balances (don't await - can run in background, silently)
+      get().refreshBalances({ silent: true });
       // Hydrate cross-network portfolio for Portfolio tab (SWR) and refresh in background when needed.
       get().hydrateAllNetworksFromCache();
     } catch (error) {
@@ -497,23 +516,30 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   // ============================================================================
 
   refreshBalances: async (options) => {
+    const { force = false, silent = false } = options ?? {};
     if (get().isRefreshingBalances) return;
 
     try {
-      set({ isRefreshingBalances: true });
+      // Only show loading indicator if not silent (user-initiated refresh)
+      if (!silent) {
+        set({ isRefreshingBalances: true });
+      }
 
       console.log('[WalletStore] refreshBalances - calling walletBridge...');
-      const balances = await walletBridge.refreshBalances(options);
+      const balances = await walletBridge.refreshBalances({ force });
       console.log('[WalletStore] refreshBalances - received balances:', JSON.stringify(balances, null, 2));
 
-      set({
-        balances,
-        isRefreshingBalances: false,
-        balancesLastUpdated: balances[0]?.lastUpdated ?? Date.now(),
+      // Batch state update
+      batchUpdates(() => {
+        set({
+          balances,
+          isRefreshingBalances: false,
+          balancesLastUpdated: balances[0]?.lastUpdated ?? Date.now(),
+        });
       });
 
-      // Also refresh prices
-      get().refreshPrices();
+      // Also refresh prices (silently when this refresh was silent)
+      get().refreshPrices({ silent });
     } catch (error) {
       console.error('[WalletStore] Refresh balances failed:', error);
       set({
@@ -527,23 +553,72 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   // Prices
   // ============================================================================
 
-  refreshPrices: async () => {
+  refreshPrices: async (options) => {
+    const { silent = false } = options ?? {};
     if (get().isLoadingPrices) return;
 
     try {
-      set({ isLoadingPrices: true });
+      // Only show loading indicator if not silent (user-initiated refresh)
+      if (!silent) {
+        set({ isLoadingPrices: true });
+      }
 
       const priceData = await walletBridge.getTokenPrices(get().balances);
 
-      set({
-        prices: priceData.prices,
-        totalValue: priceData.totalValue,
-        formattedTotal: priceData.formattedTotal,
-        isLoadingPrices: false,
+      // Batch state updates to reduce re-renders
+      batchUpdates(() => {
+        set({
+          prices: priceData.prices,
+          totalValue: priceData.totalValue,
+          formattedTotal: priceData.formattedTotal,
+          isLoadingPrices: false,
+        });
       });
     } catch (error) {
       console.error('[WalletStore] Refresh prices failed:', error);
       set({ isLoadingPrices: false });
+    }
+  },
+
+  refreshBalancesAndPrices: async (options) => {
+    const { force = false, silent = false } = options ?? {};
+
+    // Skip if already refreshing
+    if (get().isRefreshingBalances || get().isLoadingPrices) return;
+
+    try {
+      // Only show loading indicators if not silent
+      if (!silent) {
+        set({ isRefreshingBalances: true, isLoadingPrices: true });
+      }
+
+      // Fetch balances first (prices depend on balance data)
+      console.log('[WalletStore] refreshBalancesAndPrices - fetching balances...');
+      const balances = await walletBridge.refreshBalances({ force });
+
+      // Then fetch prices based on the new balances
+      console.log('[WalletStore] refreshBalancesAndPrices - fetching prices...');
+      const priceData = await walletBridge.getTokenPrices(balances);
+
+      // Batch all state updates together for minimal re-renders
+      batchUpdates(() => {
+        set({
+          balances,
+          balancesLastUpdated: balances[0]?.lastUpdated ?? Date.now(),
+          isRefreshingBalances: false,
+          prices: priceData.prices,
+          totalValue: priceData.totalValue,
+          formattedTotal: priceData.formattedTotal,
+          isLoadingPrices: false,
+        });
+      });
+    } catch (error) {
+      console.error('[WalletStore] refreshBalancesAndPrices failed:', error);
+      set({
+        isRefreshingBalances: false,
+        isLoadingPrices: false,
+        error: error instanceof Error ? error.message : 'Failed to refresh data',
+      });
     }
   },
 
@@ -557,14 +632,17 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         set({ isRefreshingAllNetworks: true });
       }
       const result = await walletBridge.getAllNetworkHoldings({ enabledNetworks: enabled, ttlMs: 30_000, force });
-      set({
-        allNetworkHoldings: result.holdings,
-        allNetworkTotals: result.totalsByNetwork,
-        allNetworksLastUpdated: result.fetchedAt,
+      // Batch state updates to reduce re-renders
+      batchUpdates(() => {
+        set({
+          allNetworkHoldings: result.holdings,
+          allNetworkTotals: result.totalsByNetwork,
+          allNetworksLastUpdated: result.fetchedAt,
+          isRefreshingAllNetworks: false,
+        });
       });
     } catch (error) {
       console.error('[WalletStore] refreshAllNetworks failed:', error);
-    } finally {
       if (!silent) {
         set({ isRefreshingAllNetworks: false });
       }
@@ -689,7 +767,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         transactionsLastUpdated: null,
       });
 
-      get().refreshBalances();
+      get().refreshBalances({ silent: true });
       get().loadTransactions();
       get().hydrateAllNetworksFromCache();
     } catch (error) {
@@ -733,8 +811,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     try {
       const result = await walletBridge.sendTransaction(token, to, amount, destinationTag, comment);
 
-      // Refresh balances after successful transaction
-      setTimeout(() => get().refreshBalances(), 2000);
+      // Refresh balances after successful transaction (silent background refresh)
+      setTimeout(() => get().refreshBalances({ silent: true }), 2000);
       
       // Refresh transactions after a short delay to include the new one
       setTimeout(() => get().loadTransactions(), 5000);
@@ -868,8 +946,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         transactionsLastUpdated: null,
       });
 
-      // Refresh data (don't await - can run in background)
-      get().refreshBalances();
+      // Refresh data (don't await - can run in background, silently)
+      get().refreshBalances({ silent: true });
       get().loadTransactions();
       get().hydrateAllNetworksFromCache();
     } catch (error) {
@@ -980,8 +1058,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         transactionsLastUpdated: null,
       });
 
-      // Refresh balances and transactions for new account
-      get().refreshBalances();
+      // Refresh balances and transactions for new account (silent background refresh)
+      get().refreshBalances({ silent: true });
       get().loadTransactions();
       get().hydrateAllNetworksFromCache();
     } catch (error) {

@@ -19,7 +19,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useWalletScreenSelector } from '../../store';
 import { useClipboard } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
-import { RefreshPill } from '../../components';
 
 export default function WalletScreen() {
   const router = useRouter();
@@ -33,6 +32,7 @@ export default function WalletScreen() {
     balancesLastUpdated,
     formattedTotal,
     refreshBalances,
+    refreshBalancesAndPrices,
     prices,
     accounts,
     currentAccountIndex,
@@ -41,17 +41,18 @@ export default function WalletScreen() {
   const isNavigatingRef = useRef(false);
   const { copy, isCopied } = useClipboard();
 
-  // Refresh balances on mount
+  // Refresh balances on mount (silent - don't show loading indicator for automatic refresh)
   useEffect(() => {
     // Avoid spamming refreshes when we already have recent cached data.
     if (!balancesLastUpdated || Date.now() - balancesLastUpdated > 30_000) {
-      refreshBalances();
+      refreshBalancesAndPrices({ silent: true });
     }
-  }, [balancesLastUpdated, refreshBalances]);
+  }, [balancesLastUpdated, refreshBalancesAndPrices]);
 
+  // Pull-to-refresh handler - shows loading indicator (user-initiated)
   const handleRefresh = useCallback(() => {
-    refreshBalances();
-  }, [refreshBalances]);
+    refreshBalancesAndPrices({ silent: false });
+  }, [refreshBalancesAndPrices]);
 
   const navigateOnce = useCallback(
     (action: () => void) => {
@@ -79,9 +80,6 @@ export default function WalletScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      <RefreshPill isRefreshing={isRefreshingBalances} label="Refreshing balances..." />
-
-
       <FlatList
         data={balances.filter(b => b.isVisible !== false)}
         keyExtractor={(item, index) => `${item.token.symbol}-${index}`}

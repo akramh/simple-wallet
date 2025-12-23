@@ -18,6 +18,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useWalletStore } from '../store';
 import { ToastProvider } from '../contexts';
+import { useBackgroundRefresh } from '../hooks';
 
 import '../global.css';
 
@@ -36,6 +37,9 @@ export default function RootLayout() {
   const segments = useSegments();
   const segmentList = segments as string[];
   const { initialize, isInitialized, hasWallet, isUnlocked, pendingBackup } = useWalletStore();
+
+  // Enable background refresh polling when wallet is unlocked
+  useBackgroundRefresh();
 
   useEffect(() => {
     // Initialize wallet on app start

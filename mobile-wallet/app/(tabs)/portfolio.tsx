@@ -6,14 +6,13 @@
  * - Refresh in the background when data is stale
  */
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePortfolioScreenSelector } from '../../store';
 import { getTokenIcon } from '../../utils/tokenIcons';
-import { RefreshPill } from '../../components';
 
 export default function PortfolioScreen() {
   const router = useRouter();
@@ -43,6 +42,11 @@ export default function PortfolioScreen() {
     }
   }, [hydrateAllNetworksFromCache, refreshAllNetworks]);
 
+  // Pull-to-refresh handler - explicitly not silent so RefreshControl shows indicator
+  const handleRefresh = useCallback(() => {
+    refreshAllNetworks({ silent: false });
+  }, [refreshAllNetworks]);
+
   const globalTotal = Object.values(allNetworkTotals).reduce((a, b) => a + (b || 0), 0);
   const formattedGlobalTotal =
     globalTotal > 0
@@ -51,8 +55,6 @@ export default function PortfolioScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
-      <RefreshPill isRefreshing={isRefreshingAllNetworks} label="Refreshing Portfolio" />
-
       {/* Header */}
       <View className="px-5 pt-4 pb-6">
         <Text className="text-white text-2xl font-bold">Portfolio</Text>
@@ -65,7 +67,7 @@ export default function PortfolioScreen() {
         refreshControl={
           <RefreshControl
             refreshing={isRefreshingAllNetworks}
-            onRefresh={refreshAllNetworks}
+            onRefresh={handleRefresh}
             tintColor="#a855f7"
           />
         }
