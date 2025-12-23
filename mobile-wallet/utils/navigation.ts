@@ -5,13 +5,14 @@
  * when a screen is opened without a back stack.
  */
 
-type RouterLike = {
-  canGoBack?: () => boolean;
-  back: () => void;
-  replace: (path: string) => void;
-};
+import type { Router } from 'expo-router';
 
-export function safeGoBack(router: RouterLike, fallback: string = '/(tabs)/wallet'): void {
+type RouterLike = Pick<Router, 'back' | 'replace' | 'canGoBack'>;
+type RouterReplaceArg = Parameters<Router['replace']>[0];
+
+const DEFAULT_FALLBACK: RouterReplaceArg = '/(tabs)/wallet';
+
+export function safeGoBack(router: RouterLike, fallback: RouterReplaceArg = DEFAULT_FALLBACK): void {
   if (router.canGoBack?.()) {
     router.back();
     return;

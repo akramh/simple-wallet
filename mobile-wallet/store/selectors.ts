@@ -346,6 +346,7 @@ export const useSendScreenSelector = () =>
   useWalletStore(
     useShallow((state) => ({
       balances: state.balances,
+      prices: state.prices,
       network: state.network,
       networks: state.networks,
       getGasEstimate: state.getGasEstimate,

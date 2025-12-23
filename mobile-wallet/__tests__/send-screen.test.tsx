@@ -9,6 +9,11 @@ import { jest } from '@jest/globals';
 
 const mockGetGasEstimate = jest.fn<() => Promise<any>>();
 const mockSendTransaction = jest.fn(async () => ({ hash: 'ton_hash_123', status: 'pending' }));
+const mockRouter = {
+  back: jest.fn(),
+  replace: jest.fn(),
+};
+
 const mockState: any = {
   balances: [
     {
@@ -18,6 +23,9 @@ const mockState: any = {
       isLoading: false,
     },
   ],
+  prices: {
+    TON: 1.23,
+  },
   network: 'ton-mainnet',
   networks: {
     'ton-mainnet': {
@@ -42,7 +50,7 @@ jest.mock('../store', () => ({
 }));
 
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ back: jest.fn() }),
+  useRouter: () => mockRouter,
 }));
 
 jest.mock('expo-clipboard', () => ({
@@ -72,6 +80,8 @@ describe('SendScreen fee estimate display', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRouter.back.mockClear();
+    mockRouter.replace.mockClear();
     mockState.balances = [
       {
         token: { symbol: 'TON', name: 'Toncoin', type: 'native', decimals: 9, address: '' },
@@ -80,6 +90,9 @@ describe('SendScreen fee estimate display', () => {
         isLoading: false,
       },
     ];
+    mockState.prices = {
+      TON: 1.23,
+    };
     mockState.network = 'ton-mainnet';
     mockState.networks = {
       'ton-mainnet': {
@@ -105,10 +118,11 @@ describe('SendScreen fee estimate display', () => {
 
   test('shows fallback text when gas estimate fails', async () => {
     enableFakeTimers();
-    const { getByPlaceholderText, findByText } = render(<SendScreen />);
+    const { getByPlaceholderText, getByText, findByText } = render(<SendScreen />);
 
     fireEvent.changeText(getByPlaceholderText('EQ... or UQ...'), 'UQDDUPkLgldV0UNxXgW94J8V09fB46TIkNrxBH8JpSiFylZw');
-    fireEvent.changeText(getByPlaceholderText('0.0'), '0.15');
+    fireEvent.press(getByText('Next'));
+    fireEvent.changeText(getByPlaceholderText('0'), '0.15');
 
     await act(async () => {
       jest.advanceTimersByTime(600);
@@ -130,19 +144,31 @@ describe('SendScreen fee estimate display', () => {
       supportsEIP1559: false,
       network: 'ton-mainnet',
     });
-    const { getByPlaceholderText, getByText, findByText } = render(<SendScreen />);
+    const { getByPlaceholderText, getByText } = render(<SendScreen />);
 
     fireEvent.changeText(getByPlaceholderText('EQ... or UQ...'), 'UQDDUPkLgldV0UNxXgW94J8V09fB46TIkNrxBH8JpSiFylZw');
-    fireEvent.changeText(getByPlaceholderText('0.0'), '0.15');
+    fireEvent.press(getByText('Next'));
+    fireEvent.changeText(getByPlaceholderText('0'), '0.15');
 
     await act(async () => {
       jest.advanceTimersByTime(600);
     });
 
-    fireEvent.press(getByText('Review Transaction'));
-    fireEvent.press(getByText('Confirm'));
+    fireEvent.press(getByText('Continue'));
 
-    expect(await findByText('View in Explorer')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(getByText('Send'));
+    });
+
+    expect(mockRouter.replace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: '/send-status',
+        params: expect.objectContaining({
+          hash: 'ton_hash_123',
+          status: 'pending',
+        }),
+      })
+    );
   });
 
   test('scans QR and auto-copies address to clipboard', async () => {
@@ -184,6 +210,9 @@ describe('SendScreen fee estimate display', () => {
         chainId: 11155111,
       },
     };
+    mockState.prices = {
+      ETH: 1234,
+    };
     mockGetGasEstimate.mockResolvedValueOnce({
       gasLimit: '21000',
       gasPrice: '1',
@@ -199,13 +228,7 @@ describe('SendScreen fee estimate display', () => {
     const { getByPlaceholderText, getByText } = render(<SendScreen />);
 
     fireEvent.changeText(getByPlaceholderText('0x...'), 'vitalik.eth');
-    fireEvent.changeText(getByPlaceholderText('0.0'), '0.1');
-
-    await act(async () => {
-      jest.advanceTimersByTime(600);
-    });
-
-    fireEvent.press(getByText('Review Transaction'));
+    fireEvent.press(getByText('Next'));
 
     expect(alertSpy).toHaveBeenCalledWith(
       'ENS Unsupported',
