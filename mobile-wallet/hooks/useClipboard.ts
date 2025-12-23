@@ -86,10 +86,16 @@ export function useClipboard() {
     }
   }, []);
 
+  const isCopied = useCallback(
+    (text: string) => state.copied && state.value === text,
+    [state.copied, state.value]
+  );
+
   return {
     ...state,
     copy,
     paste,
     hasContent,
+    isCopied,
   };
 }

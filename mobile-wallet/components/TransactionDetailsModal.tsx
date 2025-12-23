@@ -16,8 +16,8 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import type { Transaction } from '../services';
+import { useClipboard } from '../hooks';
 
 // Explorer URL mapping
 const EXPLORER_URLS: Record<string, string> = {
@@ -49,6 +49,7 @@ interface Props {
 export function TransactionDetailsModal({ visible, transaction, onClose }: Props) {
   if (!transaction) return null;
 
+  const { copy, isCopied } = useClipboard();
   const { hash, from, to, value, network, status, type, timestamp, blockNumber, tokenSymbol, fee } = transaction;
   
   const isSend = type === 'send';
@@ -71,9 +72,8 @@ export function TransactionDetailsModal({ visible, transaction, onClose }: Props
     });
   };
 
-  const copyToClipboard = async (text: string, label: string) => {
-    await Clipboard.setStringAsync(text);
-    Alert.alert('Copied', `${label} copied to clipboard`);
+  const copyToClipboard = async (text: string) => {
+    await copy(text);
   };
 
   const formatDate = (ts: number) => {
@@ -195,15 +195,15 @@ export function TransactionDetailsModal({ visible, transaction, onClose }: Props
               label="From"
               value={truncateAddress(from)}
               copyable
-              fullValue={from}
-              onCopy={() => copyToClipboard(from, 'From address')}
+              copied={from ? isCopied(from) : false}
+              onCopy={() => copyToClipboard(from)}
             />
             <DetailRow
               label="To"
               value={truncateAddress(to)}
               copyable
-              fullValue={to || ''}
-              onCopy={() => to && copyToClipboard(to, 'To address')}
+              copied={to ? isCopied(to) : false}
+              onCopy={() => to && copyToClipboard(to)}
             />
             {fee && (
               <DetailRow
@@ -215,8 +215,8 @@ export function TransactionDetailsModal({ visible, transaction, onClose }: Props
               label="Transaction Hash"
               value={truncateAddress(hash)}
               copyable
-              fullValue={hash}
-              onCopy={() => copyToClipboard(hash, 'Transaction hash')}
+              copied={isCopied(hash)}
+              onCopy={() => copyToClipboard(hash)}
               isLast
             />
           </View>
@@ -242,14 +242,14 @@ function DetailRow({
   label,
   value,
   copyable,
-  fullValue,
+  copied,
   onCopy,
   isLast,
 }: {
   label: string;
   value: string;
   copyable?: boolean;
-  fullValue?: string;
+  copied?: boolean;
   onCopy?: () => void;
   isLast?: boolean;
 }) {
@@ -266,7 +266,11 @@ function DetailRow({
         </Text>
         {copyable && onCopy && (
           <TouchableOpacity onPress={onCopy} className="ml-2 p-1">
-            <Ionicons name="copy-outline" size={16} color="#9ca3af" />
+            <Ionicons
+              name={copied ? 'checkmark-circle' : 'copy-outline'}
+              size={16}
+              color={copied ? '#a855f7' : '#9ca3af'}
+            />
           </TouchableOpacity>
         )}
       </View>

@@ -15,6 +15,7 @@
 
 import { useCallback } from 'react';
 import { useWalletStore } from '../store';
+import { useClipboard } from './useClipboard';
 
 /**
  * Hook providing wallet state and actions.
@@ -47,17 +48,12 @@ export function useWallet() {
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
     : null;
 
+  const { copy } = useClipboard();
+
   const copyAddress = useCallback(async () => {
     if (!address) return false;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const Clipboard = require('expo-clipboard');
-      await Clipboard.setStringAsync(address);
-      return true;
-    } catch {
-      return false;
-    }
-  }, [address]);
+    return copy(address);
+  }, [address, copy]);
 
   return {
     // State

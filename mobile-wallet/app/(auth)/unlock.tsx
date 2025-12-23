@@ -27,7 +27,7 @@ const BIOMETRIC_OPTIN_KEY = 'wallet_biometric_optin_prompted';
 
 export default function UnlockScreen() {
   const router = useRouter();
-  const { unlock, isLoading, error, clearError, walletList, loadWalletList } = useUnlockScreenSelector();
+  const { unlock, isLoading, error, clearError, walletList, loadWalletList, lastWalletName } = useUnlockScreenSelector();
   const {
     isAvailable: biometricsAvailable,
     isEnabled: biometricsEnabled,
@@ -41,7 +41,7 @@ export default function UnlockScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [attempts, setAttempts] = useState(0);
-  const [selectedWallet, setSelectedWallet] = useState<string>('default');
+  const [selectedWallet, setSelectedWallet] = useState<string>(lastWalletName ?? 'default');
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [isEnablingBiometrics, setIsEnablingBiometrics] = useState(false);
 
@@ -50,12 +50,17 @@ export default function UnlockScreen() {
     loadWalletList();
   }, []);
 
-  // Set first wallet as selected if available
+  // Set last-used wallet (if available), otherwise fall back to first wallet.
   useEffect(() => {
-    if (walletList.length > 0 && !walletList.find(w => w.name === selectedWallet)) {
+    if (walletList.length === 0) return;
+    if (lastWalletName && walletList.find(w => w.name === lastWalletName)) {
+      setSelectedWallet(lastWalletName);
+      return;
+    }
+    if (!walletList.find(w => w.name === selectedWallet)) {
       setSelectedWallet(walletList[0].name);
     }
-  }, [walletList]);
+  }, [walletList, lastWalletName]);
 
   // Auto-trigger biometrics on mount if enabled
   useEffect(() => {

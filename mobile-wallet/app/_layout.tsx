@@ -34,6 +34,7 @@ const queryClient = new QueryClient({
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
+  const segmentList = segments as string[];
   const { initialize, isInitialized, hasWallet, isUnlocked, pendingBackup } = useWalletStore();
 
   useEffect(() => {
@@ -43,9 +44,9 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (!isInitialized) return;
-    const inAuthGroup = segments[0] === '(auth)';
-    const inSetupGroup = segments[0] === '(setup)';
-    const route = segments[1];
+    const inAuthGroup = segmentList[0] === '(auth)';
+    const inSetupGroup = segmentList[0] === '(setup)';
+    const route = segmentList[1];
     const isBackupScreen = inSetupGroup && route === 'backup';
     const isUnlockScreen = inAuthGroup && route === 'unlock';
 

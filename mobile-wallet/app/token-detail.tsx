@@ -16,7 +16,7 @@
  * - Navigates to existing Send/Receive flows for transactions
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -58,9 +58,10 @@ interface TokenDetailParams {
 
 export default function TokenDetailScreen() {
   const router = useRouter();
+  const isNavigatingRef = useRef(false);
   const params = useLocalSearchParams() as unknown as TokenDetailParams;
   const { showToast } = useToast();
-  const { copy } = useClipboard();
+  const { copy, isCopied } = useClipboard();
 
   // Parse params
   const symbol = params.symbol || 'TOKEN';
@@ -146,6 +147,8 @@ export default function TokenDetailScreen() {
   const handleBack = () => router.back();
 
   const handleSend = () => {
+    if (isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
     router.push({
       pathname: '/send',
       params: {
@@ -153,15 +156,23 @@ export default function TokenDetailScreen() {
         preselectedNetwork: network,
       },
     });
+    setTimeout(() => {
+      isNavigatingRef.current = false;
+    }, 600);
   };
 
   const handleReceive = () => {
+    if (isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
     router.push({
       pathname: '/receive',
       params: {
         network,
       },
     });
+    setTimeout(() => {
+      isNavigatingRef.current = false;
+    }, 600);
   };
 
   const handleMore = () => {
@@ -179,15 +190,19 @@ export default function TokenDetailScreen() {
 
   const handleCopyAddress = async () => {
     if (contractAddress) {
-      const success = await copy(contractAddress);
-      if (success) {
-        showToast('Contract address copied', 'success');
-      }
+      await copy(contractAddress);
     }
   };
 
+  const contractCopied = contractAddress ? isCopied(contractAddress) : false;
+
   const handleViewAllActivity = () => {
+    if (isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
     router.push('/(tabs)/activity');
+    setTimeout(() => {
+      isNavigatingRef.current = false;
+    }, 600);
   };
 
   // Format price change display
@@ -328,6 +343,7 @@ export default function TokenDetailScreen() {
                 value={`${contractAddress.slice(0, 8)}...${contractAddress.slice(-6)}`}
                 onPress={handleCopyAddress}
                 showCopy
+                copied={contractCopied}
               />
             )}
             <InfoRow label="Type" value={isNative ? 'Native' : 'Token'} isLast />
@@ -508,12 +524,14 @@ function InfoRow({
   value,
   onPress,
   showCopy,
+  copied,
   isLast,
 }: {
   label: string;
   value: string;
   onPress?: () => void;
   showCopy?: boolean;
+  copied?: boolean;
   isLast?: boolean;
 }) {
   const content = (
@@ -522,7 +540,12 @@ function InfoRow({
       <View className="flex-row items-center">
         <Text className="text-white text-sm font-medium">{value}</Text>
         {showCopy && (
-          <Ionicons name="copy-outline" size={14} color="#9ca3af" style={{ marginLeft: 8 }} />
+          <Ionicons
+            name={copied ? 'checkmark-circle' : 'copy-outline'}
+            size={14}
+            color={copied ? '#a855f7' : '#9ca3af'}
+            style={{ marginLeft: 8 }}
+          />
         )}
       </View>
     </View>

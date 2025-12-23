@@ -35,6 +35,7 @@ import {
 
 const ENABLED_NETWORKS_KEY = 'enabledNetworks';
 const PENDING_BACKUP_KEY = 'wallet_pending_backup';
+const LAST_WALLET_KEY = 'last_wallet_name';
 let lockListenerAttached = false;
 
 const getLockedState = () => ({
@@ -79,6 +80,7 @@ interface WalletStore {
   network: string;
   address: string | null;
   currentWalletName: string | null;
+  lastWalletName: string | null;
   pendingBackup: boolean;
 
   // Wallet list
@@ -170,7 +172,9 @@ interface WalletStore {
   /** Load the list of persisted wallets from secure storage. */
   loadWalletList: () => Promise<void>;
   /** Switch to a different wallet (locks current wallet first). */
-  switchWallet: (name: string, password: string) => Promise<void>;
+  switchWallet: (name: string, password?: string) => Promise<void>;
+  /** Returns true when a session password is available for wallet switching. */
+  canSwitchWalletWithoutPassword: () => boolean;
   
   // Account actions
   /** Load persisted accounts for the current wallet. */
@@ -215,6 +219,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   network: 'sepolia',
   address: null,
   currentWalletName: null,
+  lastWalletName: null,
   pendingBackup: false,
 
   walletList: [],
@@ -281,6 +286,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         enabledNetworks = [];
       }
       let pendingBackup = false;
+      let lastWalletName: string | null = null;
       try {
         const storedPending = await AsyncStorage.getItem(PENDING_BACKUP_KEY);
         pendingBackup = storedPending === 'true';
@@ -299,6 +305,14 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         address: data.accounts?.[0]?.address || data.address || 'Unknown',
         createdAt: data.createdAt,
       }));
+      try {
+        const storedLastWallet = await AsyncStorage.getItem(LAST_WALLET_KEY);
+        if (storedLastWallet && walletList.some((wallet) => wallet.name === storedLastWallet)) {
+          lastWalletName = storedLastWallet;
+        }
+      } catch {
+        lastWalletName = null;
+      }
 
       set({
         isInitialized: true,
@@ -308,6 +322,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         network: state.network,
         address: state.address,
         currentWalletName: state.currentWalletName,
+        lastWalletName,
         pendingBackup,
         networks,
         enabledNetworks,
@@ -337,6 +352,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   const result = await walletBridge.createWallet(password, name, true);
 
       await AsyncStorage.setItem(PENDING_BACKUP_KEY, 'true');
+      await AsyncStorage.setItem(LAST_WALLET_KEY, name);
 
       set({
         isLoading: false,
@@ -344,6 +360,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         hasWallet: true,
         address: result.address,
         currentWalletName: name,
+        lastWalletName: name,
         pendingBackup: true,
       });
 
@@ -368,6 +385,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       await new Promise(resolve => setTimeout(resolve, 100));
 
       const result = await walletBridge.importWallet(mnemonic, password, name);
+      await AsyncStorage.setItem(LAST_WALLET_KEY, name);
 
       set({
         isLoading: false,
@@ -375,6 +393,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         hasWallet: true,
         address: result.address,
         currentWalletName: name,
+        lastWalletName: name,
       });
 
       get().refreshBalances();
@@ -399,6 +418,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       set({ isLoading: true, error: null });
 
       const result = await walletBridge.unlockWallet(password, name);
+      await AsyncStorage.setItem(LAST_WALLET_KEY, result.walletName);
 
       // Load accounts first to get the persisted currentAccountIndex
       const { accounts, currentIndex } = await walletBridge.getAccounts();
@@ -414,6 +434,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         isUnlocked: true,
         address: result.address,
         currentWalletName: result.walletName,
+        lastWalletName: result.walletName,
         accounts: accountList,
         currentAccountIndex: currentIndex,
       });
@@ -782,6 +803,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   // ============================================================================
 
   clearError: () => set({ error: null }),
+  canSwitchWalletWithoutPassword: () => Boolean(walletBridge.getSessionPassword()),
 
   // ============================================================================
   // Wallet Management
@@ -801,15 +823,21 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     }
   },
 
-  switchWallet: async (name: string, password: string) => {
+  switchWallet: async (name: string, password?: string) => {
+    const previousWalletName = get().currentWalletName;
+    const previousPassword = walletBridge.getSessionPassword();
+
     try {
       set({ isLoading: true, error: null });
 
-      // Lock current wallet first
-      await walletBridge.lockWallet();
+      const passwordToUse = password ?? previousPassword;
+      if (!passwordToUse) {
+        throw new Error('Password required');
+      }
 
-      // Unlock the new wallet
-      const result = await walletBridge.unlockWallet(password, name);
+      // Unlock the new wallet (do not lock first to avoid losing session on failure).
+      const result = await walletBridge.unlockWallet(passwordToUse, name);
+      await AsyncStorage.setItem(LAST_WALLET_KEY, result.walletName);
 
       // Load accounts to get the persisted currentAccountIndex
       const { accounts, currentIndex } = await walletBridge.getAccounts();
@@ -828,6 +856,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         isUnlocked: true,
         address: result.address,
         currentWalletName: result.walletName,
+        lastWalletName: result.walletName,
         accounts: accountList,
         currentAccountIndex: currentIndex,
         balances: cachedBalances?.balances ?? [],
@@ -844,6 +873,35 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       get().loadTransactions();
       get().hydrateAllNetworksFromCache();
     } catch (error) {
+      if (previousWalletName && previousPassword) {
+        try {
+          const restoreResult = await walletBridge.unlockWallet(previousPassword, previousWalletName);
+          const { accounts, currentIndex } = await walletBridge.getAccounts();
+          const accountList = Object.entries(accounts).map(([index, data]: [string, any]) => ({
+            index: parseInt(index),
+            address: data.address,
+            createdAt: data.createdAt,
+          }));
+          accountList.sort((a, b) => a.index - b.index);
+          const cachedBalances = walletBridge.getCachedBalances();
+          const cachedPrices = walletBridge.getCachedPrices();
+
+          set({
+            isUnlocked: true,
+            address: restoreResult.address,
+            currentWalletName: restoreResult.walletName,
+            accounts: accountList,
+            currentAccountIndex: currentIndex,
+            balances: cachedBalances?.balances ?? [],
+            balancesLastUpdated: cachedBalances?.fetchedAt ?? null,
+            prices: cachedPrices?.prices ?? {},
+            totalValue: cachedPrices?.totalValue ?? 0,
+            formattedTotal: cachedPrices?.formattedTotal ?? '$0.00',
+          });
+        } catch (restoreError) {
+          console.error('[WalletStore] Restore wallet after switch failed:', restoreError);
+        }
+      }
       console.error('[WalletStore] Switch wallet failed:', error);
       set({
         isLoading: false,

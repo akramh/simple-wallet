@@ -358,6 +358,7 @@ export const useUnlockScreenSelector = () =>
       isLoading: state.isLoading,
       hasWallet: state.hasWallet,
       walletList: state.walletList,
+      lastWalletName: state.lastWalletName,
       error: state.error,
       unlock: state.unlock,
       clearError: state.clearError,

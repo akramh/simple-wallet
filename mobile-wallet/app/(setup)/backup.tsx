@@ -14,9 +14,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
-import * as Haptics from 'expo-haptics';
 import { useWalletStore } from '../../store';
+import { useClipboard } from '../../hooks';
 
 export default function BackupScreen() {
   const router = useRouter();
@@ -24,7 +23,7 @@ export default function BackupScreen() {
   const { setPendingBackup } = useWalletStore();
   const [revealed, setRevealed] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copy, isCopied } = useClipboard();
 
   const words = mnemonic?.split(' ') || [];
 // Prevent accidental back navigation
@@ -52,11 +51,10 @@ export default function BackupScreen() {
   
   const handleCopy = async () => {
     if (!mnemonic) return;
-    await Clipboard.setStringAsync(mnemonic);
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    await copy(mnemonic);
   };
+
+  const phraseCopied = mnemonic ? isCopied(mnemonic) : false;
 
   const handleContinue = () => {
     if (!confirmed) return;
@@ -126,17 +124,17 @@ export default function BackupScreen() {
               <TouchableOpacity
                 onPress={handleCopy}
                 className={`flex-row items-center justify-center mt-4 py-3 rounded-xl ${
-                  copied ? 'bg-purple-600' : 'bg-gray-800'
+                  phraseCopied ? 'bg-purple-600' : 'bg-gray-800'
                 }`}
-                disabled={copied}
+                disabled={phraseCopied}
               >
                 <Ionicons
-                  name={copied ? 'checkmark-circle' : 'copy-outline'}
+                  name={phraseCopied ? 'checkmark-circle' : 'copy-outline'}
                   size={18}
-                  color={copied ? '#ffffff' : '#a855f7'}
+                  color={phraseCopied ? '#ffffff' : '#a855f7'}
                 />
-                <Text className={`ml-2 ${copied ? 'text-white' : 'text-purple-400'}`}>
-                  {copied ? 'Copied!' : 'Copy to Clipboard'}
+                <Text className={`ml-2 ${phraseCopied ? 'text-white' : 'text-purple-400'}`}>
+                  {phraseCopied ? 'Copied!' : 'Copy to Clipboard'}
                 </Text>
               </TouchableOpacity>
             </>

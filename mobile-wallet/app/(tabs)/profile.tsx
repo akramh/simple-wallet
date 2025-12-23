@@ -2,7 +2,7 @@
  * @fileoverview Profile/settings screen.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, Switch, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -10,7 +10,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useProfileScreenSelector } from '../../store';
 import { walletBridge } from '../../services';
 import { useBiometrics, useClipboard } from '../../hooks';
-import { useToast } from '../../contexts';
 
 // Auto-lock timeout options in minutes
 const AUTO_LOCK_OPTIONS = [
@@ -22,10 +21,10 @@ const AUTO_LOCK_OPTIONS = [
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const isNavigatingRef = useRef(false);
   const { address, currentWalletName, network, networks, lock } = useProfileScreenSelector();
   const biometrics = useBiometrics();
-  const { copy } = useClipboard();
-  const { showToast } = useToast();
+  const { copy, isCopied } = useClipboard();
 
   // Auto-lock state
   const [autoLockMinutes, setAutoLockMinutes] = useState(15);
@@ -38,11 +37,20 @@ export default function ProfileScreen() {
 
   const handleCopyAddress = async () => {
     if (!address) return;
-    const success = await copy(address);
-    if (success) {
-      showToast('Address copied to clipboard', 'success');
-    }
+    await copy(address);
   };
+
+  const navigateOnce = useCallback(
+    (action: () => void) => {
+      if (isNavigatingRef.current) return;
+      isNavigatingRef.current = true;
+      action();
+      setTimeout(() => {
+        isNavigatingRef.current = false;
+      }, 600);
+    },
+    []
+  );
 
   // Handle biometrics toggle
   const handleBiometricsToggle = useCallback(async () => {
@@ -108,6 +116,7 @@ export default function ProfileScreen() {
   const truncatedAddress = address
     ? `${address.slice(0, 10)}...${address.slice(-8)}`
     : '';
+  const addressCopied = address ? isCopied(address) : false;
 
   const handleLock = async () => {
     await lock();
@@ -139,7 +148,12 @@ export default function ProfileScreen() {
                 onPress={handleCopyAddress}
               >
                 <Text className="text-gray-400 text-sm">{truncatedAddress}</Text>
-                <Ionicons name="copy-outline" size={14} color="#9ca3af" style={{ marginLeft: 8 }} />
+                <Ionicons
+                  name={addressCopied ? 'checkmark-circle' : 'copy-outline'}
+                  size={14}
+                  color={addressCopied ? '#a855f7' : '#9ca3af'}
+                  style={{ marginLeft: 8 }}
+                />
               </TouchableOpacity>
             </View>
           </View>
@@ -153,25 +167,25 @@ export default function ProfileScreen() {
             icon="wallet-outline"
             title="Wallets"
             subtitle="Manage and switch wallets"
-            onPress={() => router.push('/wallet-manage')}
+            onPress={() => navigateOnce(() => router.push('/wallet-manage'))}
           />
           <SettingsItem
             icon="people-outline"
             title="Accounts"
             subtitle="HD accounts (derivation paths)"
-            onPress={() => router.push('/account-manage')}
+            onPress={() => navigateOnce(() => router.push('/account-manage'))}
           />
           <SettingsItem
             icon="globe-outline"
             title="Network"
             subtitle={networks[network]?.name || network}
-            onPress={() => router.push('/network-select')}
+            onPress={() => navigateOnce(() => router.push('/network-select'))}
           />
           <SettingsItem
             icon="key-outline"
             title="Secret Recovery Phrase"
             subtitle="Backup your wallet"
-            onPress={() => router.push('/secret-phrase' as never)}
+            onPress={() => navigateOnce(() => router.push('/secret-phrase' as never))}
           />
           <SettingsItem
             icon="shield-outline"
@@ -199,7 +213,7 @@ export default function ProfileScreen() {
           <SettingsItem
             icon="key-outline"
             title="Change Password"
-            onPress={() => router.push('/change-password' as never)}
+            onPress={() => navigateOnce(() => router.push('/change-password' as never))}
           />
         </View>
 
