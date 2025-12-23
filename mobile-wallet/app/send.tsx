@@ -32,6 +32,7 @@ import {
 import { useClipboard } from '../hooks';
 import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
 import { safeGoBack } from '../utils/navigation';
+import { formatDecimal, formatTokenAmountDisplay } from '../utils/amounts';
 
 type SendStep = 'select-token' | 'select-recipient' | 'enter-amount' | 'confirm';
 type AmountMode = 'token' | 'fiat';
@@ -253,6 +254,11 @@ export default function SendScreen() {
       const tonComment = isTonNetwork && comment ? comment : undefined;
 
       const result = await sendTransaction(selectedToken, recipient, amount, tag, tonComment);
+      const displayDecimals = getDisplayDecimals();
+      const amountDisplay = formatTokenAmountDisplay(amount, displayDecimals);
+      const feeDisplay = gasEstimate?.estimatedCostNative
+        ? formatTokenAmountDisplay(gasEstimate.estimatedCostNative, displayDecimals)
+        : '';
 
       router.replace({
         pathname: '/send-status',
@@ -260,10 +266,12 @@ export default function SendScreen() {
           hash: result.hash,
           status: result.status,
           amount,
+          amountDisplay,
           symbol: selectedToken.symbol,
           recipient,
           network,
           fee: gasEstimate?.estimatedCostNative ?? '',
+          feeDisplay,
           feeSymbol: gasEstimate?.nativeSymbol ?? '',
           destinationTag: isXRPNetwork ? destinationTag : '',
           comment: isTonNetwork ? comment : '',
@@ -421,6 +429,8 @@ export default function SendScreen() {
     return 18;
   };
 
+  const getDisplayDecimals = () => Math.min(8, getTokenDecimals());
+
   const isNativeToken = () => {
     if (!selectedToken) return false;
     return selectedToken.type === 'native' || selectedToken.address === 'native' || !selectedToken.address;
@@ -491,9 +501,13 @@ export default function SendScreen() {
     let sanitized = value.replace(/[^0-9.]/g, '');
     const firstDot = sanitized.indexOf('.');
     if (firstDot !== -1) {
+      const decimalLimit = amountMode === 'fiat' ? 2 : getDisplayDecimals();
       sanitized =
         sanitized.slice(0, firstDot + 1) +
-        sanitized.slice(firstDot + 1).replace(/\./g, '');
+        sanitized
+          .slice(firstDot + 1)
+          .replace(/\./g, '')
+          .slice(0, decimalLimit);
     }
     if (sanitized.startsWith('.')) {
       sanitized = `0${sanitized}`;
@@ -504,12 +518,6 @@ export default function SendScreen() {
   const isValidAmountInput = (value: string) => /^\d+(\.\d+)?$/.test(value);
 
   const looksLikeEns = (value: string) => /.+\.eth$/i.test(value.trim());
-
-  const formatDecimal = (value: number, decimals: number) =>
-    value
-      .toFixed(decimals)
-      .replace(/\.0+$/, '')
-      .replace(/(\.\d*?)0+$/, '$1');
 
   const getBalanceUsdText = () => {
     if (!selectedToken || !hasTokenPrice) return '';
@@ -827,7 +835,7 @@ export default function SendScreen() {
               <View>
                 <Text className="text-gray-400 text-sm">Available to send</Text>
                 <Text className="text-white text-lg font-semibold">
-                  {getSpendableBalance()} {selectedToken?.symbol}
+                  {formatTokenAmountDisplay(getSpendableBalance(), getDisplayDecimals())} {selectedToken?.symbol}
                 </Text>
                 {!!getBalanceUsdText() && (
                   <Text className="text-gray-500 text-sm">{getBalanceUsdText()}</Text>
@@ -871,7 +879,7 @@ export default function SendScreen() {
                 </View>
               </View>
 
-              <View className="flex-row items-end justify-center">
+              <View className="flex-row items-end justify-between">
                 <TextInput
                   value={displayAmount}
                   onChangeText={handleAmountChange}
@@ -880,10 +888,10 @@ export default function SendScreen() {
                   keyboardType="decimal-pad"
                   onFocus={() => setIsAmountFocused(true)}
                   onBlur={() => setIsAmountFocused(false)}
-                  className="text-white text-5xl font-semibold text-center"
+                  className="flex-1 text-white text-5xl font-semibold text-right pr-3"
                   style={{ minWidth: 120 }}
                 />
-                <Text className="text-gray-400 text-3xl ml-2 mb-1">
+                <Text className="text-gray-400 text-3xl mb-1 w-16 text-right">
                   {amountMode === 'token' ? selectedToken?.symbol : 'USD'}
                 </Text>
               </View>
@@ -966,7 +974,10 @@ export default function SendScreen() {
                     : gasEstimate
                       ? (isTonNetwork && parseFloat(gasEstimate.estimatedCostNative) === 0)
                         ? 'Calculating...'
-                        : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`
+                        : `${formatTokenAmountDisplay(
+                          gasEstimate.estimatedCostNative || '0',
+                          getDisplayDecimals()
+                        )} ${gasEstimate.nativeSymbol}`
                       : 'Enter amount to estimate fees'}
                 </Text>
               )}
@@ -992,7 +1003,7 @@ export default function SendScreen() {
               <View className="bg-gray-900 rounded-3xl p-6 mb-5">
                 <Text className="text-gray-400 text-center text-sm mb-3">You are sending</Text>
                 <Text className="text-white text-5xl font-bold text-center">
-                  {amount} {selectedToken?.symbol}
+                  {formatTokenAmountDisplay(amount, getDisplayDecimals())} {selectedToken?.symbol}
                 </Text>
                 <Text className="text-gray-500 text-center mt-2">
                   {getUsdConversionText() || 'Estimated value unavailable'}
@@ -1036,7 +1047,10 @@ export default function SendScreen() {
                     label="Network Fee"
                     value={gasEstimate.error
                       ? 'Unable to estimate'
-                      : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`}
+                      : `${formatTokenAmountDisplay(
+                        gasEstimate.estimatedCostNative || '0',
+                        getDisplayDecimals()
+                      )} ${gasEstimate.nativeSymbol}`}
                   />
                 )}
               </View>
@@ -1198,7 +1212,13 @@ function DetailRow({
   return (
     <View className="flex-row justify-between py-3 border-b border-gray-800">
       <Text className="text-gray-400">{label}</Text>
-      <Text className="text-white font-medium text-right max-w-[60%]">{value}</Text>
+      <Text
+        className="text-white font-medium text-right max-w-[60%]"
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {value}
+      </Text>
     </View>
   );
 }

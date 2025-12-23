@@ -9,6 +9,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useNetworksSelector } from '../store';
 import { useClipboard } from '../hooks';
 import { safeGoBack } from '../utils/navigation';
+import { formatTokenAmountDisplay } from '../utils/amounts';
 
 export default function SendStatusScreen() {
   const router = useRouter();
@@ -26,6 +27,15 @@ export default function SendStatusScreen() {
   const feeSymbol = typeof params.feeSymbol === 'string' ? params.feeSymbol : '';
   const destinationTag = typeof params.destinationTag === 'string' ? params.destinationTag : '';
   const comment = typeof params.comment === 'string' ? params.comment : '';
+
+  const amountDisplayParam =
+    typeof params.amountDisplay === 'string' ? params.amountDisplay : amount;
+  const feeDisplayParam =
+    typeof params.feeDisplay === 'string' ? params.feeDisplay : fee;
+  const formattedAmount = formatTokenAmountDisplay(amountDisplayParam, 8);
+  const formattedFee = feeDisplayParam
+    ? formatTokenAmountDisplay(feeDisplayParam, 8)
+    : '';
 
   const networkConfig = networkKey ? networks[networkKey] : undefined;
   const explorerUrl =
@@ -77,7 +87,7 @@ export default function SendStatusScreen() {
 
         {hasDetails && (
           <View className="bg-gray-900 rounded-2xl p-5 mb-6">
-            <DetailRow label="Amount" value={`${amount} ${symbol}`} />
+            <DetailRow label="Amount" value={`${formattedAmount} ${symbol}`} />
             <DetailRow
               label="To"
               value={`${recipient.slice(0, 10)}...${recipient.slice(-6)}`}
@@ -87,7 +97,7 @@ export default function SendStatusScreen() {
             />
             <DetailRow label="Network" value={networkConfig?.name || networkKey} />
             {fee && feeSymbol && (
-              <DetailRow label="Network Fee" value={`${fee} ${feeSymbol}`} />
+              <DetailRow label="Network Fee" value={`${formattedFee} ${feeSymbol}`} />
             )}
             {destinationTag && (
               <DetailRow label="Destination Tag" value={destinationTag} />
@@ -152,8 +162,14 @@ function DetailRow({
   return (
     <View className={`flex-row justify-between py-3 ${isLast ? '' : 'border-b border-gray-800'}`}>
       <Text className="text-gray-400">{label}</Text>
-      <View className="flex-row items-center">
-        <Text className="text-white font-medium text-right max-w-[60%]">{value}</Text>
+      <View className="flex-1 flex-row items-center justify-end">
+        <Text
+          className="text-white font-medium text-right max-w-[60%]"
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {value}
+        </Text>
         {copyValue && (
           <TouchableOpacity
             onPress={async () => {
