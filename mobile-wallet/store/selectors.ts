@@ -248,6 +248,7 @@ export const useRefreshActionsSelector = () =>
     useShallow((state) => ({
       refreshBalances: state.refreshBalances,
       refreshPrices: state.refreshPrices,
+      refreshBalancesAndPrices: state.refreshBalancesAndPrices,
       refreshAllNetworks: state.refreshAllNetworks,
       loadTransactions: state.loadTransactions,
     }))
@@ -281,6 +282,7 @@ export const useWalletScreenSelector = () =>
       accounts: state.accounts,
       // Actions
       refreshBalances: state.refreshBalances,
+      refreshBalancesAndPrices: state.refreshBalancesAndPrices,
     }))
   );
 
