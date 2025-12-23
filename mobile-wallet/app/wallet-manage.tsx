@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
+import { safeGoBack } from '../utils/navigation';
 
 export default function WalletManageScreen() {
   const router = useRouter();
@@ -48,7 +49,7 @@ export default function WalletManageScreen() {
     if (canSwitchWalletWithoutPassword()) {
       try {
         await switchWallet(walletName);
-        router.back();
+        safeGoBack(router);
       } catch (err) {
         setSelectedWalletToSwitch(walletName);
         setPassword('');
@@ -69,7 +70,7 @@ export default function WalletManageScreen() {
       setShowPasswordModal(false);
       setPassword('');
       setSelectedWalletToSwitch(null);
-      router.back();
+      safeGoBack(router);
     } catch (err) {
       // Error is shown in modal
     }
@@ -93,7 +94,7 @@ export default function WalletManageScreen() {
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
       <View className="flex-row items-center px-5 pt-4 pb-6">
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity onPress={() => safeGoBack(router)} className="mr-4">
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <Text className="text-white text-xl font-bold flex-1">Wallets</Text>

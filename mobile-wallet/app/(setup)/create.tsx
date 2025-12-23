@@ -21,6 +21,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../../store';
 import { walletBridge } from '../../services/WalletBridge';
+import { safeGoBack } from '../../utils/navigation';
 
 export default function CreateWalletScreen() {
   const router = useRouter();
@@ -85,7 +86,7 @@ export default function CreateWalletScreen() {
         >
           {/* Header */}
           <View className="flex-row items-center pt-4 pb-6">
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => safeGoBack(router)}>
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <Text className="text-white text-xl font-bold ml-4">

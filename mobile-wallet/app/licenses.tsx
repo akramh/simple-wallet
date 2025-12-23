@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { TouchableOpacity } from 'react-native';
+import { safeGoBack } from '../utils/navigation';
 
 export default function LicensesScreen() {
   const router = useRouter();
@@ -15,7 +16,7 @@ export default function LicensesScreen() {
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
       <View className="px-5 pt-4 pb-4 flex-row items-center border-b border-gray-800">
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity onPress={() => safeGoBack(router)} className="mr-4">
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <Text className="text-white text-xl font-bold">Open Source Licenses</Text>

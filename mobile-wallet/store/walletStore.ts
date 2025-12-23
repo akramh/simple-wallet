@@ -37,6 +37,7 @@ import { batchUpdates } from '../utils';
 const ENABLED_NETWORKS_KEY = 'enabledNetworks';
 const PENDING_BACKUP_KEY = 'wallet_pending_backup';
 const LAST_WALLET_KEY = 'last_wallet_name';
+const AUTO_LOCK_MINUTES_KEY = 'auto_lock_minutes';
 let lockListenerAttached = false;
 
 const getLockedState = () => ({
@@ -83,6 +84,7 @@ interface WalletStore {
   currentWalletName: string | null;
   lastWalletName: string | null;
   pendingBackup: boolean;
+  autoLockMinutes: number;
 
   // Wallet list
   walletList: WalletInfo[];
@@ -174,6 +176,8 @@ interface WalletStore {
   loadEnabledNetworks: () => Promise<void>;
   /** Toggle visibility of test networks. */
   toggleShowTestnets: (enabled: boolean) => Promise<void>;
+  /** Set auto-lock timeout in minutes and persist preference. */
+  setAutoLockMinutes: (minutes: number) => Promise<void>;
   /**
    * Switch the active network.
    *
@@ -240,6 +244,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   currentWalletName: null,
   lastWalletName: null,
   pendingBackup: false,
+  autoLockMinutes: 15,
 
   walletList: [],
 
@@ -306,6 +311,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       }
       let pendingBackup = false;
       let lastWalletName: string | null = null;
+      let autoLockMinutes = 15;
       try {
         const storedPending = await AsyncStorage.getItem(PENDING_BACKUP_KEY);
         pendingBackup = storedPending === 'true';
@@ -316,6 +322,18 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         enabledNetworks = Object.keys(networks).filter(k => !k.toLowerCase().includes('test'));
         AsyncStorage.setItem(ENABLED_NETWORKS_KEY, JSON.stringify(enabledNetworks)).catch(() => {});
       }
+
+      try {
+        const storedAutoLock = await AsyncStorage.getItem(AUTO_LOCK_MINUTES_KEY);
+        const parsed = storedAutoLock ? Number(storedAutoLock) : NaN;
+        if (Number.isFinite(parsed) && parsed > 0) {
+          autoLockMinutes = parsed;
+        }
+      } catch {
+        autoLockMinutes = 15;
+      }
+
+      walletBridge.setAutoLockTimeout(autoLockMinutes);
 
       // Load wallet list
       const wallets = await walletBridge.getAllWallets();
@@ -343,6 +361,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         currentWalletName: state.currentWalletName,
         lastWalletName,
         pendingBackup,
+        autoLockMinutes,
         networks,
         enabledNetworks,
         showTestnets,
@@ -694,6 +713,17 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       await walletBridge.setShowTestnets(enabled);
     } catch (err) {
       console.warn('[WalletStore] Failed to toggle testnets', err);
+    }
+  },
+
+  setAutoLockMinutes: async (minutes: number) => {
+    const safeMinutes = Number.isFinite(minutes) && minutes > 0 ? minutes : 15;
+    set({ autoLockMinutes: safeMinutes });
+    walletBridge.setAutoLockTimeout(safeMinutes);
+    try {
+      await AsyncStorage.setItem(AUTO_LOCK_MINUTES_KEY, String(safeMinutes));
+    } catch (err) {
+      console.warn('[WalletStore] Failed to persist auto-lock timeout', err);
     }
   },
 

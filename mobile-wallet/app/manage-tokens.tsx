@@ -19,6 +19,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
 import { getTokenIcon } from '../utils/tokenIcons';
+import { safeGoBack } from '../utils/navigation';
 
 export default function ManageTokensScreen() {
   const router = useRouter();
@@ -84,7 +85,7 @@ export default function ManageTokensScreen() {
         className="flex-row items-center px-5 pb-6"
         style={{ paddingTop: insets.top + 8 }}
       >
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity onPress={() => safeGoBack(router)} className="mr-4">
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <Text className="text-white text-xl font-bold flex-1">Manage Tokens</Text>

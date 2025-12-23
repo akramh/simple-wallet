@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
 import { useClipboard } from '../hooks';
 import { QRCode, NetworkBadge } from '../components';
+import { safeGoBack } from '../utils/navigation';
 
 export default function ReceiveScreen() {
   const router = useRouter();
@@ -51,7 +52,7 @@ export default function ReceiveScreen() {
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
       <View className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800">
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => safeGoBack(router)}>
           <Ionicons name="close" size={28} color="white" />
         </TouchableOpacity>
         <Text className="text-white text-xl font-bold">Receive</Text>

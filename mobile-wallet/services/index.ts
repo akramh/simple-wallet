@@ -38,6 +38,13 @@ export {
 
 // TON address validation
 export { isValidTonAddress } from './ton-utils';
+export {
+  isValidEvmAddress,
+  isValidBitcoinAddress,
+  isValidSolanaAddress,
+  isValidXRPAddress,
+  isValidDestinationTag,
+} from './address-utils';
 export type {
   TimeRange,
   PricePoint,

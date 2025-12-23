@@ -22,9 +22,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSendScreenSelector } from '../store';
 import type { Token, GasEstimate } from '../services';
-import { isValidTonAddress } from '../services';
+import {
+  isValidTonAddress,
+  isValidEvmAddress,
+  isValidBitcoinAddress,
+  isValidSolanaAddress,
+  isValidXRPAddress,
+  isValidDestinationTag,
+} from '../services';
 import { useClipboard } from '../hooks';
 import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
+import { safeGoBack } from '../utils/navigation';
 
 export default function SendScreen() {
   const router = useRouter();
@@ -67,6 +75,9 @@ export default function SendScreen() {
   const networkConfig = networks[network];
   const isXRPNetwork = networkConfig?.type === 'xrp';
   const isTonNetwork = networkConfig?.type === 'ton';
+  const isBitcoinNetwork = networkConfig?.type === 'bitcoin';
+  const isSolanaNetwork = networkConfig?.type === 'solana';
+  const isEvmNetwork = !networkConfig?.type || networkConfig?.type === 'evm';
   const footerHeight = 132;
   const footerOffset =
     keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom, 0) : insets.bottom;
@@ -102,6 +113,10 @@ export default function SendScreen() {
     if (recipient.length < 10) return;
     if (!isValidAmountInput(amount)) return;
     if (parseFloat(amount) <= 0) return;
+    if (!isValidRecipient(recipient)) {
+      setGasEstimate(null);
+      return;
+    }
 
     try {
       setIsEstimating(true);
@@ -279,12 +294,24 @@ export default function SendScreen() {
       Alert.alert('Error', 'Please enter a valid amount');
       return;
     }
-    // Validate TON address format
-    if (isTonNetwork && !isValidTonAddress(recipient)) {
-      Alert.alert(
-        'Invalid Address',
-        'Please enter a valid TON address (e.g., EQ... or UQ... format)'
-      );
+    if (isEvmNetwork && looksLikeEns(recipient)) {
+      Alert.alert('ENS Unsupported', 'ENS names are not supported yet. Please enter a 0x address.');
+      return;
+    }
+    if (!isValidRecipient(recipient)) {
+      Alert.alert('Invalid Address', getInvalidAddressMessage());
+      return;
+    }
+    if (isXRPNetwork && destinationTag && !isValidDestinationTag(destinationTag)) {
+      Alert.alert('Invalid Destination Tag', 'Destination tag must be a valid uint32 value.');
+      return;
+    }
+    if (isNativeToken() && !hasValidFeeEstimate()) {
+      Alert.alert('Fee Estimate Required', 'Please wait for a network fee estimate before sending.');
+      return;
+    }
+    if (!isAmountWithinBalance(amount)) {
+      Alert.alert('Insufficient Balance', getInsufficientBalanceMessage());
       return;
     }
     setStep('confirm');
@@ -323,6 +350,24 @@ export default function SendScreen() {
   const handleMax = () => {
     if (selectedToken) {
       const balance = getTokenBalance(selectedToken.symbol);
+      if (isNativeToken()) {
+        if (!recipient) {
+          Alert.alert('Enter Recipient', 'Please enter a recipient address before using Max.');
+          return;
+        }
+        if (!hasValidFeeEstimate()) {
+          Alert.alert('Fee Estimate Required', 'Please wait for a network fee estimate before using Max.');
+          return;
+        }
+        const fee = gasEstimate?.estimatedCostNative || '0';
+        const maxValue = subtractDecimal(balance, fee);
+        if (!maxValue || maxValue === '0') {
+          Alert.alert('Insufficient Balance', 'Your balance does not cover the network fee.');
+          return;
+        }
+        setAmount(maxValue);
+        return;
+      }
       setAmount(balance);
     }
   };
@@ -343,12 +388,103 @@ export default function SendScreen() {
 
   const isValidAmountInput = (value: string) => /^\d+(\.\d+)?$/.test(value);
 
+  const looksLikeEns = (value: string) => /.+\.eth$/i.test(value.trim());
+
+  const getBitcoinNetwork = () => {
+    if (!isBitcoinNetwork) return 'mainnet';
+    if (networkConfig?.bitcoinNetwork) return networkConfig.bitcoinNetwork;
+    if (networkConfig?.isTestnet || network.toLowerCase().includes('test')) return 'testnet';
+    return 'mainnet';
+  };
+
+  const isValidRecipient = (address: string) => {
+    if (isEvmNetwork) return isValidEvmAddress(address);
+    if (isBitcoinNetwork) return isValidBitcoinAddress(address, getBitcoinNetwork());
+    if (isSolanaNetwork) return isValidSolanaAddress(address);
+    if (isXRPNetwork) return isValidXRPAddress(address);
+    if (isTonNetwork) return isValidTonAddress(address);
+    return false;
+  };
+
+  const getInvalidAddressMessage = () => {
+    if (isBitcoinNetwork) return 'Please enter a valid Bitcoin address for this network.';
+    if (isSolanaNetwork) return 'Please enter a valid Solana address.';
+    if (isXRPNetwork) return 'Please enter a valid XRP address.';
+    if (isTonNetwork) return 'Please enter a valid TON address (e.g., EQ... or UQ... format).';
+    return 'Please enter a valid EVM address (0x...).';
+  };
+
+  const getTokenDecimals = () => {
+    if (selectedToken?.decimals !== undefined) return selectedToken.decimals;
+    if (isBitcoinNetwork) return 8;
+    if (isSolanaNetwork || isTonNetwork) return 9;
+    if (isXRPNetwork) return 6;
+    return 18;
+  };
+
+  const isNativeToken = () => {
+    if (!selectedToken) return false;
+    return selectedToken.type === 'native' || selectedToken.address === 'native' || !selectedToken.address;
+  };
+
+  const hasValidFeeEstimate = () => {
+    if (!gasEstimate || gasEstimate.error) return false;
+    const fee = parseFloat(gasEstimate.estimatedCostNative || '0');
+    return Number.isFinite(fee) && fee > 0;
+  };
+
+  const subtractDecimal = (value: string, fee: string) => {
+    const decimals = getTokenDecimals();
+    const valueInt = parseDecimalToBigInt(value, decimals);
+    const feeInt = parseDecimalToBigInt(fee, decimals);
+    if (feeInt <= 0n || valueInt <= feeInt) return '0';
+    return formatBigIntToDecimal(valueInt - feeInt, decimals);
+  };
+
+  const isAmountWithinBalance = (value: string) => {
+    if (!selectedToken) return false;
+    const decimals = getTokenDecimals();
+    const balance = getTokenBalance(selectedToken.symbol);
+    const balanceInt = parseDecimalToBigInt(balance, decimals);
+    const amountInt = parseDecimalToBigInt(value, decimals);
+    if (isNativeToken()) {
+      if (!hasValidFeeEstimate()) return false;
+      const feeInt = parseDecimalToBigInt(gasEstimate?.estimatedCostNative || '0', decimals);
+      return amountInt <= balanceInt - feeInt;
+    }
+    return amountInt <= balanceInt;
+  };
+
+  const getInsufficientBalanceMessage = () => {
+    if (isNativeToken()) return 'Amount exceeds spendable balance after fees.';
+    return 'Amount exceeds available balance.';
+  };
+
+  const parseDecimalToBigInt = (value: string, decimals: number) => {
+    const sanitized = value.trim();
+    if (!sanitized) return 0n;
+    const [wholeRaw, fracRaw = ''] = sanitized.split('.');
+    const whole = wholeRaw || '0';
+    const frac = fracRaw.padEnd(decimals, '0').slice(0, decimals);
+    const combined = `${whole}${frac}`.replace(/^0+(?=\d)/, '');
+    return BigInt(combined || '0');
+  };
+
+  const formatBigIntToDecimal = (value: bigint, decimals: number) => {
+    const negative = value < 0n;
+    const abs = negative ? -value : value;
+    const padded = abs.toString().padStart(decimals + 1, '0');
+    const whole = padded.slice(0, -decimals) || '0';
+    const frac = padded.slice(-decimals).replace(/0+$/, '');
+    return `${negative ? '-' : ''}${frac ? `${whole}.${frac}` : whole}`;
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       <View className="flex-1">
         {/* Header */}
         <View className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800">
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity onPress={() => safeGoBack(router)}>
             <Ionicons name="close" size={28} color="white" />
           </TouchableOpacity>
           <Text className="text-white text-xl font-bold">Send</Text>
@@ -415,7 +551,9 @@ export default function SendScreen() {
                   placeholder={
                     isXRPNetwork ? 'rAddress...' :
                     isTonNetwork ? 'EQ... or UQ...' :
-                    '0x... or ENS name'
+                    isBitcoinNetwork ? 'bc1... or 1.../3...' :
+                    isSolanaNetwork ? 'Solana address' :
+                    '0x...'
                   }
                   placeholderTextColor="#6b7280"
                   autoCapitalize="none"
@@ -807,7 +945,7 @@ export default function SendScreen() {
               className="bg-purple-600 rounded-xl py-4 items-center"
               onPress={() => {
                 setShowResultModal(false);
-                router.back();
+                safeGoBack(router);
               }}
             >
               <Text className="text-white font-semibold">Close</Text>

@@ -3,7 +3,7 @@
  */
 
 import { renderHook, act } from '@testing-library/react-native';
-import { describe, test, expect, jest, beforeEach } from '@jest/globals';
+import { describe, test, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 
@@ -13,6 +13,12 @@ describe('useClipboard', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.clearAllTimers();
+    jest.useRealTimers();
   });
 
   test('copy writes clipboard, triggers haptics, and toggles copied state', async () => {
@@ -33,6 +39,19 @@ describe('useClipboard', () => {
     });
     expect(result.current.copied).toBe(false);
   });
-});
 
+  test('clears pending reset timer on unmount', async () => {
+    const clearSpy = jest.spyOn(global, 'clearTimeout');
+    const { result, unmount } = renderHook(() => useClipboard());
+
+    await act(async () => {
+      await result.current.copy('hello');
+    });
+
+    unmount();
+
+    expect(clearSpy).toHaveBeenCalled();
+    clearSpy.mockRestore();
+  });
+});
 

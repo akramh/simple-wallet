@@ -333,6 +333,8 @@ export const useProfileScreenSelector = () =>
       currentWalletName: state.currentWalletName,
       network: state.network,
       networks: state.networks,
+      autoLockMinutes: state.autoLockMinutes,
+      setAutoLockMinutes: state.setAutoLockMinutes,
       lock: state.lock,
     }))
   );

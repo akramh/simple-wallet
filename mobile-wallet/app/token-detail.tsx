@@ -36,6 +36,7 @@ import { useClipboard, usePriceHistory } from '../hooks';
 import { getTokenIcon } from '../utils/tokenIcons';
 import { TransactionItem, PriceChart } from '../components';
 import { formatLargeNumber, formatSupply, type TimeRange, type PricePoint } from '../services';
+import { safeGoBack } from '../utils/navigation';
 
 // ============================================================================
 // Types
@@ -144,7 +145,7 @@ export default function TokenDetailScreen() {
   }, [setTimeRange]);
 
   // Navigation handlers
-  const handleBack = () => router.back();
+  const handleBack = () => safeGoBack(router);
 
   const handleSend = () => {
     if (isNavigatingRef.current) return;

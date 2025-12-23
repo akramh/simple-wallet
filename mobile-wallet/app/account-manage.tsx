@@ -22,6 +22,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
 import { useToast } from '../contexts';
+import { safeGoBack } from '../utils/navigation';
 
 export default function AccountManageScreen() {
   const router = useRouter();
@@ -50,7 +51,7 @@ export default function AccountManageScreen() {
 
     try {
       await switchAccount(index);
-      router.back();
+      safeGoBack(router);
     } catch (err) {
       Alert.alert('Error', 'Failed to switch account');
     }
@@ -71,7 +72,7 @@ export default function AccountManageScreen() {
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
       <View className="flex-row items-center px-5 pt-4 pb-2">
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity onPress={() => safeGoBack(router)} className="mr-4">
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <Text className="text-white text-xl font-bold flex-1">Accounts</Text>

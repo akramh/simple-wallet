@@ -88,6 +88,42 @@ test('token metadata caches after first fetch', async () => {
   assert.equal(meta2.symbol, 'AAA');
 });
 
+test('initialize reconnects wallet when created before provider setup', async () => {
+  class MockProvider {
+    constructor() {}
+    async getBlockNumber() {
+      return 1;
+    }
+  }
+
+  const config = {
+    network: 'mainnet',
+    networks: { mainnet: { chainId: 1, rpcUrl: 'https://rpc.example' } }
+  };
+
+  const wallet = new Wallet(config, new MemoryStorage());
+  wallet.providerFactory = { createProvider: () => new MockProvider() };
+
+  wallet._deriveAccount = () => ({
+    address: '0x0000000000000000000000000000000000000004',
+    privateKey: '0xpriv',
+    connect: (provider) => ({
+      address: '0x0000000000000000000000000000000000000004',
+      privateKey: '0xpriv',
+      provider
+    })
+  });
+
+  wallet.createNewWallet('password123');
+  assert.ok(wallet.wallet, 'wallet created before initialize');
+  assert.ok(!wallet.wallet.provider, 'wallet not connected before initialize');
+
+  await wallet.initialize();
+
+  assert.ok(wallet.provider, 'provider initialized');
+  assert.ok(wallet.wallet.provider, 'wallet reconnected to provider');
+});
+
 test('getTokenBalance surfaces BAD_DATA with descriptive error', async () => {
   class MockContract {
     constructor() {}

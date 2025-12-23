@@ -27,6 +27,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { walletBridge } from '../services';
 import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
 import { useClipboard } from '../hooks';
+import { safeGoBack } from '../utils/navigation';
 
 type ScreenState = 'password' | 'revealed';
 
@@ -75,7 +76,7 @@ export default function SecretPhraseScreen() {
     // Clear mnemonic from memory before navigating back
     setMnemonic(null);
     setPassword('');
-    router.back();
+    safeGoBack(router);
   };
 
   // Password confirmation screen

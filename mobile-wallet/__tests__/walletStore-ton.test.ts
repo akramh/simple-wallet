@@ -79,6 +79,7 @@ jest.mock('../services', () => {
       })),
       getShowTestnets: jest.fn(() => false),
       setShowTestnets: jest.fn(async () => {}),
+      setAutoLockTimeout: jest.fn(() => {}),
       addCustomToken: jest.fn(async () => {}),
       toggleTokenVisibility: jest.fn(async () => {}),
     },

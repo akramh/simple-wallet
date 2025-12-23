@@ -6,7 +6,7 @@
  * - Offer optional haptic feedback on copy for improved UX
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 
@@ -25,6 +25,7 @@ export function useClipboard() {
     copied: false,
     value: null,
   });
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * Copy text to clipboard with haptic feedback.
@@ -46,7 +47,10 @@ export function useClipboard() {
       setState({ copied: true, value: text });
 
       // Reset copied state after 2 seconds
-      setTimeout(() => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+      resetTimerRef.current = setTimeout(() => {
         setState((prev) => ({ ...prev, copied: false }));
       }, 2000);
 
@@ -90,6 +94,15 @@ export function useClipboard() {
     (text: string) => state.copied && state.value === text,
     [state.copied, state.value]
   );
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+        resetTimerRef.current = null;
+      }
+    };
+  }, []);
 
   return {
     ...state,
