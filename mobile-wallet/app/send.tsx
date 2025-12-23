@@ -15,7 +15,6 @@ import {
   Modal,
   StyleSheet,
   Linking,
-  ToastAndroid,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -24,7 +23,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSendScreenSelector } from '../store';
 import type { Token, GasEstimate } from '../services';
 import { isValidTonAddress } from '../services';
-import * as Clipboard from 'expo-clipboard';
+import { useClipboard } from '../hooks';
 import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
 
 export default function SendScreen() {
@@ -47,8 +46,8 @@ export default function SendScreen() {
   const [step, setStep] = useState<'select-token' | 'enter-details' | 'confirm'>('select-token');
   const [showResultModal, setShowResultModal] = useState(false);
   const [txResult, setTxResult] = useState<{ hash?: string; status: 'pending' | 'confirmed' } | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const { copy, isCopied } = useClipboard();
 
   // QR Scanner state
   const [showScanner, setShowScanner] = useState(false);
@@ -71,7 +70,6 @@ export default function SendScreen() {
   const footerHeight = 132;
   const footerOffset =
     keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom, 0) : insets.bottom;
-  const headerPaddingTop = insets.top + 8;
 
   // Set default token on mount
   useEffect(() => {
@@ -236,10 +234,10 @@ export default function SendScreen() {
     if (scannedAmount) {
       setAmount(normalizeAmountInput(scannedAmount));
     }
-    try {
-      await Clipboard.setStringAsync(address);
+    const copied = await copy(address);
+    if (copied) {
       setScanStatus('copied');
-    } catch (error) {
+    } else {
       setScanStatus('error');
       setScanError('Unable to copy the address. Try again.');
       setHasScanned(false);
@@ -317,15 +315,6 @@ export default function SendScreen() {
     }
   };
 
-  const showToast = useCallback((message: string) => {
-    if (Platform.OS === 'android') {
-      ToastAndroid.show(message, ToastAndroid.SHORT);
-      return;
-    }
-    setToastMessage(message);
-    setTimeout(() => setToastMessage(null), 2000);
-  }, []);
-
   const getTokenBalance = (symbol: string) => {
     const item = balances.find((b) => b.token.symbol === symbol);
     return item?.balance || '0';
@@ -358,10 +347,7 @@ export default function SendScreen() {
     <SafeAreaView className="flex-1 bg-gray-950">
       <View className="flex-1">
         {/* Header */}
-        <View
-          className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800"
-          style={{ paddingTop: headerPaddingTop }}
-        >
+        <View className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800">
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="close" size={28} color="white" />
           </TouchableOpacity>
@@ -773,7 +759,8 @@ export default function SendScreen() {
                 label="To"
                 value={`${recipient.slice(0, 10)}...${recipient.slice(-8)}`}
                 copyValue={recipient}
-                onCopy={showToast}
+                copied={isCopied(recipient)}
+                onCopy={copy}
               />
               <DetailRow label="Network" value={networkConfig?.name || network} />
               {gasEstimate && (
@@ -790,7 +777,8 @@ export default function SendScreen() {
                   ? `${txResult.hash.slice(0, 10)}...${txResult.hash.slice(-8)}`
                   : 'Pending'}
                 copyValue={txResult?.hash}
-                onCopy={showToast}
+                copied={txResult?.hash ? isCopied(txResult.hash) : false}
+                onCopy={copy}
                 isLast
               />
             </View>
@@ -828,13 +816,6 @@ export default function SendScreen() {
         </View>
       </Modal>
 
-      {toastMessage && (
-        <View className="absolute bottom-10 left-6 right-6 items-center">
-          <View className="bg-gray-800 rounded-full px-4 py-2">
-            <Text className="text-white text-sm">{toastMessage}</Text>
-          </View>
-        </View>
-      )}
     </SafeAreaView>
   );
 }
@@ -843,13 +824,15 @@ function DetailRow({
   label,
   value,
   copyValue,
+  copied,
   onCopy,
   isLast,
 }: {
   label: string;
   value: string;
   copyValue?: string;
-  onCopy?: (message: string) => void;
+  copied?: boolean;
+  onCopy?: (text: string) => Promise<boolean>;
   isLast?: boolean;
 }) {
   return (
@@ -860,12 +843,15 @@ function DetailRow({
         {copyValue && (
           <TouchableOpacity
             onPress={async () => {
-              await Clipboard.setStringAsync(copyValue);
-              onCopy?.(`${label} copied to clipboard`);
+              await onCopy?.(copyValue);
             }}
             className="ml-2"
           >
-            <Ionicons name="copy-outline" size={16} color="#9ca3af" />
+            <Ionicons
+              name={copied ? 'checkmark-circle' : 'copy-outline'}
+              size={16}
+              color={copied ? '#a855f7' : '#9ca3af'}
+            />
           </TouchableOpacity>
         )}
       </View>

@@ -3,7 +3,7 @@
  */
 
 import { View, Text, TouchableOpacity, ScrollView, Image, Switch } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useNetworkSelectScreenSelector } from '../store';
@@ -11,7 +11,6 @@ import { getNetworkIcon } from '../utils/tokenIcons';
 
 export default function NetworkSelectScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { 
     network, 
     networks, 
@@ -53,10 +52,7 @@ export default function NetworkSelectScreen() {
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
-      <View
-        className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800"
-        style={{ paddingTop: insets.top + 8 }}
-      >
+      <View className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800">
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="close" size={28} color="white" />
         </TouchableOpacity>

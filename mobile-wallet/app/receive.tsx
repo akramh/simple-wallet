@@ -2,14 +2,13 @@
  * @fileoverview Receive screen - shows address QR code.
  */
 
-import { useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   Share,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
@@ -19,10 +18,8 @@ import { QRCode, NetworkBadge } from '../components';
 export default function ReceiveScreen() {
   const router = useRouter();
   const { network: currentNetwork, networks, getAddressForNetwork, address: currentAddress } = useWalletStore();
-  const { copy } = useClipboard();
+  const { copy, isCopied } = useClipboard();
   const { network: paramNetwork } = useLocalSearchParams<{ network?: string }>();
-  const [copied, setCopied] = useState(false);
-  const insets = useSafeAreaInsets();
 
   const resolvedNetwork =
     typeof paramNetwork === 'string' && networks[paramNetwork] ? paramNetwork : currentNetwork;
@@ -32,13 +29,11 @@ export default function ReceiveScreen() {
     (resolvedNetwork ? getAddressForNetwork(resolvedNetwork) : null) || currentAddress;
 
   const handleCopy = async () => {
-    if (!resolvedAddress || copied) return;
-    const success = await copy(resolvedAddress);
-    if (success) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    if (!resolvedAddress) return;
+    await copy(resolvedAddress);
   };
+
+  const addressCopied = resolvedAddress ? isCopied(resolvedAddress) : false;
 
   const handleShare = async () => {
     if (!resolvedAddress) return;
@@ -55,10 +50,7 @@ export default function ReceiveScreen() {
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
-      <View
-        className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800"
-        style={{ paddingTop: insets.top + 8 }}
-      >
+      <View className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800">
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="close" size={28} color="white" />
         </TouchableOpacity>
@@ -104,16 +96,16 @@ export default function ReceiveScreen() {
           <TouchableOpacity
             onPress={handleCopy}
             className={`flex-1 rounded-xl py-4 flex-row items-center justify-center ${
-              copied ? 'bg-purple-600' : 'bg-gray-800'
+              addressCopied ? 'bg-purple-600' : 'bg-gray-800'
             }`}
           >
             <Ionicons 
-              name={copied ? 'checkmark-circle' : 'copy-outline'} 
+              name={addressCopied ? 'checkmark-circle' : 'copy-outline'} 
               size={20} 
-              color={copied ? 'white' : '#a855f7'} 
+              color={addressCopied ? 'white' : '#a855f7'} 
             />
-            <Text className={`font-semibold ml-2 ${copied ? 'text-white' : 'text-purple-400'}`}>
-              {copied ? 'Copied!' : 'Copy'}
+            <Text className={`font-semibold ml-2 ${addressCopied ? 'text-white' : 'text-purple-400'}`}>
+              {addressCopied ? 'Copied!' : 'Copy'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity

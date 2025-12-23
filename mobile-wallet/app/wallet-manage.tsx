@@ -24,6 +24,7 @@ export default function WalletManageScreen() {
     currentWalletName,
     loadWalletList,
     switchWallet,
+    canSwitchWalletWithoutPassword,
     isLoading,
     error,
     clearError,
@@ -39,9 +40,20 @@ export default function WalletManageScreen() {
     loadWalletList();
   }, []);
 
-  const handleWalletPress = (walletName: string) => {
+  const handleWalletPress = async (walletName: string) => {
     if (walletName === currentWalletName) {
       // Already active
+      return;
+    }
+    if (canSwitchWalletWithoutPassword()) {
+      try {
+        await switchWallet(walletName);
+        router.back();
+      } catch (err) {
+        setSelectedWalletToSwitch(walletName);
+        setPassword('');
+        setShowPasswordModal(true);
+      }
       return;
     }
     setSelectedWalletToSwitch(walletName);

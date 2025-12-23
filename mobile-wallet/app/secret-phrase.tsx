@@ -21,26 +21,24 @@ import {
   TextInput,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
-import * as Haptics from 'expo-haptics';
 import { walletBridge } from '../services';
+import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
+import { useClipboard } from '../hooks';
 
 type ScreenState = 'password' | 'revealed';
 
 export default function SecretPhraseScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
-
   const [screenState, setScreenState] = useState<ScreenState>('password');
   const [password, setPassword] = useState('');
   const [mnemonic, setMnemonic] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isBlurred, setIsBlurred] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const { copy, isCopied } = useClipboard();
 
   const words = mnemonic?.split(' ') || [];
 
@@ -67,12 +65,11 @@ export default function SecretPhraseScreen() {
   };
 
   const handleCopy = async () => {
-    if (!mnemonic || copied) return;
-    await Clipboard.setStringAsync(mnemonic);
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (!mnemonic) return;
+    await copy(mnemonic);
   };
+
+  const phraseCopied = mnemonic ? isCopied(mnemonic) : false;
 
   const handleBack = () => {
     // Clear mnemonic from memory before navigating back
@@ -86,10 +83,7 @@ export default function SecretPhraseScreen() {
     return (
       <SafeAreaView className="flex-1 bg-gray-950">
         {/* Header */}
-        <View
-          className="flex-row items-center px-4 pb-3 border-b border-gray-800"
-          style={{ paddingTop: insets.top + 8 }}
-        >
+        <View className="flex-row items-center px-4 pb-3 border-b border-gray-800">
           <TouchableOpacity onPress={handleBack} className="p-2 -ml-2">
             <Ionicons name="arrow-back" size={24} color="white" />
           </TouchableOpacity>
@@ -98,7 +92,7 @@ export default function SecretPhraseScreen() {
           </Text>
         </View>
 
-        <ScrollView className="flex-1 px-6" keyboardShouldPersistTaps="handled">
+        <KeyboardAwareScrollView className="flex-1 px-6" keyboardShouldPersistTaps="handled">
           {/* Info Section */}
           <View className="pt-8 pb-6">
             <View className="w-16 h-16 rounded-full bg-yellow-500/20 items-center justify-center mx-auto mb-4">
@@ -167,7 +161,7 @@ export default function SecretPhraseScreen() {
               </Text>
             )}
           </TouchableOpacity>
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </SafeAreaView>
     );
   }
@@ -176,10 +170,7 @@ export default function SecretPhraseScreen() {
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
-      <View
-        className="flex-row items-center px-4 pb-3 border-b border-gray-800"
-        style={{ paddingTop: insets.top + 8 }}
-      >
+      <View className="flex-row items-center px-4 pb-3 border-b border-gray-800">
         <TouchableOpacity onPress={handleBack} className="p-2 -ml-2">
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
@@ -248,17 +239,17 @@ export default function SecretPhraseScreen() {
               <TouchableOpacity
                 onPress={handleCopy}
                 className={`flex-row items-center justify-center mt-4 py-3 rounded-xl ${
-                  copied ? 'bg-purple-600' : 'bg-gray-800'
+                  phraseCopied ? 'bg-purple-600' : 'bg-gray-800'
                 }`}
-                disabled={copied}
+                disabled={phraseCopied}
               >
                 <Ionicons
-                  name={copied ? 'checkmark-circle' : 'copy-outline'}
+                  name={phraseCopied ? 'checkmark-circle' : 'copy-outline'}
                   size={18}
-                  color={copied ? '#ffffff' : '#a855f7'}
+                  color={phraseCopied ? '#ffffff' : '#a855f7'}
                 />
-                <Text className={`ml-2 ${copied ? 'text-white' : 'text-purple-400'}`}>
-                  {copied ? 'Copied!' : 'Copy to Clipboard'}
+                <Text className={`ml-2 ${phraseCopied ? 'text-white' : 'text-purple-400'}`}>
+                  {phraseCopied ? 'Copied!' : 'Copy to Clipboard'}
                 </Text>
               </TouchableOpacity>
 

@@ -18,7 +18,6 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletScreenSelector } from '../../store';
 import { useClipboard } from '../../hooks';
-import { useToast } from '../../contexts';
 import { getTokenIcon } from '../../utils/tokenIcons';
 import { RefreshPill } from '../../components';
 
@@ -40,8 +39,7 @@ export default function WalletScreen() {
     currentWalletName,
   } = useWalletScreenSelector();
   const isNavigatingRef = useRef(false);
-  const { copy } = useClipboard();
-  const { showToast } = useToast();
+  const { copy, isCopied } = useClipboard();
 
   // Refresh balances on mount
   useEffect(() => {
@@ -55,18 +53,28 @@ export default function WalletScreen() {
     refreshBalances();
   }, [refreshBalances]);
 
+  const navigateOnce = useCallback(
+    (action: () => void) => {
+      if (isNavigatingRef.current) return;
+      isNavigatingRef.current = true;
+      action();
+      setTimeout(() => {
+        isNavigatingRef.current = false;
+      }, 600);
+    },
+    []
+  );
+
   const handleCopyAddress = async () => {
     if (!address) return;
-    const success = await copy(address);
-    if (success) {
-      showToast('Address copied to clipboard', 'success');
-    }
+    await copy(address);
   };
 
   const networkConfig = networks[network];
   const truncatedAddress = address
     ? `${address.slice(0, 8)}...${address.slice(-6)}`
     : '';
+  const addressCopied = address ? isCopied(address) : false;
   const hasMultipleAccounts = accounts.length > 1;
 
   return (
@@ -84,23 +92,20 @@ export default function WalletScreen() {
           const isNative = item.token.address === 'native' || !item.token.address;
 
           const handleTokenPress = () => {
-            if (isNavigatingRef.current) return;
-            isNavigatingRef.current = true;
-            router.push({
-              pathname: '/token-detail',
-              params: {
-                symbol: item.token.symbol,
-                name: item.token.name,
-                network: network,
-                balance: item.balance || '0',
-                contractAddress: isNative ? undefined : item.token.address,
-                isNative: isNative ? 'true' : 'false',
-                decimals: item.token.decimals?.toString() || '18',
-              },
+            navigateOnce(() => {
+              router.push({
+                pathname: '/token-detail',
+                params: {
+                  symbol: item.token.symbol,
+                  name: item.token.name,
+                  network: network,
+                  balance: item.balance || '0',
+                  contractAddress: isNative ? undefined : item.token.address,
+                  isNative: isNative ? 'true' : 'false',
+                  decimals: item.token.decimals?.toString() || '18',
+                },
+              });
             });
-            setTimeout(() => {
-              isNavigatingRef.current = false;
-            }, 600);
           };
 
           return (
@@ -123,7 +128,7 @@ export default function WalletScreen() {
               {/* Network & Account Selectors */}
               <View className="flex-row items-center mb-4">
                 <Pressable
-                  onPress={() => router.push('/network-select')}
+                  onPress={() => navigateOnce(() => router.push('/network-select'))}
                   className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full mr-2"
                 >
                   <View className="w-2.5 h-2.5 rounded-full bg-green-500 mr-2" />
@@ -133,7 +138,7 @@ export default function WalletScreen() {
                 
                 {hasMultipleAccounts && (
                   <Pressable
-                    onPress={() => router.push('/account-manage')}
+                    onPress={() => navigateOnce(() => router.push('/account-manage'))}
                     className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full"
                   >
                     <Ionicons name="person" size={12} color="#9ca3af" />
@@ -152,7 +157,12 @@ export default function WalletScreen() {
                   <Text className="text-white font-medium">{currentWalletName || 'Wallet'}</Text>
                   <Text className="text-gray-500 mx-2">·</Text>
                   <Text className="text-gray-400 text-sm">{truncatedAddress}</Text>
-                  <Ionicons name="copy-outline" size={14} color="#9ca3af" style={{ marginLeft: 8 }} />
+                  <Ionicons
+                    name={addressCopied ? 'checkmark-circle' : 'copy-outline'}
+                    size={14}
+                    color={addressCopied ? '#a855f7' : '#9ca3af'}
+                    style={{ marginLeft: 8 }}
+                  />
                 </Pressable>
                 
                 {balancesLastUpdated && (
@@ -168,12 +178,12 @@ export default function WalletScreen() {
               <QuickActionButton
                 icon="arrow-up"
                 label="Send"
-                onPress={() => router.push('/send')}
+                onPress={() => navigateOnce(() => router.push('/send'))}
               />
               <QuickActionButton
                 icon="arrow-down"
                 label="Receive"
-                onPress={() => router.push('/receive')}
+                onPress={() => navigateOnce(() => router.push('/receive'))}
               />
               <QuickActionButton
                 icon="swap-horizontal"
@@ -192,7 +202,7 @@ export default function WalletScreen() {
             {/* Token List Title & Manage Button */}
             <View className="bg-gray-900/50 rounded-t-3xl px-5 pt-5 pb-2 flex-row justify-between items-center">
               <Text className="text-white text-lg font-semibold">Tokens</Text>
-              <TouchableOpacity onPress={() => router.push('/manage-tokens')}>
+              <TouchableOpacity onPress={() => navigateOnce(() => router.push('/manage-tokens'))}>
                 <Text className="text-purple-400 text-sm font-medium">Manage</Text>
               </TouchableOpacity>
             </View>
