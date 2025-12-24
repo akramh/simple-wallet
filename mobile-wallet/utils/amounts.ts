@@ -11,10 +11,12 @@ export const formatDecimal = (value: number, decimals: number) =>
     .replace(/(\.\d*?)0+$/, '$1');
 
 export const formatTokenAmountDisplay = (
-  value: string,
+  value: string | number,
   decimals: number = DEFAULT_DISPLAY_DECIMALS
 ) => {
-  const sanitized = value.trim();
+  // Handle number inputs by converting to string
+  const strValue = typeof value === 'number' ? String(value) : (value ?? '');
+  const sanitized = strValue.trim();
   if (!sanitized) return '';
   const numeric = Number(sanitized);
   if (!Number.isFinite(numeric)) return value;

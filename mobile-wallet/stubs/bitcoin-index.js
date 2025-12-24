@@ -230,7 +230,8 @@ function isValidBitcoinAddress(address, network = 'mainnet') {
 
 // Utility functions
 const satoshisToBtc = (satoshis) => {
-  return Number(satoshis) / Number(SATOSHIS_PER_BTC);
+  // Return string to match real implementation
+  return (Number(satoshis) / Number(SATOSHIS_PER_BTC)).toFixed(8);
 };
 
 const btcToSatoshis = (btc) => {
@@ -559,6 +560,65 @@ class BitcoinExplorer {
       }
     }
   }
+
+  /**
+   * Get a specific transaction by txid.
+   *
+   * @param {string} txid - Transaction ID
+   * @returns {Promise<Object|null>} Transaction data or null if not found
+   */
+  async getTransaction(txid) {
+    const cacheKey = `tx:${this.network}:${txid}`;
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const url = `${this.apiUrl}/tx/${txid}`;
+      const response = await fetchWithTimeout(url);
+
+      if (!response.ok) {
+        if (response.status === 404) return null;
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const tx = await response.json();
+      setCache(cacheKey, tx);
+      return tx;
+    } catch (error) {
+      console.warn('[BitcoinExplorer] Failed to fetch transaction:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Broadcast a signed transaction to the network.
+   *
+   * @param {string} txHex - Signed transaction in hex format
+   * @returns {Promise<string>} Transaction ID if successful
+   */
+  async broadcastTransaction(txHex) {
+    try {
+      const url = `${this.apiUrl}/tx`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+        body: txHex,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Broadcast failed: ${errorText}`);
+      }
+
+      const txid = await response.text();
+      return txid.trim();
+    } catch (error) {
+      console.error('[BitcoinExplorer] Failed to broadcast transaction:', error);
+      throw error;
+    }
+  }
 }
 
 // Provider class matching the real BitcoinProvider interface
@@ -672,6 +732,92 @@ class BitcoinProvider {
     const addr = address || this.currentAddress?.address;
     return this.explorer.getAddressUrl(addr);
   }
+
+  /**
+   * Get recommended fee rates.
+   * Delegates to explorer.
+   *
+   * @returns {Promise<{fastestFee: number, halfHourFee: number, hourFee: number, economyFee: number, minimumFee: number}>}
+   */
+  async getFeeEstimates() {
+    return this.explorer.getFeeEstimates();
+  }
+
+  /**
+   * Estimate inputs and fee for sending BTC.
+   * Stub implementation that returns a basic estimate.
+   *
+   * @param {string} fromAddress - Sender address
+   * @param {string} toAddress - Recipient address
+   * @param {string} amountBtc - Amount in BTC
+   * @param {number} feeRateSatVb - Fee rate in sat/vB
+   */
+  async estimateSendTransaction(fromAddress, toAddress, amountBtc, feeRateSatVb) {
+    // Get UTXOs
+    const utxos = await this.getUTXOs(fromAddress);
+    const confirmedUtxos = utxos.filter(u => u.status && u.status.confirmed);
+    
+    // Parse amount to satoshis
+    const amountSats = Math.round(parseFloat(amountBtc) * 100000000);
+    
+    // Estimate vbytes (1 input ~68 vB, 2 outputs ~31 vB each, overhead ~10 vB)
+    // Simple estimate: 1-2 inputs, 2 outputs (recipient + change)
+    const estimatedVbytes = 140; // Typical P2WPKH tx size
+    const feeSats = Math.ceil(estimatedVbytes * feeRateSatVb);
+    
+    // Find enough UTXOs
+    let totalInputSats = 0;
+    const selectedUtxos = [];
+    for (const utxo of confirmedUtxos.sort((a, b) => b.value - a.value)) {
+      selectedUtxos.push(utxo);
+      totalInputSats += utxo.value;
+      if (totalInputSats >= amountSats + feeSats) break;
+    }
+    
+    if (totalInputSats < amountSats + feeSats) {
+      throw new Error('Insufficient balance for transaction + fees');
+    }
+    
+    const changeSats = totalInputSats - amountSats - feeSats;
+    
+    return {
+      amountSats,
+      inputs: selectedUtxos,
+      totalInputSats,
+      changeSats,
+      fee: {
+        feeRateSatVb,
+        vbytes: estimatedVbytes,
+        feeSats,
+        inputCount: selectedUtxos.length,
+        outputCount: changeSats > 546 ? 2 : 1, // Dust threshold
+        hasChange: changeSats > 546,
+      },
+    };
+  }
+
+  /**
+   * Build, sign, and broadcast a Bitcoin transaction.
+   * 
+   * NOTE: Full transaction signing is not yet implemented in the mobile stub.
+   * This requires implementing P2WPKH transaction building with secp256k1 signing.
+   *
+   * @param {string} fromAddress - Sender address
+   * @param {string} toAddress - Recipient address
+   * @param {string} amountBtc - Amount in BTC string
+   * @param {string} wif - Private key in WIF format
+   * @param {number} [feeRateSatVb] - Optional fee rate in sat/vB
+   * @returns {Promise<{txid: string, feeSats: number, feeBtc: string, vbytes: number}>}
+   */
+  async sendTransaction(fromAddress, toAddress, amountBtc, wif, feeRateSatVb) {
+    // TODO: Implement full P2WPKH transaction signing
+    // This requires:
+    // 1. Fetching prevouts for each input
+    // 2. Building the transaction with proper witness data
+    // 3. Signing with secp256k1
+    // 4. Broadcasting the signed transaction
+    throw new Error('Bitcoin transaction signing is not yet implemented on mobile. Please use the CLI or browser extension to send BTC.');
+  }
 }
 
 function getBitcoinExplorer(network = 'mainnet') {
@@ -680,8 +826,24 @@ function getBitcoinExplorer(network = 'mainnet') {
   return new BitcoinExplorer(normalizedNetwork);
 }
 
-function getBitcoinProvider(config = {}) {
-  return new BitcoinProvider(config);
+// Provider cache to match real implementation
+const providerCache = new Map();
+
+function getBitcoinProvider(networkKey) {
+  // Accept either a networkKey string or config object for compatibility
+  if (typeof networkKey === 'object') {
+    const config = networkKey;
+    return new BitcoinProvider(config);
+  }
+  
+  // Match the real implementation signature: getBitcoinProvider(networkKey: string)
+  let provider = providerCache.get(networkKey);
+  if (!provider) {
+    const network = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
+    provider = new BitcoinProvider({ network, networkKey });
+    providerCache.set(networkKey, provider);
+  }
+  return provider;
 }
 
 /**
