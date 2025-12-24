@@ -286,8 +286,10 @@ export default function SendScreen() {
 
   const getTokenBalance = (symbol: string) => {
     const item = balances.find((b) => b.token.symbol === symbol);
-    // Ensure we always return a string, even if balance is null/undefined
-    return typeof item?.balance === 'string' ? item.balance : '0';
+    // Ensure we always return a string, even if balance is null/undefined/number
+    const bal = item?.balance;
+    if (bal == null) return '0';
+    return typeof bal === 'string' ? bal : String(bal);
   };
 
   const setAmountFromTokenValue = (value: string) => {

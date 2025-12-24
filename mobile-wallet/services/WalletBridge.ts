@@ -613,9 +613,13 @@ class WalletBridge {
         const key = address && token.type !== 'native' ? `${networkKey}:${address}` : null;
         const isHidden = key ? this.hiddenTokens.has(key) : false;
         
+        // Ensure balance is always a string (API may return number for some networks)
+        const rawBalance = item.balance;
+        const balance = rawBalance == null ? '0' : typeof rawBalance === 'string' ? rawBalance : String(rawBalance);
+        
         return {
           token,
-          balance: item.balance || '0',
+          balance,
           lastUpdated: fetchedAt,
           isLoading: false,
           isVisible: !isHidden,
@@ -1197,13 +1201,19 @@ class WalletBridge {
             if (!networkKey) break;
             try {
               const perNetwork = await this.getNetworkPortfolioWithCache(networkKey, { ttlMs, force });
-              holdings.push(...perNetwork.portfolio.map((item: any) => ({
-                ...item,
-                token: this.mapToSharedToken(item.token),
-                networkKey,
-                height: perNetwork.height ?? null,
-                fetchedAt: perNetwork.fetchedAt
-              })));
+              holdings.push(...perNetwork.portfolio.map((item: any) => {
+                // Ensure balance is always a string
+                const rawBalance = item.balance;
+                const balance = rawBalance == null ? '0' : typeof rawBalance === 'string' ? rawBalance : String(rawBalance);
+                return {
+                  ...item,
+                  balance,
+                  token: this.mapToSharedToken(item.token),
+                  networkKey,
+                  height: perNetwork.height ?? null,
+                  fetchedAt: perNetwork.fetchedAt
+                };
+              }));
             } catch (err: any) {
               errors[networkKey] = err?.message || 'Failed to fetch';
             }
