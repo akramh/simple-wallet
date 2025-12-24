@@ -9,6 +9,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../store';
 import { useBiometrics } from '../hooks';
+import { safeGoBack } from '../utils/navigation';
 
 export default function ChangePasswordScreen() {
   const router = useRouter();
@@ -43,7 +44,7 @@ export default function ChangePasswordScreen() {
       }
 
       Alert.alert('Success', 'Your password has been updated.');
-      router.back();
+      safeGoBack(router);
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'Failed to change password.');
     } finally {
@@ -58,7 +59,7 @@ export default function ChangePasswordScreen() {
         className="flex-row items-center px-5 pb-4 border-b border-gray-800"
         style={{ paddingTop: insets.top + 8 }}
       >
-        <TouchableOpacity onPress={() => router.back()} className="p-2 -ml-2">
+        <TouchableOpacity onPress={() => safeGoBack(router)} className="p-2 -ml-2">
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <Text className="text-white text-xl font-bold ml-2">Change Password</Text>

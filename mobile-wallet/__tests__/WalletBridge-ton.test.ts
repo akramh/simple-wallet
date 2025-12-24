@@ -34,6 +34,7 @@ jest.mock('../config/bundled-config', () => ({
     },
   }),
   getBundledTokens: () => ({}),
+  getCoingeckoApiKey: () => undefined,
 }));
 
 // Mock mobile adapters
@@ -132,6 +133,11 @@ jest.mock('@wallet/app-service', () => ({
 jest.mock('@wallet/crypto-utils', () => ({
   __esModule: true,
   setCryptoAdapter: jest.fn(() => {}),
+}));
+
+jest.mock('@wallet/price-providers/index', () => ({
+  __esModule: true,
+  setCoingeckoApiKey: jest.fn(() => {}),
 }));
 
 // Mock price service

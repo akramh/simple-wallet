@@ -8,7 +8,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useProfileScreenSelector } from '../../store';
-import { walletBridge } from '../../services';
 import { useBiometrics, useClipboard } from '../../hooks';
 
 // Auto-lock timeout options in minutes
@@ -22,12 +21,19 @@ const AUTO_LOCK_OPTIONS = [
 export default function ProfileScreen() {
   const router = useRouter();
   const isNavigatingRef = useRef(false);
-  const { address, currentWalletName, network, networks, lock } = useProfileScreenSelector();
+  const {
+    address,
+    currentWalletName,
+    network,
+    networks,
+    autoLockMinutes,
+    setAutoLockMinutes,
+    lock,
+  } = useProfileScreenSelector();
   const biometrics = useBiometrics();
   const { copy, isCopied } = useClipboard();
 
-  // Auto-lock state
-  const [autoLockMinutes, setAutoLockMinutes] = useState(15);
+  // Auto-lock UI state
   const [showAutoLockPicker, setShowAutoLockPicker] = useState(false);
 
   // Biometrics state
@@ -109,7 +115,6 @@ export default function ProfileScreen() {
   // Handle auto-lock selection
   const handleAutoLockSelect = (minutes: number) => {
     setAutoLockMinutes(minutes);
-    walletBridge.setAutoLockTimeout(minutes);
     setShowAutoLockPicker(false);
   };
 

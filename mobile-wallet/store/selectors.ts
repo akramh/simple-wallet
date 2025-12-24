@@ -333,6 +333,8 @@ export const useProfileScreenSelector = () =>
       currentWalletName: state.currentWalletName,
       network: state.network,
       networks: state.networks,
+      autoLockMinutes: state.autoLockMinutes,
+      setAutoLockMinutes: state.setAutoLockMinutes,
       lock: state.lock,
     }))
   );
@@ -344,6 +346,7 @@ export const useSendScreenSelector = () =>
   useWalletStore(
     useShallow((state) => ({
       balances: state.balances,
+      prices: state.prices,
       network: state.network,
       networks: state.networks,
       getGasEstimate: state.getGasEstimate,

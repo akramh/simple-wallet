@@ -8,6 +8,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useNetworkSelectScreenSelector } from '../store';
 import { getNetworkIcon } from '../utils/tokenIcons';
+import { safeGoBack } from '../utils/navigation';
 
 export default function NetworkSelectScreen() {
   const router = useRouter();
@@ -22,13 +23,13 @@ export default function NetworkSelectScreen() {
 
   const handleNetworkSelect = async (networkKey: string) => {
     if (networkKey === network) {
-      router.back();
+      safeGoBack(router);
       return;
     }
 
     try {
       await switchNetwork(networkKey);
-      router.back();
+      safeGoBack(router);
     } catch (error) {
       console.error('Failed to switch network:', error);
     }
@@ -53,7 +54,7 @@ export default function NetworkSelectScreen() {
     <SafeAreaView className="flex-1 bg-gray-950">
       {/* Header */}
       <View className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800">
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => safeGoBack(router)}>
           <Ionicons name="close" size={28} color="white" />
         </TouchableOpacity>
         <Text className="text-white text-xl font-bold">Select Network</Text>

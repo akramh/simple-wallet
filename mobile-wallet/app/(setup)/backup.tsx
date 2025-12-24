@@ -16,6 +16,7 @@ import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletStore } from '../../store';
 import { useClipboard } from '../../hooks';
+import { safeGoBack } from '../../utils/navigation';
 
 export default function BackupScreen() {
   const router = useRouter();
@@ -37,7 +38,7 @@ export default function BackupScreen() {
           { 
             text: 'Leave Anyway', 
             style: 'destructive', 
-            onPress: () => router.back() 
+            onPress: () => safeGoBack(router)
           },
         ]
       );

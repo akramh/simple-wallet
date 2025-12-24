@@ -269,8 +269,8 @@ export function PriceChart({
     height,
     paddingTop: 16,
     paddingBottom: 16,
-    paddingLeft: 55, // Space for Y-axis labels
-    paddingRight: 8,
+    paddingLeft: 8,
+    paddingRight: 55, // Space for Y-axis labels on right
   };
 
   const lineColor = isPositive ? CHART_COLORS.positive : CHART_COLORS.negative;
@@ -387,13 +387,13 @@ export function PriceChart({
                     strokeWidth={1}
                     strokeDasharray="2,4"
                   />
-                  {/* Y-axis label */}
+                  {/* Y-axis label (right side) */}
                   <SvgText
-                    x={dimensions.paddingLeft - 6}
+                    x={dimensions.width - dimensions.paddingRight + 6}
                     y={y + 4}
                     fontSize={10}
                     fill={CHART_COLORS.text}
-                    textAnchor="end"
+                    textAnchor="start"
                   >
                     {formatAxisPrice(tickValue)}
                   </SvgText>

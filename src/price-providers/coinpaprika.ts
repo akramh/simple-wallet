@@ -1,8 +1,9 @@
 /**
  * @fileoverview CoinPaprika price provider implementation.
  *
- * Primary price data provider with generous free tier (20K calls/month).
+ * Fallback price data provider with generous free tier (20K calls/month).
  * Supports current prices, price history, and token metadata.
+ * Does not support contract-based ERC-20 lookups.
  *
  * @responsibilities
  * - Fetch current token prices from CoinPaprika API
@@ -238,8 +239,8 @@ interface CoinPaprikaCoinResponse {
 /**
  * CoinPaprika price provider.
  *
- * Primary provider with better free tier rate limits than CoinGecko.
- * Free tier: 20,000 calls/month (~667/day, ~28/hour).
+ * Fallback provider with generous free tier (20,000 calls/month).
+ * Does not support contract-based ERC-20 lookups.
  *
  * @example
  * ```typescript
@@ -253,7 +254,7 @@ interface CoinPaprikaCoinResponse {
  */
 export class CoinPaprikaProvider implements PriceProvider {
   readonly name = 'CoinPaprika';
-  readonly priority = 1; // Primary provider
+  readonly priority = 2; // Fallback provider (no API key required)
 
   /**
    * Check if this provider supports the given token.

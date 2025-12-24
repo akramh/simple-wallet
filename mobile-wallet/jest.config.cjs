@@ -18,6 +18,7 @@ module.exports = {
   moduleNameMapper: {
     '^@wallet/(.*)\\.js$': '<rootDir>/../src/$1.ts',
     '^@wallet/(.*)$': '<rootDir>/../src/$1.ts',
+    '^@noble/secp256k1$': '<rootDir>/__mocks__/noble-secp256k1.js',
   },
   // Keep RN/Expo dependencies transformed when required by the preset.
   // @noble/hashes is ESM-only and needs to be transformed by Jest.
@@ -25,5 +26,3 @@ module.exports = {
     'node_modules/(?!((jest-)?react-native|@react-native|@react-navigation|expo(nent)?|expo-.*|@expo|expo-router|nativewind|react-native-css-interop|@noble/hashes)/)',
   ],
 };
-
-

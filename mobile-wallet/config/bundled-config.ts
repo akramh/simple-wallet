@@ -1,12 +1,12 @@
 /**
  * @fileoverview Bundled configuration for the mobile app.
- * 
+ *
  * This file imports the main config.json and tokens.json from the parent
  * directory so they're available at runtime in React Native.
  *
  * @responsibilities
  * - Provide a typed, Metro-friendly way to access shared `config.json` and `tokens.json`
- * - Establish the canonical “network key” strings used across mobile (e.g. `sepolia`, `bitcoin-mainnet`)
+ * - Establish the canonical "network key" strings used across mobile (e.g. `sepolia`, `bitcoin-mainnet`)
  *
  * @notes
  * - Network keys here must match the keys expected by `WalletBridge.switchNetwork()` and
@@ -21,9 +21,12 @@ import mainConfig from '../../config.json';
 // Import token lists
 import tokenList from '../../tokens.json';
 
+// Expo constants for runtime config
+import Constants from 'expo-constants';
+
 // Type definitions
 export interface NetworkConfig {
-  type?: 'evm' | 'bitcoin' | 'solana' | 'xrp';
+  type?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
   name: string;
   rpcUrl?: string | string[];
   wsUrl?: string | string[];
@@ -33,9 +36,11 @@ export interface NetworkConfig {
   blockExplorer?: string;
   explorerApiUrl?: string;
   explorerApiKey?: string;
+  rpcApiKey?: string;
   bitcoinNetwork?: 'mainnet' | 'testnet';
   solanaCluster?: 'mainnet-beta' | 'devnet' | 'testnet';
   xrpNetwork?: 'mainnet' | 'testnet' | 'devnet';
+  tonNetwork?: 'mainnet' | 'testnet';
 }
 
 export interface Config {
@@ -55,12 +60,88 @@ export interface Token {
 export type TokenRegistry = Record<string, Token[]>;
 
 /**
+ * Get API keys from Expo Constants (loaded from .env via app.config.js)
+ */
+function getApiKeys() {
+  const extra = Constants.expoConfig?.extra || {};
+  return {
+    explorerApiKey: extra.explorerApiKey as string | undefined,
+    explorerApiKeySolanaMainnet: extra.explorerApiKeySolanaMainnet as string | undefined,
+    explorerApiKeySolanaDevnet: extra.explorerApiKeySolanaDevnet as string | undefined,
+    heliusApiKey: extra.heliusApiKey as string | undefined,
+    tonCenterApiKeyMainnet: extra.tonCenterApiKeyMainnet as string | undefined,
+    tonCenterApiKeyTestnet: extra.tonCenterApiKeyTestnet as string | undefined,
+  };
+}
+
+/**
+ * Apply API keys from .env to network configs.
+ * Mirrors the logic in src/config-utils.ts for CLI/extension.
+ */
+function applyApiKeysToNetworks(
+  networks: Record<string, NetworkConfig>
+): Record<string, NetworkConfig> {
+  const keys = getApiKeys();
+  const result: Record<string, NetworkConfig> = {};
+
+  for (const [networkId, network] of Object.entries(networks)) {
+    let processedNetwork = { ...network };
+
+    // Apply explorer API key
+    if (networkId === 'solana-mainnet' && keys.explorerApiKeySolanaMainnet) {
+      processedNetwork.explorerApiKey = keys.explorerApiKeySolanaMainnet;
+    } else if (networkId === 'solana-devnet' && keys.explorerApiKeySolanaDevnet) {
+      processedNetwork.explorerApiKey = keys.explorerApiKeySolanaDevnet;
+    } else if (keys.explorerApiKey) {
+      processedNetwork.explorerApiKey = keys.explorerApiKey;
+    }
+
+    // Apply TON RPC API key
+    if (network.type === 'ton') {
+      if (networkId === 'ton-mainnet' && keys.tonCenterApiKeyMainnet) {
+        processedNetwork.rpcApiKey = keys.tonCenterApiKeyMainnet;
+      } else if (networkId === 'ton-testnet' && keys.tonCenterApiKeyTestnet) {
+        processedNetwork.rpcApiKey = keys.tonCenterApiKeyTestnet;
+      }
+    }
+
+    // Apply Helius API key to Solana RPC URLs
+    if (network.type === 'solana' && keys.heliusApiKey && processedNetwork.rpcUrl) {
+      const rpcUrls = Array.isArray(processedNetwork.rpcUrl)
+        ? processedNetwork.rpcUrl
+        : [processedNetwork.rpcUrl];
+
+      const processedUrls = rpcUrls
+        .map((url) => {
+          if (url.includes('${HELIUS_API_KEY}')) {
+            return url.replace('${HELIUS_API_KEY}', keys.heliusApiKey!);
+          }
+          return url;
+        })
+        .filter((url) => !url.includes('${HELIUS_API_KEY}')); // Remove URLs with unresolved placeholders
+
+      processedNetwork.rpcUrl =
+        processedUrls.length === 1 ? processedUrls[0] : processedUrls;
+    }
+
+    result[networkId] = processedNetwork;
+  }
+
+  return result;
+}
+
+/**
  * Get the bundled network configuration.
+ * API keys are injected from .env via Expo Constants.
  *
- * @returns The parsed `config.json` content (networks + default network).
+ * @returns The parsed `config.json` content with API keys applied.
  */
 export function getBundledConfig(): Config {
-  return mainConfig as Config;
+  const config = mainConfig as Config;
+  return {
+    ...config,
+    networks: applyApiKeysToNetworks(config.networks as Record<string, NetworkConfig>),
+  };
 }
 
 /**
@@ -99,4 +180,13 @@ export function getNetworkConfig(networkKey: string): NetworkConfig | undefined 
  */
 export function getTokensForNetwork(networkKey: string): Token[] {
   return (tokenList as TokenRegistry)[networkKey] || [];
+}
+
+/**
+ * Get the CoinGecko API key from Expo config.
+ *
+ * @returns CoinGecko API key or undefined if not configured.
+ */
+export function getCoingeckoApiKey(): string | undefined {
+  return Constants.expoConfig?.extra?.coingeckoApiKey;
 }

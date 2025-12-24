@@ -6,6 +6,7 @@
  */
 
 import { describe, test, beforeEach, expect, jest } from '@jest/globals';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Mock the services barrel used by walletStore.ts
 jest.mock('../services', () => {
@@ -49,6 +50,7 @@ jest.mock('../services', () => {
     setShowTestnets: jest.fn(async () => {}),
     addCustomToken: jest.fn(async () => {}),
     toggleTokenVisibility: jest.fn(async () => {}),
+    setAutoLockTimeout: jest.fn(() => {}),
   };
 
   return {
@@ -62,6 +64,7 @@ import { useWalletStore } from '../store/walletStore';
 describe('useWalletStore invariants', () => {
   beforeEach(() => {
     // Reset Zustand store between tests
+    AsyncStorage.clear();
     useWalletStore.setState({
       isLoading: true,
       isInitialized: false,
@@ -70,6 +73,7 @@ describe('useWalletStore invariants', () => {
       network: 'sepolia',
       address: null,
       currentWalletName: null,
+      autoLockMinutes: 15,
       walletList: [],
       accounts: [],
       currentAccountIndex: 0,
@@ -95,6 +99,28 @@ describe('useWalletStore invariants', () => {
     expect(s.isInitialized).toBe(true);
     expect(s.isLoading).toBe(false);
     expect(s.network).toBe('sepolia');
+  });
+
+  test('initialize hydrates auto-lock preference and applies to WalletBridge', async () => {
+    const { walletBridge } = require('../services');
+    await AsyncStorage.setItem('auto_lock_minutes', '30');
+
+    await useWalletStore.getState().initialize();
+
+    const s = useWalletStore.getState();
+    expect(s.autoLockMinutes).toBe(30);
+    expect(walletBridge.setAutoLockTimeout).toHaveBeenCalledWith(30);
+  });
+
+  test('setAutoLockMinutes persists value and updates WalletBridge', async () => {
+    const { walletBridge } = require('../services');
+
+    await useWalletStore.getState().setAutoLockMinutes(5);
+
+    const stored = await AsyncStorage.getItem('auto_lock_minutes');
+    expect(stored).toBe('5');
+    expect(useWalletStore.getState().autoLockMinutes).toBe(5);
+    expect(walletBridge.setAutoLockTimeout).toHaveBeenCalledWith(5);
   });
 
   test('lock clears derived state (address, balances, txs, prices, accounts)', async () => {

@@ -223,8 +223,15 @@ class WalletBridge {
     // Load bundled config from parent directory
     // Use require() for Metro/Jest compatibility (avoids Node dynamic import edge cases in tests)
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getBundledConfig } = require('../config/bundled-config');
+    const { getBundledConfig, getCoingeckoApiKey } = require('../config/bundled-config');
     const bundledConfig = getBundledConfig();
+
+    // Configure CoinGecko API key for price provider
+    const coingeckoApiKey = getCoingeckoApiKey();
+    if (coingeckoApiKey) {
+      const { setCoingeckoApiKey } = require('@wallet/price-providers');
+      setCoingeckoApiKey(coingeckoApiKey);
+    }
 
     // Merge stored config with bundled (user preferences override defaults)
     return {
@@ -606,9 +613,13 @@ class WalletBridge {
         const key = address && token.type !== 'native' ? `${networkKey}:${address}` : null;
         const isHidden = key ? this.hiddenTokens.has(key) : false;
         
+        // Ensure balance is always a string (API may return number for some networks)
+        const rawBalance = item.balance;
+        const balance = rawBalance == null ? '0' : typeof rawBalance === 'string' ? rawBalance : String(rawBalance);
+        
         return {
           token,
-          balance: item.balance || '0',
+          balance,
           lastUpdated: fetchedAt,
           isLoading: false,
           isVisible: !isHidden,
@@ -1190,13 +1201,19 @@ class WalletBridge {
             if (!networkKey) break;
             try {
               const perNetwork = await this.getNetworkPortfolioWithCache(networkKey, { ttlMs, force });
-              holdings.push(...perNetwork.portfolio.map((item: any) => ({
-                ...item,
-                token: this.mapToSharedToken(item.token),
-                networkKey,
-                height: perNetwork.height ?? null,
-                fetchedAt: perNetwork.fetchedAt
-              })));
+              holdings.push(...perNetwork.portfolio.map((item: any) => {
+                // Ensure balance is always a string
+                const rawBalance = item.balance;
+                const balance = rawBalance == null ? '0' : typeof rawBalance === 'string' ? rawBalance : String(rawBalance);
+                return {
+                  ...item,
+                  balance,
+                  token: this.mapToSharedToken(item.token),
+                  networkKey,
+                  height: perNetwork.height ?? null,
+                  fetchedAt: perNetwork.fetchedAt
+                };
+              }));
             } catch (err: any) {
               errors[networkKey] = err?.message || 'Failed to fetch';
             }
@@ -1564,14 +1581,23 @@ class WalletBridge {
     setCryptoAdapter: any;
   }> {
     try {
+      const resolveExport = (module: any, name: string) => {
+        if (!module) return undefined;
+        return module[name] ?? module.default?.[name] ?? module.default;
+      };
+
       // Use require for Metro bundler compatibility
       // These paths resolve via the @wallet alias in metro.config.js
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { Wallet } = require('@wallet/wallet');
+      const walletModule = require('@wallet/wallet');
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { WalletAppService } = require('@wallet/app-service');
+      const appServiceModule = require('@wallet/app-service');
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { setCryptoAdapter } = require('@wallet/crypto-utils');
+      const cryptoModule = require('@wallet/crypto-utils');
+
+      const Wallet = resolveExport(walletModule, 'Wallet');
+      const WalletAppService = resolveExport(appServiceModule, 'WalletAppService');
+      const setCryptoAdapter = resolveExport(cryptoModule, 'setCryptoAdapter');
 
       return { Wallet, WalletAppService, setCryptoAdapter };
     } catch (error) {

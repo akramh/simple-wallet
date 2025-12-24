@@ -2,7 +2,7 @@
  * @fileoverview Send transaction modal.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,6 @@ import {
   Platform,
   Modal,
   StyleSheet,
-  Linking,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -22,15 +21,28 @@ import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSendScreenSelector } from '../store';
 import type { Token, GasEstimate } from '../services';
-import { isValidTonAddress } from '../services';
+import {
+  isValidTonAddress,
+  isValidEvmAddress,
+  isValidBitcoinAddress,
+  isValidSolanaAddress,
+  isValidXRPAddress,
+  isValidDestinationTag,
+} from '../services';
 import { useClipboard } from '../hooks';
 import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
+import { safeGoBack } from '../utils/navigation';
+import { formatDecimal, formatTokenAmountDisplay } from '../utils/amounts';
+
+type SendStep = 'select-token' | 'select-recipient' | 'enter-amount' | 'confirm';
+type AmountMode = 'token' | 'fiat';
 
 export default function SendScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const {
     balances,
+    prices,
     network,
     networks,
     getGasEstimate,
@@ -40,14 +52,15 @@ export default function SendScreen() {
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
+  const [displayAmount, setDisplayAmount] = useState('');
+  const [amountMode, setAmountMode] = useState<AmountMode>('token');
   const [gasEstimate, setGasEstimate] = useState<GasEstimate | null>(null);
   const [isEstimating, setIsEstimating] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [step, setStep] = useState<'select-token' | 'enter-details' | 'confirm'>('select-token');
-  const [showResultModal, setShowResultModal] = useState(false);
-  const [txResult, setTxResult] = useState<{ hash?: string; status: 'pending' | 'confirmed' } | null>(null);
+  const [step, setStep] = useState<SendStep>('select-token');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const { copy, isCopied } = useClipboard();
+  const [isAmountFocused, setIsAmountFocused] = useState(false);
+  const { copy } = useClipboard();
 
   // QR Scanner state
   const [showScanner, setShowScanner] = useState(false);
@@ -63,21 +76,29 @@ export default function SendScreen() {
 
   // TON comment state
   const [comment, setComment] = useState('');
+  const [noteExpanded, setNoteExpanded] = useState(false);
 
   const networkConfig = networks[network];
   const isXRPNetwork = networkConfig?.type === 'xrp';
   const isTonNetwork = networkConfig?.type === 'ton';
-  const footerHeight = 132;
+  const isBitcoinNetwork = networkConfig?.type === 'bitcoin';
+  const isSolanaNetwork = networkConfig?.type === 'solana';
+  const isEvmNetwork = !networkConfig?.type || networkConfig?.type === 'evm';
+  const footerHeight = 120;
   const footerOffset =
     keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom, 0) : insets.bottom;
+
+  const tokenPrice = selectedToken ? prices[selectedToken.symbol] ?? null : null;
+  const hasTokenPrice =
+    typeof tokenPrice === 'number' && Number.isFinite(tokenPrice) && tokenPrice > 0;
 
   // Set default token on mount
   useEffect(() => {
     if (balances.length > 0 && !selectedToken) {
       setSelectedToken(balances[0].token);
-      setStep('enter-details');
+      setStep('select-recipient');
     }
-  }, [balances]);
+  }, [balances, selectedToken]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -94,6 +115,50 @@ export default function SendScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (amountMode !== 'fiat') return;
+    if (!hasTokenPrice) {
+      setDisplayAmount('');
+      setAmount('');
+      return;
+    }
+    if (!amount) return;
+    const fiatValue = parseFloat(amount) * tokenPrice;
+    if (!Number.isFinite(fiatValue)) return;
+    setDisplayAmount(formatDecimal(fiatValue, 2));
+  }, [amountMode, hasTokenPrice, amount, tokenPrice]);
+
+  const titleByStep = useMemo(() => {
+    switch (step) {
+      case 'select-token':
+        return 'Send';
+      case 'select-recipient':
+        return 'Recipient';
+      case 'enter-amount':
+        return 'Enter Amount';
+      case 'confirm':
+        return 'Summary';
+      default:
+        return 'Send';
+    }
+  }, [step]);
+
+  const handleHeaderBack = () => {
+    if (step === 'select-token') {
+      safeGoBack(router);
+      return;
+    }
+    if (step === 'select-recipient') {
+      setStep('select-token');
+      return;
+    }
+    if (step === 'enter-amount') {
+      setStep('select-recipient');
+      return;
+    }
+    setStep('enter-amount');
+  };
+
   // Estimate gas when amount and recipient are valid
   const estimateGas = useCallback(async () => {
     if (!selectedToken || !recipient || !amount) return;
@@ -102,6 +167,10 @@ export default function SendScreen() {
     if (recipient.length < 10) return;
     if (!isValidAmountInput(amount)) return;
     if (parseFloat(amount) <= 0) return;
+    if (!isValidRecipient(recipient)) {
+      setGasEstimate(null);
+      return;
+    }
 
     try {
       setIsEstimating(true);
@@ -123,36 +192,345 @@ export default function SendScreen() {
 
   const handleTokenSelect = (token: Token) => {
     setSelectedToken(token);
-    setStep('enter-details');
+    setAmount('');
+    setDisplayAmount('');
+    setGasEstimate(null);
+    setStep('select-recipient');
   };
 
-  // Handle QR code scanning
-  const closeScanner = useCallback(() => {
-    setShowScanner(false);
-    setHasScanned(false);
-    setScanStatus('idle');
-    setScanError('');
-    setScannedAddress('');
-    setScannedMeta(null);
-  }, []);
-
-  const handleOpenScanner = async () => {
-    if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) {
-        Alert.alert(
-          'Camera Permission Required',
-          'Please enable camera access in your device settings to scan QR codes.'
-        );
-        return;
-      }
+  const handleRecipientContinue = () => {
+    if (!selectedToken) return;
+    if (!recipient) {
+      Alert.alert('Error', 'Please enter a recipient address');
+      return;
     }
-    setHasScanned(false);
-    setScanStatus('idle');
-    setScanError('');
-    setScannedAddress('');
-    setScannedMeta(null);
-    setShowScanner(true);
+    if (isEvmNetwork && looksLikeEns(recipient)) {
+      Alert.alert('ENS Unsupported', 'ENS names are not supported yet. Please enter a 0x address.');
+      return;
+    }
+    if (!isValidRecipient(recipient)) {
+      Alert.alert('Invalid Address', getInvalidAddressMessage());
+      return;
+    }
+    if (isXRPNetwork && destinationTag && !isValidDestinationTag(destinationTag)) {
+      Alert.alert('Invalid Destination Tag', 'Destination tag must be a valid uint32 value.');
+      return;
+    }
+    setStep('enter-amount');
+  };
+
+  const handleAmountContinue = () => {
+    if (!selectedToken || !recipient || !amount) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+    if (!isValidAmountInput(amount) || parseFloat(amount) <= 0) {
+      Alert.alert('Error', 'Please enter a valid amount');
+      return;
+    }
+    if (isNativeToken() && !hasValidFeeEstimate()) {
+      Alert.alert('Fee Estimate Required', 'Please wait for a network fee estimate before sending.');
+      return;
+    }
+    if (!isAmountWithinBalance(amount)) {
+      Alert.alert('Insufficient Balance', getInsufficientBalanceMessage());
+      return;
+    }
+    setStep('confirm');
+  };
+
+  const handleSend = async () => {
+    if (!selectedToken) return;
+
+    try {
+      setIsSending(true);
+
+      // Parse destination tag for XRP transactions
+      const tag = isXRPNetwork && destinationTag
+        ? parseInt(destinationTag, 10)
+        : undefined;
+
+      // Get comment for TON transactions
+      const tonComment = isTonNetwork && comment ? comment : undefined;
+
+      const result = await sendTransaction(selectedToken, recipient, amount, tag, tonComment);
+      const displayDecimals = getDisplayDecimals();
+      const amountDisplay = formatTokenAmountDisplay(amount, displayDecimals);
+      const feeDisplay = gasEstimate?.estimatedCostNative
+        ? formatTokenAmountDisplay(gasEstimate.estimatedCostNative, displayDecimals)
+        : '';
+
+      router.replace({
+        pathname: '/send-status',
+        params: {
+          hash: result.hash,
+          status: result.status,
+          amount,
+          amountDisplay,
+          symbol: selectedToken.symbol,
+          recipient,
+          network,
+          fee: gasEstimate?.estimatedCostNative ?? '',
+          feeDisplay,
+          feeSymbol: gasEstimate?.nativeSymbol ?? '',
+          destinationTag: isXRPNetwork ? destinationTag : '',
+          comment: isTonNetwork ? comment : '',
+        },
+      } as any);
+    } catch (error) {
+      Alert.alert('Transaction Failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const getTokenBalance = (symbol: string) => {
+    const item = balances.find((b) => b.token.symbol === symbol);
+    // Ensure we always return a string, even if balance is null/undefined/number
+    const bal = item?.balance;
+    if (bal == null) return '0';
+    return typeof bal === 'string' ? bal : String(bal);
+  };
+
+  const setAmountFromTokenValue = (value: string) => {
+    setAmount(value);
+    if (amountMode === 'token') {
+      setDisplayAmount(value);
+      return;
+    }
+    if (!hasTokenPrice) {
+      setDisplayAmount('');
+      return;
+    }
+    if (!value) {
+      setDisplayAmount('');
+      return;
+    }
+    const fiatValue = parseFloat(value) * tokenPrice;
+    if (!Number.isFinite(fiatValue)) {
+      setDisplayAmount('');
+      return;
+    }
+    setDisplayAmount(formatDecimal(fiatValue, 2));
+  };
+
+  const handleMax = () => {
+    if (!selectedToken) return;
+    if (isNativeToken() && !recipient) {
+      Alert.alert('Enter Recipient', 'Please enter a recipient address before using Max.');
+      return;
+    }
+    const maxValue = getSpendableBalance();
+    setAmountFromTokenValue(maxValue);
+  };
+
+  const handlePercent = (percent: number) => {
+    if (!selectedToken) return;
+    if (isNativeToken() && !recipient) {
+      Alert.alert('Enter Recipient', 'Please enter a recipient address before using quick amounts.');
+      return;
+    }
+    const decimals = getTokenDecimals();
+    const balance = getTokenBalance(selectedToken.symbol);
+    const balanceInt = parseDecimalToBigInt(balance, decimals);
+    const spendableInt = getSpendableBalanceInt(balanceInt, decimals);
+    if (spendableInt <= 0n) {
+      setAmountFromTokenValue('0');
+      return;
+    }
+    const amountInt = (spendableInt * BigInt(percent)) / 100n;
+    setAmountFromTokenValue(formatBigIntToDecimal(amountInt, decimals));
+  };
+
+  const handleAmountChange = (value: string) => {
+    const normalized = normalizeAmountInput(value);
+    setDisplayAmount(normalized);
+    if (amountMode === 'token') {
+      setAmount(normalized);
+      return;
+    }
+    if (!hasTokenPrice || !normalized) {
+      setAmount('');
+      return;
+    }
+    const fiatValue = parseFloat(normalized);
+    if (!Number.isFinite(fiatValue) || fiatValue <= 0) {
+      setAmount('');
+      return;
+    }
+    const decimals = Math.min(8, getTokenDecimals());
+    const tokenValue = fiatValue / tokenPrice;
+    setAmount(formatDecimal(tokenValue, decimals));
+  };
+
+  const handleToggleCurrency = () => {
+    if (!hasTokenPrice) return;
+    if (amountMode === 'token') {
+      setAmountMode('fiat');
+      if (amount) {
+        const fiatValue = parseFloat(amount) * tokenPrice;
+        setDisplayAmount(Number.isFinite(fiatValue) ? formatDecimal(fiatValue, 2) : '');
+      } else {
+        setDisplayAmount('');
+      }
+      return;
+    }
+    setAmountMode('token');
+    setDisplayAmount(amount);
+  };
+
+  const getConversionText = () => {
+    if (!selectedToken) return '';
+    if (!hasTokenPrice) return 'Price unavailable';
+    if (!amount) return '';
+    const tokenValue = parseFloat(amount);
+    if (!Number.isFinite(tokenValue)) return '';
+    if (amountMode === 'token') {
+      const fiatValue = tokenValue * tokenPrice;
+      return `~$${formatDecimal(fiatValue, 2)}`;
+    }
+    return `~${formatDecimal(tokenValue, Math.min(8, getTokenDecimals()))} ${selectedToken.symbol}`;
+  };
+
+  const getUsdConversionText = () => {
+    if (!hasTokenPrice || !amount) return '';
+    const tokenValue = parseFloat(amount);
+    if (!Number.isFinite(tokenValue)) return '';
+    const fiatValue = tokenValue * tokenPrice;
+    return `~$${formatDecimal(fiatValue, 2)}`;
+  };
+
+  const getBitcoinNetwork = () => {
+    if (!isBitcoinNetwork) return 'mainnet';
+    if (networkConfig?.bitcoinNetwork) return networkConfig.bitcoinNetwork;
+    if (networkConfig?.isTestnet || network.toLowerCase().includes('test')) return 'testnet';
+    return 'mainnet';
+  };
+
+  const isValidRecipient = (address: string) => {
+    if (isEvmNetwork) return isValidEvmAddress(address);
+    if (isBitcoinNetwork) return isValidBitcoinAddress(address, getBitcoinNetwork());
+    if (isSolanaNetwork) return isValidSolanaAddress(address);
+    if (isXRPNetwork) return isValidXRPAddress(address);
+    if (isTonNetwork) return isValidTonAddress(address);
+    return false;
+  };
+
+  const getInvalidAddressMessage = () => {
+    if (isBitcoinNetwork) return 'Please enter a valid Bitcoin address for this network.';
+    if (isSolanaNetwork) return 'Please enter a valid Solana address.';
+    if (isXRPNetwork) return 'Please enter a valid XRP address.';
+    if (isTonNetwork) return 'Please enter a valid TON address (e.g., EQ... or UQ... format).';
+    return 'Please enter a valid EVM address (0x...).';
+  };
+
+  const getTokenDecimals = () => {
+    if (selectedToken?.decimals !== undefined) return selectedToken.decimals;
+    if (isBitcoinNetwork) return 8;
+    if (isSolanaNetwork || isTonNetwork) return 9;
+    if (isXRPNetwork) return 6;
+    return 18;
+  };
+
+  const getDisplayDecimals = () => Math.min(8, getTokenDecimals());
+
+  const isNativeToken = () => {
+    if (!selectedToken) return false;
+    return selectedToken.type === 'native' || selectedToken.address === 'native' || !selectedToken.address;
+  };
+
+  const hasValidFeeEstimate = () => {
+    if (!gasEstimate || gasEstimate.error) return false;
+    const fee = parseFloat(gasEstimate.estimatedCostNative || '0');
+    return Number.isFinite(fee) && fee > 0;
+  };
+
+  const getSpendableBalanceInt = (balanceInt: bigint, decimals: number) => {
+    if (!isNativeToken()) return balanceInt;
+    if (!hasValidFeeEstimate()) return balanceInt;
+    const feeInt = parseDecimalToBigInt(gasEstimate?.estimatedCostNative || '0', decimals);
+    const spendable = balanceInt - feeInt;
+    return spendable > 0n ? spendable : 0n;
+  };
+
+  const getSpendableBalance = () => {
+    if (!selectedToken) return '0';
+    const decimals = getTokenDecimals();
+    const balance = getTokenBalance(selectedToken.symbol);
+    const balanceInt = parseDecimalToBigInt(balance, decimals);
+    const spendableInt = getSpendableBalanceInt(balanceInt, decimals);
+    return formatBigIntToDecimal(spendableInt, decimals);
+  };
+
+  const isAmountWithinBalance = (value: string) => {
+    if (!selectedToken) return false;
+    const decimals = getTokenDecimals();
+    const balance = getTokenBalance(selectedToken.symbol);
+    const balanceInt = parseDecimalToBigInt(balance, decimals);
+    const amountInt = parseDecimalToBigInt(value, decimals);
+    if (isNativeToken()) {
+      if (!hasValidFeeEstimate()) return false;
+      const feeInt = parseDecimalToBigInt(gasEstimate?.estimatedCostNative || '0', decimals);
+      return amountInt <= balanceInt - feeInt;
+    }
+    return amountInt <= balanceInt;
+  };
+
+  const getInsufficientBalanceMessage = () => {
+    if (isNativeToken()) return 'Amount exceeds spendable balance after fees.';
+    return 'Amount exceeds available balance.';
+  };
+
+  const parseDecimalToBigInt = (value: string, decimals: number) => {
+    // Defensive: handle non-string inputs (null, undefined, number)
+    if (value == null || typeof value !== 'string') return 0n;
+    const sanitized = value.trim();
+    if (!sanitized) return 0n;
+    const [wholeRaw, fracRaw = ''] = sanitized.split('.');
+    const whole = wholeRaw || '0';
+    const frac = fracRaw.padEnd(decimals, '0').slice(0, decimals);
+    const combined = `${whole}${frac}`.replace(/^0+(?=\d)/, '');
+    return BigInt(combined || '0');
+  };
+
+  const formatBigIntToDecimal = (value: bigint, decimals: number) => {
+    const negative = value < 0n;
+    const abs = negative ? -value : value;
+    const padded = abs.toString().padStart(decimals + 1, '0');
+    const whole = padded.slice(0, -decimals) || '0';
+    const frac = padded.slice(-decimals).replace(/0+$/, '');
+    return `${negative ? '-' : ''}${frac ? `${whole}.${frac}` : whole}`;
+  };
+
+  const normalizeAmountInput = (value: string) => {
+    let sanitized = value.replace(/[^0-9.]/g, '');
+    const firstDot = sanitized.indexOf('.');
+    if (firstDot !== -1) {
+      const decimalLimit = amountMode === 'fiat' ? 2 : getDisplayDecimals();
+      sanitized =
+        sanitized.slice(0, firstDot + 1) +
+        sanitized
+          .slice(firstDot + 1)
+          .replace(/\./g, '')
+          .slice(0, decimalLimit);
+    }
+    if (sanitized.startsWith('.')) {
+      sanitized = `0${sanitized}`;
+    }
+    return sanitized;
+  };
+
+  const isValidAmountInput = (value: string) => /^\d+(\.\d+)?$/.test(value);
+
+  const looksLikeEns = (value: string) => /.+\.eth$/i.test(value.trim());
+
+  const getBalanceUsdText = () => {
+    if (!selectedToken || !hasTokenPrice) return '';
+    const balance = parseFloat(getSpendableBalance());
+    if (!Number.isFinite(balance)) return '';
+    const usdValue = balance * tokenPrice;
+    if (!Number.isFinite(usdValue)) return '';
+    return `~$${formatDecimal(usdValue, 2)}`;
   };
 
   const parseScannedData = (data: string) => {
@@ -204,6 +582,34 @@ export default function SendScreen() {
     return { address, scannedDestinationTag, scannedAmount };
   };
 
+  const closeScanner = useCallback(() => {
+    setShowScanner(false);
+    setHasScanned(false);
+    setScanStatus('idle');
+    setScanError('');
+    setScannedAddress('');
+    setScannedMeta(null);
+  }, []);
+
+  const handleOpenScanner = async () => {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) {
+        Alert.alert(
+          'Camera Permission Required',
+          'Please enable camera access in your device settings to scan QR codes.'
+        );
+        return;
+      }
+    }
+    setHasScanned(false);
+    setScanStatus('idle');
+    setScanError('');
+    setScannedAddress('');
+    setScannedMeta(null);
+    setShowScanner(true);
+  };
+
   const handleBarCodeScanned = async ({ data }: { data: string }) => {
     if (hasScanned) return;
     setHasScanned(true);
@@ -232,7 +638,7 @@ export default function SendScreen() {
       setDestinationTag(scannedDestinationTag);
     }
     if (scannedAmount) {
-      setAmount(normalizeAmountInput(scannedAmount));
+      setAmountFromTokenValue(normalizeAmountInput(scannedAmount));
     }
     const copied = await copy(address);
     if (copied) {
@@ -270,88 +676,15 @@ export default function SendScreen() {
     return () => clearTimeout(timer);
   }, [scanStatus, showScanner]);
 
-  const handleContinue = () => {
-    if (!selectedToken || !recipient || !amount) {
-      Alert.alert('Error', 'Please fill in all fields');
-      return;
-    }
-    if (!isValidAmountInput(amount) || parseFloat(amount) <= 0) {
-      Alert.alert('Error', 'Please enter a valid amount');
-      return;
-    }
-    // Validate TON address format
-    if (isTonNetwork && !isValidTonAddress(recipient)) {
-      Alert.alert(
-        'Invalid Address',
-        'Please enter a valid TON address (e.g., EQ... or UQ... format)'
-      );
-      return;
-    }
-    setStep('confirm');
-  };
-
-  const handleSend = async () => {
-    if (!selectedToken) return;
-
-    try {
-      setIsSending(true);
-
-      // Parse destination tag for XRP transactions
-      const tag = isXRPNetwork && destinationTag
-        ? parseInt(destinationTag, 10)
-        : undefined;
-
-      // Get comment for TON transactions
-      const tonComment = isTonNetwork && comment ? comment : undefined;
-
-      const result = await sendTransaction(selectedToken, recipient, amount, tag, tonComment);
-
-      setTxResult({ hash: result.hash, status: result.status });
-      setShowResultModal(true);
-    } catch (error) {
-      Alert.alert('Transaction Failed', error instanceof Error ? error.message : 'Unknown error');
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-  const getTokenBalance = (symbol: string) => {
-    const item = balances.find((b) => b.token.symbol === symbol);
-    return item?.balance || '0';
-  };
-
-  const handleMax = () => {
-    if (selectedToken) {
-      const balance = getTokenBalance(selectedToken.symbol);
-      setAmount(balance);
-    }
-  };
-
-  const normalizeAmountInput = (value: string) => {
-    let sanitized = value.replace(/[^0-9.]/g, '');
-    const firstDot = sanitized.indexOf('.');
-    if (firstDot !== -1) {
-      sanitized =
-        sanitized.slice(0, firstDot + 1) +
-        sanitized.slice(firstDot + 1).replace(/\./g, '');
-    }
-    if (sanitized.startsWith('.')) {
-      sanitized = `0${sanitized}`;
-    }
-    return sanitized;
-  };
-
-  const isValidAmountInput = (value: string) => /^\d+(\.\d+)?$/.test(value);
-
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       <View className="flex-1">
         {/* Header */}
         <View className="flex-row items-center justify-between px-5 pb-4 border-b border-gray-800">
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="close" size={28} color="white" />
+          <TouchableOpacity onPress={handleHeaderBack}>
+            <Ionicons name={step === 'select-token' ? 'close' : 'chevron-back'} size={28} color="white" />
           </TouchableOpacity>
-          <Text className="text-white text-xl font-bold">Send</Text>
+          <Text className="text-white text-xl font-bold">{titleByStep}</Text>
           <View className="w-7" />
         </View>
 
@@ -380,13 +713,12 @@ export default function SendScreen() {
           </KeyboardAwareScrollView>
         )}
 
-        {/* Step: Enter Details */}
-        {step === 'enter-details' && (
+        {/* Step: Select Recipient */}
+        {step === 'select-recipient' && (
           <KeyboardAwareScrollView
             className="flex-1 px-5 pt-4"
             extraBottomPadding={footerHeight + 16}
           >
-            {/* Selected Token */}
             <TouchableOpacity
               onPress={() => setStep('select-token')}
               className="flex-row items-center bg-gray-900 rounded-xl p-4 mb-4"
@@ -405,26 +737,27 @@ export default function SendScreen() {
               <Ionicons name="chevron-forward" size={20} color="#6b7280" />
             </TouchableOpacity>
 
-            {/* Recipient */}
             <View className="mb-4">
               <Text className="text-white mb-2">Recipient Address</Text>
-              <View className="flex-row bg-gray-900 rounded-xl items-center">
+              <View className="flex-row bg-gray-900 rounded-2xl items-center border border-gray-800">
                 <TextInput
                   value={recipient}
                   onChangeText={setRecipient}
                   placeholder={
                     isXRPNetwork ? 'rAddress...' :
                     isTonNetwork ? 'EQ... or UQ...' :
-                    '0x... or ENS name'
+                    isBitcoinNetwork ? 'bc1... or 1.../3...' :
+                    isSolanaNetwork ? 'Solana address' :
+                    '0x...'
                   }
                   placeholderTextColor="#6b7280"
                   autoCapitalize="none"
                   autoCorrect={false}
-                  className="flex-1 px-4 py-4 text-white font-mono"
+                  className="flex-1 px-4 py-5 text-white font-mono text-base"
                 />
                 <TouchableOpacity
                   onPress={handleOpenScanner}
-                  className="px-4 py-4"
+                  className="px-4 py-5"
                   testID="open-qr-scanner"
                 >
                   <Ionicons name="qr-code-outline" size={24} color="#a855f7" />
@@ -442,7 +775,6 @@ export default function SendScreen() {
                 <TextInput
                   value={destinationTag}
                   onChangeText={(text) => {
-                    // Only allow numeric input
                     const numericValue = text.replace(/[^0-9]/g, '');
                     setDestinationTag(numericValue);
                   }}
@@ -456,52 +788,171 @@ export default function SendScreen() {
                 </Text>
               </View>
             )}
-
-            {/* TON Comment */}
-            {isTonNetwork && (
-              <View className="mb-4">
-                <View className="flex-row justify-between items-center mb-2">
-                  <Text className="text-white">Comment</Text>
-                  <Text className="text-gray-500 text-sm">(Optional)</Text>
-                </View>
-                <TextInput
-                  value={comment}
-                  onChangeText={setComment}
-                  placeholder="Enter comment (optional)"
-                  placeholderTextColor="#6b7280"
-                  className="bg-gray-900 rounded-xl px-4 py-4 text-white"
-                />
-                <Text className="text-gray-500 text-xs mt-1">
-                  Optional message attached to the transaction
-                </Text>
-              </View>
-            )}
-
-            {/* Amount */}
-            <View className="mb-4">
-              <View className="flex-row justify-between items-center mb-2">
-                <Text className="text-white">Amount</Text>
-                <TouchableOpacity onPress={handleMax}>
-                  <Text className="text-purple-400 text-sm">Max</Text>
-                </TouchableOpacity>
-              </View>
-              <View className="flex-row bg-gray-900 rounded-xl items-center">
-                <TextInput
-                  value={amount}
-                  onChangeText={(value) => setAmount(normalizeAmountInput(value))}
-                  placeholder="0.0"
-                  placeholderTextColor="#6b7280"
-                  keyboardType="decimal-pad"
-                  className="flex-1 px-4 py-4 text-white text-xl"
-                />
-                <Text className="text-gray-400 px-4">{selectedToken?.symbol}</Text>
-              </View>
-            </View>
-
           </KeyboardAwareScrollView>
         )}
 
-        {step === 'enter-details' && (
+        {step === 'select-recipient' && (
+          <View
+            className="absolute left-0 right-0 px-5"
+            style={{ bottom: footerOffset }}
+          >
+            <View className="bg-gray-950/95 border border-gray-800 rounded-2xl p-3">
+              <TouchableOpacity
+                onPress={handleRecipientContinue}
+                disabled={!recipient}
+                className={`rounded-xl py-4 ${
+                  recipient ? 'bg-purple-600' : 'bg-gray-800'
+                }`}
+              >
+                <Text className="text-white font-semibold text-center text-lg">
+                  Next
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Step: Enter Amount */}
+        {step === 'enter-amount' && (
+          <KeyboardAwareScrollView
+            className="flex-1 px-5 pt-6"
+            extraBottomPadding={footerHeight + 24}
+          >
+            <TouchableOpacity
+              onPress={() => setStep('select-token')}
+              className="flex-row items-center bg-gray-900 rounded-xl p-4 mb-6"
+            >
+              <View className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-3">
+                <Text className="text-white font-bold">
+                  {selectedToken?.symbol.charAt(0)}
+                </Text>
+              </View>
+              <View className="flex-1">
+                <Text className="text-white font-medium">{selectedToken?.name}</Text>
+                <Text className="text-gray-500 text-sm">
+                  Balance: {parseFloat(getTokenBalance(selectedToken?.symbol || '')).toFixed(4)}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#6b7280" />
+            </TouchableOpacity>
+
+            <View className="flex-row items-center justify-between mb-4">
+              <View>
+                <Text className="text-gray-400 text-sm">Available to send</Text>
+                <Text className="text-white text-lg font-semibold">
+                  {formatTokenAmountDisplay(getSpendableBalance(), getDisplayDecimals())} {selectedToken?.symbol}
+                </Text>
+                {!!getBalanceUsdText() && (
+                  <Text className="text-gray-500 text-sm">{getBalanceUsdText()}</Text>
+                )}
+              </View>
+              <TouchableOpacity onPress={handleMax} className="bg-gray-900 px-4 py-2 rounded-full">
+                <Text className="text-purple-400 text-sm">Max</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View
+              className={`bg-gray-900 rounded-3xl border p-6 mb-6 ${
+                isAmountFocused ? 'border-purple-500' : 'border-gray-800'
+              }`}
+            >
+              <View className="flex-row items-center justify-between mb-6">
+                <Text className="text-gray-500 text-sm">Amount</Text>
+                <View className="flex-row bg-gray-950 rounded-full p-1">
+                  <TouchableOpacity
+                    onPress={() => amountMode !== 'token' && handleToggleCurrency()}
+                    disabled={!hasTokenPrice}
+                    className={`px-3 py-1 rounded-full ${
+                      amountMode === 'token' ? 'bg-gray-800' : ''
+                    }`}
+                  >
+                    <Text className={`${hasTokenPrice ? 'text-white' : 'text-gray-600'} text-xs`}>
+                      {selectedToken?.symbol ?? 'Token'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => amountMode !== 'fiat' && handleToggleCurrency()}
+                    disabled={!hasTokenPrice}
+                    className={`px-3 py-1 rounded-full ${
+                      amountMode === 'fiat' ? 'bg-gray-800' : ''
+                    }`}
+                  >
+                    <Text className={`${hasTokenPrice ? 'text-white' : 'text-gray-600'} text-xs`}>
+                      USD
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View className="flex-row items-end justify-between">
+                <TextInput
+                  value={displayAmount}
+                  onChangeText={handleAmountChange}
+                  placeholder="0"
+                  placeholderTextColor="#6b7280"
+                  keyboardType="decimal-pad"
+                  onFocus={() => setIsAmountFocused(true)}
+                  onBlur={() => setIsAmountFocused(false)}
+                  className="flex-1 text-white text-4xl font-semibold text-right"
+                  style={{ minWidth: 120 }}
+                />
+                <Text className="text-gray-400 text-2xl mb-1 ml-2 shrink-0">
+                  {amountMode === 'token' ? selectedToken?.symbol : 'USD'}
+                </Text>
+              </View>
+              <Text className="text-gray-500 text-sm mt-2 text-center">
+                {getConversionText()}
+              </Text>
+            </View>
+
+            <View className="flex-row justify-between mb-6">
+              {[25, 50, 75].map((percent) => (
+                <TouchableOpacity
+                  key={percent}
+                  onPress={() => handlePercent(percent)}
+                  className="flex-1 bg-gray-900 rounded-xl py-3 mr-2"
+                >
+                  <Text className="text-white text-center">{percent}%</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                onPress={handleMax}
+                className="flex-1 bg-gray-900 rounded-xl py-3"
+              >
+                <Text className="text-white text-center">Max</Text>
+              </TouchableOpacity>
+            </View>
+
+            {isTonNetwork && (
+              <View className="mb-6">
+                {!noteExpanded && !comment ? (
+                  <TouchableOpacity
+                    onPress={() => setNoteExpanded(true)}
+                    className="bg-gray-900 rounded-xl px-4 py-4"
+                  >
+                    <Text className="text-gray-400">Add note</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TextInput
+                    value={comment}
+                    onChangeText={setComment}
+                    placeholder="Add a note (optional)"
+                    placeholderTextColor="#6b7280"
+                    className="bg-gray-900 rounded-xl px-4 py-4 text-white"
+                    multiline
+                    onBlur={() => {
+                      if (!comment.trim()) {
+                        setNoteExpanded(false);
+                      }
+                    }}
+                  />
+                )}
+              </View>
+            )}
+          </KeyboardAwareScrollView>
+        )}
+
+        {step === 'enter-amount' && (
           <View
             className="absolute left-0 right-0 px-5"
             style={{ bottom: footerOffset }}
@@ -528,19 +979,22 @@ export default function SendScreen() {
                     : gasEstimate
                       ? (isTonNetwork && parseFloat(gasEstimate.estimatedCostNative) === 0)
                         ? 'Calculating...'
-                        : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`
+                        : `${formatTokenAmountDisplay(
+                          gasEstimate.estimatedCostNative || '0',
+                          getDisplayDecimals()
+                        )} ${gasEstimate.nativeSymbol}`
                       : 'Enter amount to estimate fees'}
                 </Text>
               )}
               <TouchableOpacity
-                onPress={handleContinue}
-                disabled={!recipient || !amount}
+                onPress={handleAmountContinue}
+                disabled={!amount}
                 className={`rounded-xl py-4 ${
-                  recipient && amount ? 'bg-purple-600' : 'bg-gray-800'
+                  amount ? 'bg-purple-600' : 'bg-gray-800'
                 }`}
               >
                 <Text className="text-white font-semibold text-center text-lg">
-                  Review Transaction
+                  Continue
                 </Text>
               </TouchableOpacity>
             </View>
@@ -554,17 +1008,22 @@ export default function SendScreen() {
               <View className="bg-gray-900 rounded-3xl p-6 mb-5">
                 <Text className="text-gray-400 text-center text-sm mb-3">You are sending</Text>
                 <Text className="text-white text-5xl font-bold text-center">
-                  {amount} {selectedToken?.symbol}
+                  {getUsdConversionText() || 'Price unavailable'}
                 </Text>
                 <Text className="text-gray-500 text-center mt-2">
-                  Estimated value unavailable
+                  {formatTokenAmountDisplay(amount, getDisplayDecimals())} {selectedToken?.symbol}
                 </Text>
               </View>
 
               <View className="bg-gray-900 rounded-2xl p-5 mb-4">
-                <Text className="text-gray-400 text-xs uppercase tracking-widest mb-3">
-                  Recipient
-                </Text>
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-gray-400 text-xs uppercase tracking-widest">
+                    Recipient
+                  </Text>
+                  <TouchableOpacity onPress={() => setStep('select-recipient')}>
+                    <Text className="text-purple-400 text-xs">Edit</Text>
+                  </TouchableOpacity>
+                </View>
                 <Text className="text-white text-lg font-semibold mb-2">
                   {recipient}
                 </Text>
@@ -574,21 +1033,29 @@ export default function SendScreen() {
               </View>
 
               <View className="bg-gray-900 rounded-2xl p-5">
-                <Text className="text-gray-400 text-xs uppercase tracking-widest mb-3">
-                  Details
-                </Text>
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-gray-400 text-xs uppercase tracking-widest">
+                    Details
+                  </Text>
+                  <TouchableOpacity onPress={() => setStep('enter-amount')}>
+                    <Text className="text-purple-400 text-xs">Edit</Text>
+                  </TouchableOpacity>
+                </View>
                 {isXRPNetwork && destinationTag && (
                   <DetailRow label="Destination Tag" value={destinationTag} />
                 )}
                 {isTonNetwork && comment && (
-                  <DetailRow label="Comment" value={comment} />
+                  <DetailRow label="Note" value={comment} />
                 )}
                 {gasEstimate && (
                   <DetailRow
                     label="Network Fee"
                     value={gasEstimate.error
                       ? 'Unable to estimate'
-                      : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`}
+                      : `${formatTokenAmountDisplay(
+                        gasEstimate.estimatedCostNative || '0',
+                        getDisplayDecimals()
+                      )} ${gasEstimate.nativeSymbol}`}
                   />
                 )}
               </View>
@@ -596,7 +1063,7 @@ export default function SendScreen() {
 
             <View className="flex-row gap-3 pb-5">
               <TouchableOpacity
-                onPress={() => setStep('enter-details')}
+                onPress={() => setStep('enter-amount')}
                 className="flex-1 bg-gray-800 rounded-xl py-4"
               >
                 <Text className="text-white font-semibold text-center">Back</Text>
@@ -609,7 +1076,7 @@ export default function SendScreen() {
                 {isSending ? (
                   <ActivityIndicator color="white" />
                 ) : (
-                  <Text className="text-white font-semibold text-center">Confirm</Text>
+                  <Text className="text-white font-semibold text-center">Send</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -650,7 +1117,7 @@ export default function SendScreen() {
                   </TouchableOpacity>
                 </View>
               )}
-              
+
               {/* Scanner overlay */}
               <View className="flex-1 items-center justify-center">
                 <View className="w-64 h-64 border-2 border-white/50 rounded-3xl">
@@ -660,7 +1127,7 @@ export default function SendScreen() {
                   <View className="absolute -bottom-1 -right-1 w-8 h-8 border-b-4 border-r-4 border-purple-500 rounded-br-xl" />
                 </View>
               </View>
-              
+
               <View className="absolute bottom-8 left-0 right-0 px-6">
                 <View className="bg-gray-900/90 border border-gray-800 rounded-2xl px-4 py-4">
                   <View className="flex-row items-center justify-between mb-2">
@@ -736,86 +1203,6 @@ export default function SendScreen() {
           </SafeAreaView>
         </Modal>
       </View>
-
-      <Modal
-        visible={showResultModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowResultModal(false)}
-      >
-        <View className="flex-1 items-center justify-center bg-black/60 px-6">
-          <View className="bg-gray-900 rounded-2xl p-6 w-full">
-            <View className="items-center mb-4">
-              <View className="w-14 h-14 rounded-full items-center justify-center bg-emerald-500/20 mb-3">
-                <Ionicons name="checkmark" size={28} color="#34d399" />
-              </View>
-              <Text className="text-white text-xl font-bold">Transaction Broadcasted</Text>
-              <Text className="text-gray-400 mt-1">Pending confirmation</Text>
-            </View>
-
-            <View className="bg-gray-950 rounded-xl p-4 mb-4">
-              <DetailRow label="Amount" value={`${amount} ${selectedToken?.symbol || ''}`} />
-              <DetailRow
-                label="To"
-                value={`${recipient.slice(0, 10)}...${recipient.slice(-8)}`}
-                copyValue={recipient}
-                copied={isCopied(recipient)}
-                onCopy={copy}
-              />
-              <DetailRow label="Network" value={networkConfig?.name || network} />
-              {gasEstimate && (
-                <DetailRow
-                  label="Network Fee"
-                  value={gasEstimate.error
-                    ? 'Unable to estimate'
-                    : `${gasEstimate.estimatedCostNative} ${gasEstimate.nativeSymbol}`}
-                />
-              )}
-              <DetailRow
-                label="Hash"
-                value={txResult?.hash
-                  ? `${txResult.hash.slice(0, 10)}...${txResult.hash.slice(-8)}`
-                  : 'Pending'}
-                copyValue={txResult?.hash}
-                copied={txResult?.hash ? isCopied(txResult.hash) : false}
-                onCopy={copy}
-                isLast
-              />
-            </View>
-
-            {networkConfig?.blockExplorer && (
-              <TouchableOpacity
-                className={`rounded-xl py-4 items-center mb-3 ${
-                  txResult?.hash ? 'bg-gray-800' : 'bg-gray-800/50'
-                }`}
-                disabled={!txResult?.hash}
-                onPress={() => {
-                  if (!txResult?.hash) return;
-                  const url = `${networkConfig.blockExplorer}/tx/${txResult.hash}`;
-                  Linking.openURL(url).catch((error) => {
-                    console.error('Failed to open explorer URL:', error);
-                  });
-                }}
-              >
-                <Text className="text-white font-semibold">
-                  {txResult?.hash ? 'View in Explorer' : 'View in Explorer (pending)'}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              className="bg-purple-600 rounded-xl py-4 items-center"
-              onPress={() => {
-                setShowResultModal(false);
-                router.back();
-              }}
-            >
-              <Text className="text-white font-semibold">Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
     </SafeAreaView>
   );
 }
@@ -823,38 +1210,20 @@ export default function SendScreen() {
 function DetailRow({
   label,
   value,
-  copyValue,
-  copied,
-  onCopy,
-  isLast,
 }: {
   label: string;
   value: string;
-  copyValue?: string;
-  copied?: boolean;
-  onCopy?: (text: string) => Promise<boolean>;
-  isLast?: boolean;
 }) {
   return (
-    <View className={`flex-row justify-between py-3 ${isLast ? '' : 'border-b border-gray-800'}`}>
+    <View className="flex-row justify-between py-3 border-b border-gray-800">
       <Text className="text-gray-400">{label}</Text>
-      <View className="flex-row items-center">
-        <Text className="text-white font-medium">{value}</Text>
-        {copyValue && (
-          <TouchableOpacity
-            onPress={async () => {
-              await onCopy?.(copyValue);
-            }}
-            className="ml-2"
-          >
-            <Ionicons
-              name={copied ? 'checkmark-circle' : 'copy-outline'}
-              size={16}
-              color={copied ? '#a855f7' : '#9ca3af'}
-            />
-          </TouchableOpacity>
-        )}
-      </View>
+      <Text
+        className="text-white font-medium text-right max-w-[60%]"
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {value}
+      </Text>
     </View>
   );
 }

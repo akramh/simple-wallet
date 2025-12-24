@@ -205,6 +205,33 @@ describe('CoinGeckoProvider', () => {
     assert.strictEqual(result.data[0].price, 3400.00);
     assert.strictEqual(result.priceChange.value, 100);
   });
+
+  it('should include API key header when configured', async () => {
+    let capturedHeaders = {};
+    globalThis.fetch = async (url, options) => {
+      capturedHeaders = options.headers || {};
+      return {
+        ok: true,
+        json: async () => ({
+          ethereum: { usd: 3500.00, usd_24h_change: 2.5 },
+        }),
+      };
+    };
+
+    const { CoinGeckoProvider, setCoingeckoApiKey } = await import('../dist/price-providers/coingecko.js');
+    const provider = new CoinGeckoProvider();
+
+    // Set API key
+    const testApiKey = 'test-api-key-123';
+    setCoingeckoApiKey(testApiKey);
+
+    await provider.getCurrentPrice('ETH');
+
+    assert.strictEqual(capturedHeaders['x-cg-pro-api-key'], testApiKey);
+
+    // Reset API key for other tests
+    setCoingeckoApiKey(undefined);
+  });
 });
 
 // ============================================================================
@@ -222,10 +249,10 @@ describe('PriceProviderManager', () => {
     globalThis.fetch = originalFetch;
   });
   
-  it('should use primary provider when available', async () => {
+  it('should use primary provider (CoinGecko) when available', async () => {
     let coinpaprikaCalled = false;
     let coingeckoCalled = false;
-    
+
     globalThis.fetch = async (url) => {
       if (url.includes('coinpaprika')) {
         coinpaprikaCalled = true;
@@ -240,59 +267,59 @@ describe('PriceProviderManager', () => {
         coingeckoCalled = true;
         return {
           ok: true,
-          json: async () => ({ ethereum: { usd: 3500.00 } }),
+          json: async () => ({ ethereum: { usd: 3500.00, usd_24h_change: 2.5 } }),
         };
       }
     };
-    
+
     const { PriceProviderManager } = await import('../dist/price-providers/provider-manager.js');
     const { CoinPaprikaProvider } = await import('../dist/price-providers/coinpaprika.js');
     const { CoinGeckoProvider } = await import('../dist/price-providers/coingecko.js');
-    
+
     const manager = new PriceProviderManager();
-    manager.registerProvider(new CoinPaprikaProvider());
-    manager.registerProvider(new CoinGeckoProvider());
-    
+    manager.registerProvider(new CoinGeckoProvider());   // Priority 1 (primary)
+    manager.registerProvider(new CoinPaprikaProvider()); // Priority 2 (fallback)
+
     const result = await manager.getCurrentPrice('ETH');
-    
+
     assert.strictEqual(result.price, 3500.00);
-    assert.strictEqual(coinpaprikaCalled, true);
-    assert.strictEqual(coingeckoCalled, false); // Should not call fallback
+    assert.strictEqual(coingeckoCalled, true);  // Primary should be called
+    assert.strictEqual(coinpaprikaCalled, false); // Fallback should not be called
   });
   
-  it('should fall back to secondary provider on primary failure', async () => {
+  it('should fall back to CoinPaprika when CoinGecko fails', async () => {
     let coinpaprikaCalled = false;
     let coingeckoCalled = false;
-    
+
     globalThis.fetch = async (url) => {
-      if (url.includes('coinpaprika')) {
-        coinpaprikaCalled = true;
-        return { ok: false, status: 429 }; // Rate limited
-      }
       if (url.includes('coingecko')) {
         coingeckoCalled = true;
+        return { ok: false, status: 429 }; // Rate limited
+      }
+      if (url.includes('coinpaprika')) {
+        coinpaprikaCalled = true;
         return {
           ok: true,
           json: async () => ({
-            ethereum: { usd: 3500.00, usd_24h_change: 2.5 },
+            quotes: { USD: { price: 3500.00, percent_change_24h: 2.5 } },
           }),
         };
       }
     };
-    
+
     const { PriceProviderManager } = await import('../dist/price-providers/provider-manager.js');
     const { CoinPaprikaProvider } = await import('../dist/price-providers/coinpaprika.js');
     const { CoinGeckoProvider } = await import('../dist/price-providers/coingecko.js');
-    
+
     const manager = new PriceProviderManager();
-    manager.registerProvider(new CoinPaprikaProvider());
-    manager.registerProvider(new CoinGeckoProvider());
-    
+    manager.registerProvider(new CoinGeckoProvider());   // Priority 1 (primary)
+    manager.registerProvider(new CoinPaprikaProvider()); // Priority 2 (fallback)
+
     const result = await manager.getCurrentPrice('ETH');
-    
+
     assert.strictEqual(result.price, 3500.00);
-    assert.strictEqual(coinpaprikaCalled, true);
-    assert.strictEqual(coingeckoCalled, true); // Should call fallback
+    assert.strictEqual(coingeckoCalled, true);    // Primary tried first
+    assert.strictEqual(coinpaprikaCalled, true);  // Fallback used after primary failed
   });
   
   it('should return null when all providers fail', async () => {
@@ -352,18 +379,18 @@ describe('PriceProviderManager', () => {
     const { PriceProviderManager } = await import('../dist/price-providers/provider-manager.js');
     const { CoinPaprikaProvider } = await import('../dist/price-providers/coinpaprika.js');
     const { CoinGeckoProvider } = await import('../dist/price-providers/coingecko.js');
-    
+
     const manager = new PriceProviderManager();
-    
-    // Register in reverse order
-    manager.registerProvider(new CoinGeckoProvider());  // Priority 2
-    manager.registerProvider(new CoinPaprikaProvider()); // Priority 1
-    
+
+    // Register in reverse priority order
+    manager.registerProvider(new CoinPaprikaProvider()); // Priority 2
+    manager.registerProvider(new CoinGeckoProvider());   // Priority 1
+
     const providers = manager.getProviders();
-    
-    // Should be sorted by priority
-    assert.strictEqual(providers[0].name, 'CoinPaprika');
-    assert.strictEqual(providers[1].name, 'CoinGecko');
+
+    // Should be sorted by priority (CoinGecko first now)
+    assert.strictEqual(providers[0].name, 'CoinGecko');
+    assert.strictEqual(providers[1].name, 'CoinPaprika');
   });
 });
 

@@ -300,7 +300,13 @@ export class BitcoinProvider {
     const amountSats = parseBtcToSatoshisExact(amountBtc);
     const utxos = await this.getUTXOs(fromAddress);
     const confirmedUtxos = utxos.filter(u => u.status.confirmed);
-    const selected = selectUtxosLargestFirst(confirmedUtxos, amountSats, feeRateSatVb);
+    const spendableUtxos = confirmedUtxos.length
+      ? confirmedUtxos
+      : (this.config.network === 'testnet' ? utxos : confirmedUtxos);
+    if (spendableUtxos.length === 0) {
+      throw new Error('No spendable UTXOs available');
+    }
+    const selected = selectUtxosLargestFirst(spendableUtxos, amountSats, feeRateSatVb);
     return { amountSats, ...selected };
   }
 

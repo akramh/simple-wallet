@@ -5,14 +5,17 @@
  * All price-related functionality should use this module.
  *
  * Provider Priority:
- * 1. CoinPaprika (primary) - better free tier rate limits
- * 2. CoinGecko (fallback) - widely supported, has contract lookups
+ * 1. CoinGecko (primary) - has API key, supports contract lookups
+ * 2. CoinPaprika (fallback) - generous free tier, no API key required
  *
  * @example
  * ```typescript
- * import { priceProviderManager } from './price-providers/index.js';
+ * import { priceProviderManager, setCoingeckoApiKey } from './price-providers/index.js';
  *
- * // Get current price (tries CoinPaprika first)
+ * // Configure API key (for React Native)
+ * setCoingeckoApiKey('your-api-key');
+ *
+ * // Get current price (tries CoinGecko first)
  * const price = await priceProviderManager.getCurrentPrice('ETH');
  *
  * // Get price history
@@ -32,16 +35,16 @@ import { PriceProviderManager } from './provider-manager.js';
  * Singleton price provider manager.
  *
  * Pre-configured with:
- * - CoinPaprika as primary provider (priority 1)
- * - CoinGecko as fallback provider (priority 2)
+ * - CoinGecko as primary provider (priority 1) - has API key, supports contract lookups
+ * - CoinPaprika as fallback provider (priority 2) - no API key required
  *
  * Use this instance throughout the application.
  */
 export const priceProviderManager = new PriceProviderManager();
 
-// Register providers in priority order
-priceProviderManager.registerProvider(new CoinPaprikaProvider()); // Priority 1 (primary)
-priceProviderManager.registerProvider(new CoinGeckoProvider()); // Priority 2 (fallback)
+// Register providers (automatically sorted by priority)
+priceProviderManager.registerProvider(new CoinGeckoProvider());   // Priority 1 (primary)
+priceProviderManager.registerProvider(new CoinPaprikaProvider()); // Priority 2 (fallback)
 
 // ============================================================================
 // Re-exports
@@ -61,5 +64,5 @@ export type {
 // Classes (for custom provider registration or testing)
 export { PriceProviderManager } from './provider-manager.js';
 export { CoinPaprikaProvider } from './coinpaprika.js';
-export { CoinGeckoProvider, SYMBOL_TO_COINGECKO_ID, CHAIN_TO_PLATFORM } from './coingecko.js';
+export { CoinGeckoProvider, SYMBOL_TO_COINGECKO_ID, CHAIN_TO_PLATFORM, setCoingeckoApiKey } from './coingecko.js';
 

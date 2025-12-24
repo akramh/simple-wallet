@@ -159,6 +159,10 @@ export class Wallet {
     if (!networkConfig?.type || networkConfig.type === 'evm') {
       await this.ethereumProvider.ensureProvider(this.config.network);
     }
+
+    if (this.wallet && this.provider && typeof (this.wallet as any).connect === 'function') {
+      this.wallet = (this.wallet as any).connect(this.provider);
+    }
   }
 
   async setNetwork(networkKey: string): Promise<void> {
