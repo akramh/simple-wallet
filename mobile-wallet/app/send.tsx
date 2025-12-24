@@ -852,11 +852,11 @@ export default function SendScreen() {
             </View>
 
             <View
-              className={`bg-gray-900 rounded-3xl border p-4 mb-6 ${
+              className={`bg-gray-900 rounded-3xl border p-6 mb-6 ${
                 isAmountFocused ? 'border-purple-500' : 'border-gray-800'
               }`}
             >
-              <View className="flex-row items-center justify-between mb-2">
+              <View className="flex-row items-center justify-between mb-6">
                 <Text className="text-gray-500 text-sm">Amount</Text>
                 <View className="flex-row bg-gray-950 rounded-full p-1">
                   <TouchableOpacity
@@ -893,10 +893,10 @@ export default function SendScreen() {
                   keyboardType="decimal-pad"
                   onFocus={() => setIsAmountFocused(true)}
                   onBlur={() => setIsAmountFocused(false)}
-                  className="flex-1 text-white text-5xl font-semibold text-right pr-3"
+                  className="flex-1 text-white text-4xl font-semibold text-right"
                   style={{ minWidth: 120 }}
                 />
-                <Text className="text-gray-400 text-3xl mb-1 w-16 text-right">
+                <Text className="text-gray-400 text-2xl mb-1 ml-2 shrink-0">
                   {amountMode === 'token' ? selectedToken?.symbol : 'USD'}
                 </Text>
               </View>
