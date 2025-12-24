@@ -1,8 +1,8 @@
 /**
  * @fileoverview CoinGecko price provider implementation.
  *
- * Fallback price data provider. Widely supported but has strict rate limits
- * on free tier (~10-30 calls/minute without API key).
+ * Primary price data provider with API key support for better rate limits.
+ * Supports contract-based ERC-20 lookups (unique among providers).
  *
  * @responsibilities
  * - Fetch current token prices from CoinGecko API
@@ -14,7 +14,7 @@
  * @security
  * - No sensitive data handled
  * - Read-only API calls
- * - Optional API key support via environment variable
+ * - API key loaded from environment or runtime config
  */
 
 import type {
@@ -25,6 +25,26 @@ import type {
   TimeRange,
   PricePoint,
 } from './types.js';
+
+// ============================================================================
+// Runtime Configuration
+// ============================================================================
+
+/**
+ * Runtime-configurable API key for environments without process.env (React Native).
+ * Set via setCoingeckoApiKey() during app initialization.
+ */
+let configuredApiKey: string | undefined;
+
+/**
+ * Set the CoinGecko API key at runtime.
+ * Use this in React Native where process.env is not available.
+ *
+ * @param apiKey - CoinGecko demo API key
+ */
+export function setCoingeckoApiKey(apiKey: string | undefined): void {
+  configuredApiKey = apiKey;
+}
 
 // ============================================================================
 // Constants
@@ -106,7 +126,6 @@ const CHAIN_TO_PLATFORM: Record<number, string> = {
   10: 'optimistic-ethereum',
   8453: 'base',
   59144: 'linea',
-  11155111: 'ethereum', // Sepolia testnet
 };
 
 /**
@@ -146,17 +165,32 @@ async function fetchWithTimeout(
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   const headers: Record<string, string> = {};
-  // Support optional API key for better rate limits
-  const apiKey = typeof process !== 'undefined' ? process.env?.COINGECKO_API_KEY : undefined;
+  // Support API key from multiple sources:
+  // 1. Runtime config (for React Native and Chrome extension via setCoingeckoApiKey)
+  // 2. Node.js env (for CLI)
+  //
+  // Note: import.meta.env is NOT used here because Hermes (React Native)
+  // fails at parse time, not runtime. Mobile and extension should call
+  // setCoingeckoApiKey() at initialization.
+  const apiKey = configuredApiKey
+    ?? (typeof process !== 'undefined' ? process.env?.COINGECKO_API_KEY : undefined);
+  
+  let finalUrl = url;
+
   if (apiKey) {
-    headers['x-cg-demo-api-key'] = apiKey;
+    // Pro API Key usage:
+    // 1. Use https://pro-api.coingecko.com/api/v3
+    // 2. Use x-cg-pro-api-key header
+    finalUrl = url.replace('https://api.coingecko.com/api/v3', 'https://pro-api.coingecko.com/api/v3');
+    headers['x-cg-pro-api-key'] = apiKey;
   }
 
   try {
-    const response = await fetch(url, {
+    const response = await fetch(finalUrl, {
       signal: controller.signal,
       headers,
     });
+
     clearTimeout(timeoutId);
     return response;
   } catch (error) {
@@ -234,11 +268,13 @@ interface CoinGeckoCoinResponse {
 /**
  * CoinGecko price provider.
  *
- * Fallback provider with wide token support. Free tier has stricter
- * rate limits than CoinPaprika (~10-30 calls/minute).
+ * Primary provider with API key support for better rate limits (30 calls/min).
+ * Only provider supporting ERC-20 contract address lookups.
  *
- * Supports optional API key via COINGECKO_API_KEY environment variable
- * for better rate limits (30 calls/minute with demo key).
+ * API key sources (checked in order):
+ * 1. setCoingeckoApiKey() - Runtime config for React Native
+ * 2. import.meta.env.VITE_COINGECKO_API_KEY - Vite (Chrome extension)
+ * 3. process.env.COINGECKO_API_KEY - Node.js (CLI)
  *
  * @example
  * ```typescript
@@ -253,7 +289,7 @@ interface CoinGeckoCoinResponse {
  */
 export class CoinGeckoProvider implements PriceProvider {
   readonly name = 'CoinGecko';
-  readonly priority = 2; // Fallback provider
+  readonly priority = 1; // Primary provider (has API key, supports contract lookups)
 
   /**
    * Check if this provider supports the given token.

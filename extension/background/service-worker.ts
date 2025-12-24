@@ -64,6 +64,18 @@ import { ethers } from 'ethers';
 setCryptoAdapter(createWebCryptoAdapter());
 
 // ============================================================================
+// Price Provider Setup
+// ============================================================================
+
+import { setCoingeckoApiKey } from '../../src/price-providers/index.js';
+
+/** Configure CoinGecko API key from Vite environment */
+const coingeckoApiKey = import.meta.env.VITE_COINGECKO_API_KEY;
+if (coingeckoApiKey) {
+  setCoingeckoApiKey(coingeckoApiKey);
+}
+
+// ============================================================================
 // Global State
 // ============================================================================
 

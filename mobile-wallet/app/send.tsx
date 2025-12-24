@@ -286,7 +286,8 @@ export default function SendScreen() {
 
   const getTokenBalance = (symbol: string) => {
     const item = balances.find((b) => b.token.symbol === symbol);
-    return item?.balance || '0';
+    // Ensure we always return a string, even if balance is null/undefined
+    return typeof item?.balance === 'string' ? item.balance : '0';
   };
 
   const setAmountFromTokenValue = (value: string) => {
@@ -479,6 +480,8 @@ export default function SendScreen() {
   };
 
   const parseDecimalToBigInt = (value: string, decimals: number) => {
+    // Defensive: handle non-string inputs (null, undefined, number)
+    if (value == null || typeof value !== 'string') return 0n;
     const sanitized = value.trim();
     if (!sanitized) return 0n;
     const [wholeRaw, fracRaw = ''] = sanitized.split('.');
@@ -1003,10 +1006,10 @@ export default function SendScreen() {
               <View className="bg-gray-900 rounded-3xl p-6 mb-5">
                 <Text className="text-gray-400 text-center text-sm mb-3">You are sending</Text>
                 <Text className="text-white text-5xl font-bold text-center">
-                  {formatTokenAmountDisplay(amount, getDisplayDecimals())} {selectedToken?.symbol}
+                  {getUsdConversionText() || 'Price unavailable'}
                 </Text>
                 <Text className="text-gray-500 text-center mt-2">
-                  {getUsdConversionText() || 'Estimated value unavailable'}
+                  {formatTokenAmountDisplay(amount, getDisplayDecimals())} {selectedToken?.symbol}
                 </Text>
               </View>
 

@@ -147,4 +147,44 @@ jest.mock('@noble/hashes/sha256', () => ({
   },
 }), { virtual: true });
 
+// -----------------------------------------------------------------------------
+// Price Providers mock (shared SDK price provider manager)
+// -----------------------------------------------------------------------------
+jest.mock('@wallet/price-providers/index', () => ({
+  __esModule: true,
+  priceProviderManager: {
+    getPriceHistory: jest.fn(async () => ({
+      data: [
+        { timestamp: Date.now() - 3600000, price: 2000 },
+        { timestamp: Date.now(), price: 2100 },
+      ],
+      priceChange: { value: 100, percent: 5 },
+    })),
+    getTokenMetadata: jest.fn(async () => ({
+      description: 'Mock token description',
+      marketCap: 100000000000,
+      totalSupply: 120000000,
+      circulatingSupply: 100000000,
+      websiteUrl: 'https://example.com',
+    })),
+    clearHistoryCache: jest.fn(),
+    clearMetadataCache: jest.fn(),
+  },
+  setCoingeckoApiKey: jest.fn(),
+  SYMBOL_TO_COINGECKO_ID: {
+    ETH: 'ethereum',
+    BTC: 'bitcoin',
+  },
+}));
+
+jest.mock('@wallet/price-providers/coingecko', () => ({
+  __esModule: true,
+  SYMBOL_TO_COINGECKO_ID: {
+    ETH: 'ethereum',
+    BTC: 'bitcoin',
+    SOL: 'solana',
+    TON: 'the-open-network',
+  },
+  setCoingeckoApiKey: jest.fn(),
+}));
 

@@ -223,8 +223,15 @@ class WalletBridge {
     // Load bundled config from parent directory
     // Use require() for Metro/Jest compatibility (avoids Node dynamic import edge cases in tests)
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getBundledConfig } = require('../config/bundled-config');
+    const { getBundledConfig, getCoingeckoApiKey } = require('../config/bundled-config');
     const bundledConfig = getBundledConfig();
+
+    // Configure CoinGecko API key for price provider
+    const coingeckoApiKey = getCoingeckoApiKey();
+    if (coingeckoApiKey) {
+      const { setCoingeckoApiKey } = require('@wallet/price-providers');
+      setCoingeckoApiKey(coingeckoApiKey);
+    }
 
     // Merge stored config with bundled (user preferences override defaults)
     return {

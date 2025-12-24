@@ -51,5 +51,8 @@ export {
 export { setCryptoAdapter } from './crypto-utils.js';
 export { createNodeCryptoAdapter, createWebCryptoAdapter, type CryptoAdapter } from './crypto-adapter.js';
 
+// Price providers
+export { setCoingeckoApiKey } from './price-providers/index.js';
+
 // Type definitions
 export * from './types/index.js';

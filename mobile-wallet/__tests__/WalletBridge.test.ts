@@ -18,6 +18,7 @@ jest.mock('../config/bundled-config', () => ({
     },
   }),
   getBundledTokens: () => ({}),
+  getCoingeckoApiKey: () => undefined,
 }));
 
 // Mock mobile adapters used by WalletBridge
@@ -77,6 +78,11 @@ jest.mock('@wallet/app-service', () => ({
 jest.mock('@wallet/crypto-utils', () => ({
   __esModule: true,
   setCryptoAdapter: jest.fn(() => {}),
+}));
+
+jest.mock('@wallet/price-providers/index', () => ({
+  __esModule: true,
+  setCoingeckoApiKey: jest.fn(() => {}),
 }));
 
 import { walletBridge } from '../services/WalletBridge';
