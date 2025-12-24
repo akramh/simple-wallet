@@ -8,7 +8,7 @@
 
 const BIP32Factory = require('./bip32');
 const { sha256 } = require('@noble/hashes/sha256');
-const { ripemd160 } = require('@noble/hashes/ripemd160');
+const { ripemd160 } = require('@noble/hashes/legacy.js');
 const { Buffer } = require('buffer');
 
 // Initialize BIP32
@@ -37,6 +37,10 @@ const COIN_TYPES = {
 };
 
 const SATOSHIS_PER_BTC = 100000000n;
+const P2WPKH_INPUT_VBYTES = 68;
+const P2WPKH_OUTPUT_VBYTES = 31;
+const TX_OVERHEAD_VBYTES = 10;
+const DUST_LIMIT_SATS = 546;
 
 /**
  * Bech32 encoding for SegWit addresses
@@ -240,6 +244,86 @@ const btcToSatoshis = (btc) => {
 
 const formatBtcAmount = (satoshis, decimals = 8) => {
   return satoshisToBtc(satoshis).toFixed(decimals);
+};
+
+const estimateVbytesP2wpkh = (inputCount, outputCount) => {
+  return TX_OVERHEAD_VBYTES + inputCount * P2WPKH_INPUT_VBYTES + outputCount * P2WPKH_OUTPUT_VBYTES;
+};
+
+const parseBtcToSatoshisExact = (btc) => {
+  const trimmed = (btc || '').trim();
+  if (!trimmed) return 0;
+
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) {
+    throw new Error('Invalid BTC amount');
+  }
+
+  const [whole, fracRaw = ''] = trimmed.split('.');
+  if (fracRaw.length > 8) {
+    throw new Error('BTC amount supports up to 8 decimals');
+  }
+
+  const frac = fracRaw.padEnd(8, '0');
+  const satsStr = `${whole}${frac}`.replace(/^0+/, '') || '0';
+  const sats = BigInt(satsStr);
+  if (sats > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('BTC amount too large');
+  }
+  return Number(sats);
+};
+
+const selectUtxosLargestFirst = (utxos, amountSats, feeRateSatVb) => {
+  if (amountSats <= 0) {
+    throw new Error('Amount must be greater than 0');
+  }
+  if (feeRateSatVb <= 0) {
+    throw new Error('Fee rate must be greater than 0');
+  }
+
+  const sorted = [...utxos].sort((a, b) => b.value - a.value);
+
+  const selected = [];
+  let total = 0;
+  let feeSats = 0;
+  let outputCount = 2;
+
+  for (const utxo of sorted) {
+    selected.push(utxo);
+    total += utxo.value;
+
+    const vbytes = estimateVbytesP2wpkh(selected.length, outputCount);
+    feeSats = Math.ceil(vbytes * feeRateSatVb);
+
+    if (total >= amountSats + feeSats) {
+      const changeWithTwoOutputs = total - amountSats - feeSats;
+      if (changeWithTwoOutputs < DUST_LIMIT_SATS) {
+        outputCount = 1;
+        const vbytesNoChange = estimateVbytesP2wpkh(selected.length, outputCount);
+        feeSats = Math.ceil(vbytesNoChange * feeRateSatVb);
+      }
+
+      const vbytesFinal = estimateVbytesP2wpkh(selected.length, outputCount);
+      const change = total - amountSats - feeSats;
+      if (change < 0) {
+        continue;
+      }
+      return {
+        inputs: selected,
+        totalInputSats: total,
+        changeSats: outputCount === 2 ? change : 0,
+        fee: {
+          feeRateSatVb,
+          vbytes: vbytesFinal,
+          feeSats,
+          inputCount: selected.length,
+          outputCount,
+          hasChange: outputCount === 2 && change >= DUST_LIMIT_SATS,
+        },
+      };
+    }
+  }
+
+  throw new Error('Insufficient BTC balance for amount + fee');
 };
 
 /**
@@ -756,44 +840,16 @@ class BitcoinProvider {
     // Get UTXOs
     const utxos = await this.getUTXOs(fromAddress);
     const confirmedUtxos = utxos.filter(u => u.status && u.status.confirmed);
-    
-    // Parse amount to satoshis
-    const amountSats = Math.round(parseFloat(amountBtc) * 100000000);
-    
-    // Estimate vbytes (1 input ~68 vB, 2 outputs ~31 vB each, overhead ~10 vB)
-    // Simple estimate: 1-2 inputs, 2 outputs (recipient + change)
-    const estimatedVbytes = 140; // Typical P2WPKH tx size
-    const feeSats = Math.ceil(estimatedVbytes * feeRateSatVb);
-    
-    // Find enough UTXOs
-    let totalInputSats = 0;
-    const selectedUtxos = [];
-    for (const utxo of confirmedUtxos.sort((a, b) => b.value - a.value)) {
-      selectedUtxos.push(utxo);
-      totalInputSats += utxo.value;
-      if (totalInputSats >= amountSats + feeSats) break;
+
+    const amountSats = parseBtcToSatoshisExact(amountBtc);
+    const spendableUtxos = confirmedUtxos.length
+      ? confirmedUtxos
+      : (this.config.network !== 'mainnet' ? utxos : confirmedUtxos);
+    if (spendableUtxos.length === 0) {
+      throw new Error('No spendable UTXOs available');
     }
-    
-    if (totalInputSats < amountSats + feeSats) {
-      throw new Error('Insufficient balance for transaction + fees');
-    }
-    
-    const changeSats = totalInputSats - amountSats - feeSats;
-    
-    return {
-      amountSats,
-      inputs: selectedUtxos,
-      totalInputSats,
-      changeSats,
-      fee: {
-        feeRateSatVb,
-        vbytes: estimatedVbytes,
-        feeSats,
-        inputCount: selectedUtxos.length,
-        outputCount: changeSats > 546 ? 2 : 1, // Dust threshold
-        hasChange: changeSats > 546,
-      },
-    };
+    const selected = selectUtxosLargestFirst(spendableUtxos, amountSats, feeRateSatVb);
+    return { amountSats, ...selected };
   }
 
   /**

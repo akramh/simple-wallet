@@ -57,6 +57,14 @@ jest.mock('expo-clipboard', () => ({
   setStringAsync: jest.fn(() => Promise.resolve()),
 }));
 
+jest.mock(
+  '@wallet/bitcoin/index.js',
+  () => ({
+    isValidBitcoinAddress: () => true,
+  }),
+  { virtual: true }
+);
+
 jest.mock('expo-camera', () => ({
   CameraView: (props: any) => {
     const React = require('react');
@@ -236,5 +244,78 @@ describe('SendScreen fee estimate display', () => {
     );
 
     alertSpy.mockRestore();
+  });
+
+  test('allows Bitcoin send flow on mobile', async () => {
+    enableFakeTimers();
+    mockSendTransaction.mockResolvedValueOnce({ hash: 'btc_hash_123', status: 'pending' });
+
+    mockState.balances = [
+      {
+        token: { symbol: 'BTC', name: 'Bitcoin', type: 'native', decimals: 8, address: '' },
+        balance: '0.01',
+        lastUpdated: Date.now(),
+        isLoading: false,
+      },
+    ];
+    mockState.network = 'bitcoin-mainnet';
+    mockState.networks = {
+      'bitcoin-mainnet': {
+        name: 'Bitcoin Mainnet',
+        type: 'bitcoin',
+        nativeSymbol: 'BTC',
+        bitcoinNetwork: 'mainnet',
+      },
+    };
+    mockState.prices = {
+      BTC: 50000,
+    };
+    mockGetGasEstimate.mockResolvedValueOnce({
+      gasLimit: '140',
+      gasPrice: '5',
+      maxFeePerGas: null,
+      maxPriorityFeePerGas: null,
+      estimatedCostWei: '700',
+      estimatedCostNative: '0.000007',
+      nativeSymbol: 'BTC',
+      supportsEIP1559: false,
+      network: 'bitcoin-mainnet',
+    });
+
+    const { getByPlaceholderText, getByText } = render(<SendScreen />);
+
+    fireEvent.changeText(
+      getByPlaceholderText('bc1... or 1.../3...'),
+      'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh'
+    );
+    fireEvent.press(getByText('Next'));
+    fireEvent.changeText(getByPlaceholderText('0'), '0.001');
+
+    await act(async () => {
+      jest.advanceTimersByTime(600);
+    });
+
+    fireEvent.press(getByText('Continue'));
+
+    await act(async () => {
+      fireEvent.press(getByText('Send'));
+    });
+
+    expect(mockSendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'BTC' }),
+      'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
+      '0.001',
+      undefined,
+      undefined
+    );
+    expect(mockRouter.replace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: '/send-status',
+        params: expect.objectContaining({
+          hash: 'btc_hash_123',
+          status: 'pending',
+        }),
+      })
+    );
   });
 });

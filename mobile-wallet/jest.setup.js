@@ -147,6 +147,30 @@ jest.mock('@noble/hashes/sha256', () => ({
   },
 }), { virtual: true });
 
+jest.mock('@noble/hashes/sha512', () => ({
+  __esModule: true,
+  sha512: {
+    create: () => ({ update: () => {}, digest: () => new Uint8Array(64) }),
+  },
+}), { virtual: true });
+
+jest.mock('@noble/hashes/ripemd160', () => ({
+  __esModule: true,
+  ripemd160: () => new Uint8Array(20),
+}), { virtual: true });
+
+jest.mock('@noble/hashes/hmac', () => ({
+  __esModule: true,
+  hmac: {
+    create: () => ({ update: () => {}, digest: () => new Uint8Array(32) }),
+  },
+}), { virtual: true });
+
+jest.mock('@noble/hashes/legacy.js', () => ({
+  __esModule: true,
+  ripemd160: () => new Uint8Array(20),
+}), { virtual: true });
+
 // -----------------------------------------------------------------------------
 // Price Providers mock (shared SDK price provider manager)
 // -----------------------------------------------------------------------------
@@ -187,4 +211,3 @@ jest.mock('@wallet/price-providers/coingecko', () => ({
   },
   setCoingeckoApiKey: jest.fn(),
 }));
-

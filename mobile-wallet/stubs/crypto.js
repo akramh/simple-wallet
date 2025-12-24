@@ -33,24 +33,70 @@ const randomBytes = (size, callback) => {
   return bytes;
 };
 
+const { sha256 } = require('@noble/hashes/sha256');
+const { sha512 } = require('@noble/hashes/sha512');
+const { ripemd160 } = require('@noble/hashes/legacy.js');
+const { hmac } = require('@noble/hashes/hmac');
+
+const HASH_ALGORITHMS = {
+  sha256,
+  sha512,
+  ripemd160,
+};
+
+const toBytes = (value) => {
+  if (value instanceof Uint8Array) return value;
+  if (Buffer.isBuffer(value)) return new Uint8Array(value);
+  return new Uint8Array(Buffer.from(String(value)));
+};
+
+const digestToBuffer = (bytes, encoding) => {
+  const buffer = Buffer.from(bytes);
+  if (encoding === 'hex') return buffer.toString('hex');
+  return buffer;
+};
+
 const createHash = (algorithm) => {
-  // Return a simple hash-like object
-  // Actual hashing is done via crypto adapter
-  let data = '';
-  return {
+  const algo = String(algorithm || '').toLowerCase();
+  const hashFn = HASH_ALGORITHMS[algo];
+  if (!hashFn) {
+    throw new Error(`crypto.createHash unsupported algorithm: ${algorithm}`);
+  }
+
+  const chunks = [];
+  const api = {
     update: (input) => {
-      data += input.toString();
-      return this;
+      chunks.push(toBytes(input));
+      return api;
     },
     digest: (encoding) => {
-      console.warn('crypto.createHash is stubbed. Use CryptoAdapter for actual hashing.');
-      return encoding === 'hex' ? '0'.repeat(64) : Buffer.alloc(32);
+      const payload = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+      const hash = hashFn(payload);
+      return digestToBuffer(hash, encoding);
     },
   };
+  return api;
 };
 
 const createHmac = (algorithm, key) => {
-  return createHash(algorithm);
+  const algo = String(algorithm || '').toLowerCase();
+  const hashFn = HASH_ALGORITHMS[algo];
+  if (!hashFn) {
+    throw new Error(`crypto.createHmac unsupported algorithm: ${algorithm}`);
+  }
+
+  const h = hmac.create(hashFn, toBytes(key));
+  const api = {
+    update: (input) => {
+      h.update(toBytes(input));
+      return api;
+    },
+    digest: (encoding) => {
+      const result = h.digest();
+      return digestToBuffer(result, encoding);
+    },
+  };
+  return api;
 };
 
 module.exports = {

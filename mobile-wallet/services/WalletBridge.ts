@@ -1581,14 +1581,23 @@ class WalletBridge {
     setCryptoAdapter: any;
   }> {
     try {
+      const resolveExport = (module: any, name: string) => {
+        if (!module) return undefined;
+        return module[name] ?? module.default?.[name] ?? module.default;
+      };
+
       // Use require for Metro bundler compatibility
       // These paths resolve via the @wallet alias in metro.config.js
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { Wallet } = require('@wallet/wallet');
+      const walletModule = require('@wallet/wallet');
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { WalletAppService } = require('@wallet/app-service');
+      const appServiceModule = require('@wallet/app-service');
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { setCryptoAdapter } = require('@wallet/crypto-utils');
+      const cryptoModule = require('@wallet/crypto-utils');
+
+      const Wallet = resolveExport(walletModule, 'Wallet');
+      const WalletAppService = resolveExport(appServiceModule, 'WalletAppService');
+      const setCryptoAdapter = resolveExport(cryptoModule, 'setCryptoAdapter');
 
       return { Wallet, WalletAppService, setCryptoAdapter };
     } catch (error) {

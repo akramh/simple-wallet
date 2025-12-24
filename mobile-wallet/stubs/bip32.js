@@ -10,7 +10,7 @@ const ecc = require('./tiny-secp256k1');
 const { sha256 } = require('@noble/hashes/sha256');
 const { sha512 } = require('@noble/hashes/sha512');
 const { hmac } = require('@noble/hashes/hmac');
-const { ripemd160 } = require('@noble/hashes/ripemd160');
+const { ripemd160 } = require('@noble/hashes/legacy.js');
 
 // Ensure Buffer is available
 const { Buffer } = require('buffer');

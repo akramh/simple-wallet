@@ -45,17 +45,6 @@ config.resolver.sourceExts = ['ts', 'tsx', 'js', 'jsx', 'json', 'cjs', 'mjs'];
 // Handle .js extension in imports pointing to .ts files (ESM compatibility)
 // Also stub problematic modules that use WebAssembly
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  // Stub the entire Bitcoin module (depends on WebAssembly crypto)
-  // This intercepts imports from wallet.ts like './bitcoin/index.js'
-  if (moduleName.includes('/bitcoin/index') || moduleName.includes('/bitcoin/address') || 
-      moduleName.includes('/bitcoin/transaction') || moduleName.includes('/bitcoin/explorer') ||
-      moduleName.includes('/bitcoin/provider') || moduleName.includes('/bitcoin/types')) {
-    return {
-      filePath: path.resolve(projectRoot, 'stubs/bitcoin-index.js'),
-      type: 'sourceFile',
-    };
-  }
-  
   // Stub bip32 (depends on tiny-secp256k1 WebAssembly)
   if (moduleName === 'bip32') {
     return {
