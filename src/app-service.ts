@@ -19,7 +19,7 @@
 
 import type { Config, Token, TokenRegistry, TokenMetadata } from './types/index.js';
 import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from './types/config.js';
-import { Wallet } from './wallet.js';
+import { Wallet, WalletInfo } from './wallet.js';
 import { MemoryStorage, type StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
 import { ethers } from 'ethers';
@@ -98,13 +98,6 @@ interface SetNetworkOptions {
   /** Whether to persist the network change to config file (default: true) */
   persist?: boolean;
 }
-
-/** Wallet creation/import result */
-type WalletInfo = {
-  address: string;
-  mnemonic: string;
-  privateKey: string;
-};
 
 /**
  * UI-agnostic wallet application service.
@@ -474,6 +467,18 @@ export class WalletAppService {
    */
   importWallet(mnemonic: string, password: string, accountIndex: number = 0): WalletInfo {
     return this.wallet.importWallet(mnemonic, password, accountIndex);
+  }
+
+  /**
+   * Import a wallet from a raw private key.
+   * 
+   * @param key - Raw private key string (format depends on chain type)
+   * @param type - Chain family ('evm', 'solana', 'bitcoin', 'xrp', 'ton')
+   * @param password - Master password for encryption
+   * @returns Wallet info
+   */
+  importFromPrivateKey(key: string, type: 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton', password: string): WalletInfo {
+    return this.wallet.importFromPrivateKey(key, type, password);
   }
 
   /**

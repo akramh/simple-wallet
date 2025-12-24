@@ -24,6 +24,7 @@ export {
   getTonDerivationPath,
   deriveTonKeypair,
   deriveTonAddress,
+  deriveTonAddressFromSecretKey,
   isValidTonAddress,
   parseTonAddress,
   formatTonAddress,

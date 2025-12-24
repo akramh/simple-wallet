@@ -224,3 +224,40 @@ export function normalizeTonAddress(address: string, testOnly: boolean = false):
   const parsed = parseTonAddress(address);
   return formatTonAddress(parsed, { bounceable: false, testOnly });
 }
+
+/**
+ * Derive a TON address from a raw secret key (hex).
+ * Supports 32-byte seeds (standard) or 64-byte secret keys.
+ * 
+ * @param secretKeyHex - Hex string of the secret key
+ * @returns TON address info
+ */
+export function deriveTonAddressFromSecretKey(secretKeyHex: string): TonAddressInfo {
+  try {
+    const keyBytes = Buffer.from(secretKeyHex, 'hex');
+    let keypair: { publicKey: Uint8Array; secretKey: Uint8Array };
+
+    if (keyBytes.length === 32) {
+      keypair = nacl.sign.keyPair.fromSeed(keyBytes);
+    } else if (keyBytes.length === 64) {
+      keypair = nacl.sign.keyPair.fromSecretKey(keyBytes);
+    } else {
+      throw new Error('Invalid secret key length (must be 32 or 64 bytes)');
+    }
+
+    const publicKey = Buffer.from(keypair.publicKey);
+    const wallet = WalletContractV4.create({ publicKey, workchain: 0 });
+    const address = wallet.address;
+
+    return {
+      address: formatTonAddress(address, { bounceable: false }),
+      addressRaw: address.toRawString(),
+      publicKeyHex: bytesToHex(publicKey),
+      derivationPath: 'imported-private-key',
+      workchain: 0,
+      isTestOnly: false,
+    };
+  } catch (error) {
+    throw new Error(`Invalid TON key: ${(error as Error).message}`);
+  }
+}

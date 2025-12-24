@@ -11,6 +11,8 @@
 
 import { Keypair } from '@solana/web3.js';
 import * as asmcrypto from 'asmcrypto.js';
+// @ts-ignore
+import bs58 from 'bs58';
 import type { SolanaAddressInfo } from './types.js';
 import { validateMnemonic, mnemonicToSeed } from '../crypto-utils.js';
 
@@ -91,4 +93,20 @@ export function deriveSolanaAddress(mnemonic: string, accountIndex: number = 0):
     publicKeyBase58: address,
     derivationPath,
   };
+}
+
+export function deriveSolanaAddressFromSecretKey(secretKeyBase58: string): SolanaAddressInfo {
+  try {
+    const secretKey = bs58.decode(secretKeyBase58);
+    const keypair = Keypair.fromSecretKey(secretKey);
+    const address = keypair.publicKey.toBase58();
+
+    return {
+      address,
+      publicKeyBase58: address,
+      derivationPath: 'imported-private-key',
+    };
+  } catch (error) {
+    throw new Error('Invalid Solana private key');
+  }
 }

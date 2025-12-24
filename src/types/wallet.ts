@@ -30,8 +30,14 @@ export interface EncryptionResult {
 export interface EncryptedWallet {
   /** User-assigned wallet name */
   name: string;
-  /** AES-256-GCM encrypted mnemonic phrase */
-  encryptedMnemonic: string;
+  /** AES-256-GCM encrypted mnemonic phrase (optional if private key is used) */
+  encryptedMnemonic?: string;
+  /** AES-256-GCM encrypted private key (optional if mnemonic is used) */
+  encryptedPrivateKey?: string;
+  /** Import type: 'mnemonic' or 'privateKey' */
+  importType?: 'mnemonic' | 'privateKey';
+  /** Chain type for private key imports */
+  privateKeyType?: 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton';
   /** PBKDF2 salt for key derivation */
   salt: string;
   /** AES-GCM initialization vector */

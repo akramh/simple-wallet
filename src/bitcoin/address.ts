@@ -203,6 +203,43 @@ export function getBitcoinPrivateKey(
 }
 
 /**
+ * Derives a Bitcoin address from a WIF private key.
+ *
+ * @param wif - Private key in WIF format
+ * @param network - Bitcoin network
+ * @returns Bitcoin address information
+ */
+export function deriveBitcoinAddressFromPrivateKey(
+  wif: string,
+  network: 'mainnet' | 'testnet' = 'mainnet'
+): BitcoinAddressInfo {
+  const btcNetwork = BITCOIN_NETWORKS[network];
+  const ECPair = ECPairFactory(ecc);
+  
+  try {
+    const keyPair = ECPair.fromWIF(wif, btcNetwork);
+    
+    const { address } = bitcoin.payments.p2wpkh({
+      pubkey: keyPair.publicKey,
+      network: btcNetwork,
+    });
+
+    if (!address) {
+      throw new Error('Failed to generate address from private key');
+    }
+
+    return {
+      address,
+      publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
+      derivationPath: 'imported-private-key',
+      network,
+    };
+  } catch (error) {
+    throw new Error(`Invalid private key for ${network}: ${(error as Error).message}`);
+  }
+}
+
+/**
  * Validates a Bitcoin address format.
  *
  * @param address - Bitcoin address to validate

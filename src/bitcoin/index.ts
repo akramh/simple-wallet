@@ -41,6 +41,7 @@ export {
 // Address derivation
 export {
   deriveBitcoinAddress,
+  deriveBitcoinAddressFromPrivateKey,
   deriveBitcoinAddresses,
   getBitcoinPrivateKey,
   isValidBitcoinAddress,

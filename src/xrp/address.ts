@@ -17,6 +17,7 @@
  */
 
 import { Wallet, isValidClassicAddress } from 'xrpl';
+import * as ecc from 'tiny-secp256k1';
 import type { XRPAddressInfo } from './types.js';
 import { bip32 } from '../bip32-utils.js';
 import { validateMnemonic, mnemonicToSeed } from '../crypto-utils.js';
@@ -261,4 +262,49 @@ export function isXAddress(address: string): boolean {
   }
   // X-addresses start with 'X' (mainnet) or 'T' (testnet)
   return address.startsWith('X') || address.startsWith('T');
+}
+
+/**
+ * Derives an XRP address from a private key (hex or seed).
+ *
+ * @param key - Private key (hex) or seed (starting with 's')
+ * @returns XRP address info
+ */
+export function deriveXRPAddressFromPrivateKey(key: string): XRPAddressInfo {
+  let wallet: Wallet;
+
+  try {
+    if (key.startsWith('s')) {
+      // It's a seed
+      wallet = Wallet.fromSeed(key);
+    } else {
+      // Assume hex private key
+      // 1. Validate hex
+      if (!/^[0-9a-fA-F]{64}$/.test(key)) {
+        throw new Error('Invalid private key hex');
+      }
+      
+      // 2. Derive public key using secp256k1
+      const privateKeyBuffer = Buffer.from(key, 'hex');
+      if (!ecc.isPrivate(privateKeyBuffer)) {
+         throw new Error('Invalid private key');
+      }
+      const publicKeyBuffer = ecc.pointFromScalar(privateKeyBuffer, true);
+      if (!publicKeyBuffer) throw new Error('Failed to derive public key');
+      
+      const publicKey = Buffer.from(publicKeyBuffer).toString('hex').toUpperCase();
+      const privateKey = key.toUpperCase();
+      
+      wallet = new Wallet(publicKey, privateKey);
+    }
+
+    return {
+      address: wallet.classicAddress,
+      publicKey: wallet.publicKey,
+      derivationPath: 'imported-private-key',
+      network: 'mainnet',
+    };
+  } catch (error) {
+    throw new Error(`Invalid XRP key: ${(error as Error).message}`);
+  }
 }
