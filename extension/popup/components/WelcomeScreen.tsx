@@ -7,11 +7,15 @@ interface Props {
   onWalletCreated: () => void;
 }
 
-type Screen = 'choice' | 'set-password' | 'create-mnemonic' | 'import-mnemonic' | 'verify-mnemonic';
+type Screen = 'choice' | 'set-password' | 'create-mnemonic' | 'import-wallet' | 'verify-mnemonic';
 
 function WelcomeScreen({ onWalletCreated }: Props) {
   const [screen, setScreen] = useState<Screen>('choice');
   const [mnemonic, setMnemonic] = useState('');
+  const [privateKey, setPrivateKey] = useState('');
+  const [chainType, setChainType] = useState('evm');
+  const [importType, setImportType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
+  
   const [suggestedWalletName, setSuggestedWalletName] = useState('wallet1');
   const [walletNameInput, setWalletNameInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -99,13 +103,11 @@ function WelcomeScreen({ onWalletCreated }: Props) {
       setCopyState('idle');
       setScreen('create-mnemonic');
     } else {
-      // Go to import-mnemonic screen
-      setScreen('import-mnemonic');
+      setScreen('import-wallet');
     }
   };
 
   const goToVerifyStep = () => {
-    // Generate 3 unique random indices based on mnemonic length (12 or 24 words)
     const wordCount = generatedMnemonic.split(' ').length;
     const indices = new Set<number>();
     while(indices.size < 3) {
@@ -122,7 +124,6 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     setError('');
     const words = generatedMnemonic.split(' ');
     
-    // Check if inputs match
     for (let i = 0; i < 3; i++) {
       const index = verifyIndices[i];
       const inputWord = verifyInputs[i].trim().toLowerCase();
@@ -134,7 +135,6 @@ function WelcomeScreen({ onWalletCreated }: Props) {
       }
     }
     
-    // If correct, proceed to create
     await createWallet();
   };
 
@@ -176,23 +176,36 @@ function WelcomeScreen({ onWalletCreated }: Props) {
 
   const handleImport = async () => {
     setError('');
-    if (!mnemonic.trim() || !validateMnemonicInput(mnemonic)) return;
-
-    if (!password) {
-      setError('Password is required');
-      return;
-    }
     const finalWalletName = walletNameInput.trim() || suggestedWalletName;
     if (!isValidWalletName(finalWalletName)) {
       setError('Wallet name must be 1-12 characters and contain only letters and numbers');
       return;
     }
 
+    if (!password) {
+      setError('Password is required');
+      return;
+    }
+
+    let payload: any = { password, name: finalWalletName };
+
+    if (importType === 'mnemonic') {
+        if (!mnemonic.trim() || !validateMnemonicInput(mnemonic)) return;
+        payload.mnemonic = mnemonic.trim();
+    } else {
+        if (!privateKey.trim()) {
+            setError('Private key is required');
+            return;
+        }
+        payload.privateKey = privateKey.trim();
+        payload.chainType = chainType;
+    }
+
     setLoading(true);
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'IMPORT_WALLET',
-        payload: { mnemonic: mnemonic.trim(), password: password, name: finalWalletName }
+        payload
       });
 
       if (response.error) {
@@ -433,7 +446,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
   }
 
   // Import Wallet
-  if (screen === 'import-mnemonic') {
+  if (screen === 'import-wallet') {
     return (
       <div className="container">
         <div className="header">
@@ -443,19 +456,67 @@ function WelcomeScreen({ onWalletCreated }: Props) {
           <h1>Import Wallet</h1>
         </div>
         <div className="content">
-          <p className="mb-5 text-text-secondary">
-            Enter the recovery phrase for the wallet you want to import.
-          </p>
-
-          <div className="form-group">
-            <label>Recovery Phrase</label>
-            <textarea
-              value={mnemonic}
-              onChange={(e) => setMnemonic(e.target.value)}
-              placeholder="Enter your 12-24 word phrase"
-              rows={3}
-            />
+          
+          <div className="tabs">
+            <button 
+                className={`tab ${importType === 'mnemonic' ? 'active' : ''}`}
+                onClick={() => { setImportType('mnemonic'); setError(''); }}
+            >
+                Recovery Phrase
+            </button>
+            <button 
+                className={`tab ${importType === 'privateKey' ? 'active' : ''}`}
+                onClick={() => { setImportType('privateKey'); setError(''); }}
+            >
+                Private Key
+            </button>
           </div>
+
+          {importType === 'mnemonic' ? (
+            <div className="form-group mt-4">
+                <label>Recovery Phrase</label>
+                <textarea
+                value={mnemonic}
+                onChange={(e) => setMnemonic(e.target.value)}
+                placeholder="Enter your 12-24 word phrase"
+                rows={3}
+                />
+                <p className="text-sm text-text-secondary mt-2">
+                    Standard BIP-39 recovery phrase
+                </p>
+            </div>
+          ) : (
+            <>
+                <div className="form-group mt-4">
+                    <label>Chain Type</label>
+                    <select 
+                        value={chainType}
+                        onChange={(e) => setChainType(e.target.value)}
+                    >
+                        <option value="evm">Ethereum / EVM</option>
+                        <option value="bitcoin">Bitcoin</option>
+                        <option value="solana">Solana</option>
+                        <option value="xrp">XRP Ledger</option>
+                        <option value="ton">TON</option>
+                    </select>
+                </div>
+                <div className="form-group">
+                    <label>Private Key</label>
+                    <textarea
+                    value={privateKey}
+                    onChange={(e) => setPrivateKey(e.target.value)}
+                    placeholder="Enter raw private key"
+                    rows={3}
+                    />
+                    <p className="text-sm text-text-secondary mt-2">
+                        {chainType === 'evm' ? 'Hex string (0x...)' : 
+                         chainType === 'solana' ? 'Base58 string' : 
+                         chainType === 'bitcoin' ? 'WIF format' : 
+                         'Raw key format'}
+                    </p>
+                </div>
+            </>
+          )}
 
           {error && <div className="error">{error}</div>}
 

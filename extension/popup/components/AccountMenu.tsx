@@ -17,6 +17,7 @@ interface Account {
 interface WalletMeta {
   name: string;
   accounts: Record<number, { address: string; createdAt: string }>;
+  importType?: 'mnemonic' | 'privateKey';
 }
 
 interface Props {
@@ -43,7 +44,13 @@ function AccountMenu({
   const [wallets, setWallets] = useState<WalletMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{ type: 'error' | 'success' | ''; message: string }>({ type: '', message: '' });
+  
+  // Import State
   const [importMnemonic, setImportMnemonic] = useState('');
+  const [importPrivateKey, setImportPrivateKey] = useState('');
+  const [importType, setImportType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
+  const [importChainType, setImportChainType] = useState('evm');
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [createStep, setCreateStep] = useState<'form' | 'success'>('form');
@@ -90,7 +97,8 @@ function AccountMenu({
       if (response.wallets) {
         const walletList = Object.entries(response.wallets).map(([name, data]: [string, any]) => ({
           name,
-          accounts: data.accounts || {}
+          accounts: data.accounts || {},
+          importType: data.importType || 'mnemonic'
         }));
         setWallets(walletList);
       }
@@ -253,13 +261,26 @@ function AccountMenu({
       setStatus({ type: 'error', message: 'Name must be 1-12 letters/numbers (no spaces or symbols)' });
       return;
     }
-    if (!importMnemonic.trim()) {
-      setStatus({ type: 'error', message: 'Please paste a recovery phrase' });
-      return;
-    }
-    if (importMnemonic.trim().split(/\s+/).length < 12) {
-      setStatus({ type: 'error', message: 'Recovery phrase looks too short' });
-      return;
+
+    const payload: any = { name: finalName };
+
+    if (importType === 'mnemonic') {
+        if (!importMnemonic.trim()) {
+            setStatus({ type: 'error', message: 'Please paste a recovery phrase' });
+            return;
+        }
+        if (importMnemonic.trim().split(/\s+/).length < 12) {
+            setStatus({ type: 'error', message: 'Recovery phrase looks too short' });
+            return;
+        }
+        payload.mnemonic = importMnemonic.trim();
+    } else {
+        if (!importPrivateKey.trim()) {
+            setStatus({ type: 'error', message: 'Please paste a private key' });
+            return;
+        }
+        payload.privateKey = importPrivateKey.trim();
+        payload.chainType = importChainType;
     }
 
     setLoading(true);
@@ -267,12 +288,13 @@ function AccountMenu({
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'IMPORT_WALLET',
-        payload: { mnemonic: importMnemonic.trim(), name: finalName }
+        payload
       });
       if (response.error) {
         setStatus({ type: 'error', message: response.error });
       } else {
         setImportMnemonic('');
+        setImportPrivateKey('');
         setImportedWalletName(finalName);
         setImportStep('success');
         setImportNameInput('');
@@ -294,6 +316,7 @@ function AccountMenu({
   const getWalletsWithAccounts = () => {
     return wallets.map(wallet => ({
       name: wallet.name,
+      importType: wallet.importType,
       accounts: Object.entries(wallet.accounts || {})
         .map(([index, data]: [string, any]) => ({
           index: parseInt(index, 10),
@@ -303,6 +326,9 @@ function AccountMenu({
         .sort((a, b) => a.index - b.index)
     }));
   };
+
+  const currentWalletData = wallets.find(w => w.name === currentWalletName);
+  const isPrivateKeyWallet = currentWalletData?.importType === 'privateKey';
 
   return (
     <div className="account-menu-overlay" onClick={onClose}>
@@ -381,13 +407,19 @@ function AccountMenu({
               <div key={wallet.name} className="wallet-group">
                 <div className="wallet-group-header">
                   <span>{wallet.name}</span>
+                  {wallet.importType === 'privateKey' && (
+                    <span style={{ fontSize: '10px', marginLeft: '6px', opacity: 0.7 }}>(Private Key)</span>
+                  )}
                 </div>
 
                 <div className="account-list">
-                  {wallet.accounts.map((account) => (
+                  {wallet.accounts.map((account) => {
+                    const isActive = wallet.name === currentWalletName && 
+                                     account.address.toLowerCase() === currentAddress.toLowerCase();
+                    return (
                     <div
                       key={`${wallet.name}-${account.index}`}
-                      className={`account-item ${account.address === currentAddress ? 'active' : ''}`}
+                      className={`account-item ${isActive ? 'active' : ''}`}
                       onClick={() => handleSwitchAccount(wallet.name, account.index, account.address)}
                     >
                       <div className="account-avatar">
@@ -397,23 +429,32 @@ function AccountMenu({
                         <div className="account-name">Account {account.index + 1}</div>
                         <div className="account-address">{formatAddress(account.address)}</div>
                       </div>
-                      {account.address === currentAddress && (
+                      {isActive && (
                         <span className="active-badge">✓</span>
                       )}
                     </div>
-                  ))}
+                  );
+                  })}
 
                   {wallet.name === currentWalletName && (
-                    <button
-                      className="add-account-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCreateAccount();
-                      }}
-                      disabled={loading}
-                    >
-                      + Add account
-                    </button>
+                    <>
+                        {wallet.importType !== 'privateKey' ? (
+                            <button
+                            className="add-account-btn"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleCreateAccount();
+                            }}
+                            disabled={loading}
+                            >
+                            + Add account
+                            </button>
+                        ) : (
+                            <div className="alert alert-warning" style={{ fontSize: '11px', marginTop: '4px', marginBottom: '0' }}>
+                                Account creation not supported for private key wallets
+                            </div>
+                        )}
+                    </>
                   )}
                 </div>
               </div>
@@ -517,6 +558,7 @@ function AccountMenu({
                 setShowImportModal(false);
                 setImportStep('form');
                 setImportMnemonic('');
+                setImportPrivateKey('');
               }}>×</button>
             </div>
 
@@ -528,6 +570,21 @@ function AccountMenu({
 
             {importStep === 'form' ? (
               <>
+                <div className="tabs">
+                    <button 
+                        className={`tab ${importType === 'mnemonic' ? 'active' : ''}`}
+                        onClick={() => { setImportType('mnemonic'); setStatus({ type: '', message: '' }); }}
+                    >
+                        Recovery Phrase
+                    </button>
+                    <button 
+                        className={`tab ${importType === 'privateKey' ? 'active' : ''}`}
+                        onClick={() => { setImportType('privateKey'); setStatus({ type: '', message: '' }); }}
+                    >
+                        Private Key
+                    </button>
+                </div>
+
                 <div className="form-group">
                   <label>Wallet name (optional)</label>
                   <input
@@ -536,19 +593,48 @@ function AccountMenu({
                     placeholder={`Default: ${pendingImportName}`}
                   />
                 </div>
-                <div className="form-group">
-                  <label>Recovery Phrase</label>
-                  <textarea
-                    rows={3}
-                    placeholder="Enter your 12-24 word phrase"
-                    value={importMnemonic}
-                    onChange={(e) => setImportMnemonic(e.target.value)}
-                  />
-                </div>
+
+                {importType === 'mnemonic' ? (
+                    <div className="form-group">
+                    <label>Recovery Phrase</label>
+                    <textarea
+                        rows={3}
+                        placeholder="Enter your 12-24 word phrase"
+                        value={importMnemonic}
+                        onChange={(e) => setImportMnemonic(e.target.value)}
+                    />
+                    </div>
+                ) : (
+                    <>
+                        <div className="form-group">
+                            <label>Chain Type</label>
+                            <select 
+                                value={importChainType}
+                                onChange={(e) => setImportChainType(e.target.value)}
+                            >
+                                <option value="evm">Ethereum / EVM</option>
+                                <option value="bitcoin">Bitcoin</option>
+                                <option value="solana">Solana</option>
+                                <option value="xrp">XRP Ledger</option>
+                                <option value="ton">TON</option>
+                            </select>
+                        </div>
+                        <div className="form-group">
+                            <label>Private Key</label>
+                            <textarea
+                                rows={3}
+                                placeholder="Enter raw private key"
+                                value={importPrivateKey}
+                                onChange={(e) => setImportPrivateKey(e.target.value)}
+                            />
+                        </div>
+                    </>
+                )}
+
                 <button
                   className="btn btn-primary"
                   onClick={handleImportWallet}
-                  disabled={loading || importMnemonic.trim().split(/\s+/).length < 12}
+                  disabled={loading}
                 >
                   {loading ? 'Importing...' : 'Import wallet'}
                 </button>

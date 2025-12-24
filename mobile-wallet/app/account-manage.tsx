@@ -37,6 +37,7 @@ export default function AccountManageScreen() {
     isLoading,
     error,
     clearError,
+    importType,
   } = useWalletStore();
 
   useEffect(() => {
@@ -76,20 +77,29 @@ export default function AccountManageScreen() {
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <Text className="text-white text-xl font-bold flex-1">Accounts</Text>
-        <TouchableOpacity onPress={handleAddAccount} disabled={isLoading}>
-          {isLoading ? (
-            <ActivityIndicator color="#a855f7" size="small" />
-          ) : (
-            <Ionicons name="add-circle-outline" size={28} color="#a855f7" />
-          )}
-        </TouchableOpacity>
+        
+        {importType === 'mnemonic' ? (
+            <TouchableOpacity onPress={handleAddAccount} disabled={isLoading}>
+            {isLoading ? (
+                <ActivityIndicator color="#a855f7" size="small" />
+            ) : (
+                <Ionicons name="add-circle-outline" size={28} color="#a855f7" />
+            )}
+            </TouchableOpacity>
+        ) : (
+            <View style={{ opacity: 0.5 }}>
+                <Ionicons name="add-circle-outline" size={28} color="#6b7280" />
+            </View>
+        )}
       </View>
 
       {/* Info Banner */}
       <View className="mx-5 mb-4 p-3 bg-blue-900/30 rounded-xl flex-row items-center">
         <Ionicons name="information-circle" size={20} color="#60a5fa" />
         <Text className="text-blue-300 text-sm ml-2 flex-1">
-          Accounts are derived from your wallet's recovery phrase using different derivation paths.
+          {importType === 'mnemonic' 
+            ? "Accounts are derived from your wallet's recovery phrase." 
+            : "Private key wallets support a single account only."}
         </Text>
       </View>
 

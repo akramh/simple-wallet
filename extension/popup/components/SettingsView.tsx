@@ -3,7 +3,7 @@
  * 
  * Settings page with security options and wallet management.
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import RevealSecretModal from './RevealSecretModal';
 import ChangePasswordModal from './ChangePasswordModal';
 import mnemonicIcon from '../../assets/icons/mnemonic.svg';
@@ -24,11 +24,19 @@ function SettingsView({ onClose }: Props) {
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [secretType, setSecretType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
   const [uiTheme, setUiTheme] = useState<UiTheme>('light');
+  const [importType, setImportType] = useState<'mnemonic' | 'privateKey' | null>(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     getStoredTheme()
       .then((theme) => setUiTheme(theme))
       .catch(() => {});
+      
+    // Fetch wallet state to check import type
+    chrome.runtime.sendMessage({ type: 'GET_STATE' }).then(state => {
+        if (state.importType) {
+            setImportType(state.importType);
+        }
+    }).catch(err => console.warn('Failed to get wallet state', err));
   }, []);
 
   const handleRevealSecret = (type: 'mnemonic' | 'privateKey') => {
@@ -94,34 +102,36 @@ function SettingsView({ onClose }: Props) {
           </div>
           
           <div className="wallet-card" style={{ padding: '0' }}>
-            <button
-              onClick={() => handleRevealSecret('mnemonic')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                width: '100%',
-                padding: '14px 16px',
-                background: 'transparent',
-                border: 'none',
-                borderBottom: '1px solid var(--border)',
-                cursor: 'pointer',
-                textAlign: 'left'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <img src={mnemonicIcon} alt="" className="settings-icon" />
-                <div>
-                  <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
-                    Secret Recovery Phrase
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                    View your 12-word recovery phrase
-                  </div>
+            {importType === 'mnemonic' && (
+                <button
+                onClick={() => handleRevealSecret('mnemonic')}
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    width: '100%',
+                    padding: '14px 16px',
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottom: '1px solid var(--border)',
+                    cursor: 'pointer',
+                    textAlign: 'left'
+                }}
+                >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <img src={mnemonicIcon} alt="" className="settings-icon" />
+                    <div>
+                    <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                        Secret Recovery Phrase
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                        View your 12-word recovery phrase
+                    </div>
+                    </div>
                 </div>
-              </div>
-              <span style={{ color: 'var(--text-tertiary)', fontSize: '18px' }}>›</span>
-            </button>
+                <span style={{ color: 'var(--text-tertiary)', fontSize: '18px' }}>›</span>
+                </button>
+            )}
 
             <button
               onClick={() => handleRevealSecret('privateKey')}

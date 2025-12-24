@@ -85,6 +85,7 @@ interface WalletStore {
   lastWalletName: string | null;
   pendingBackup: boolean;
   autoLockMinutes: number;
+  importType?: 'mnemonic' | 'privateKey';
 
   // Wallet list
   walletList: WalletInfo[];
@@ -359,6 +360,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         network: state.network,
         address: state.address,
         currentWalletName: state.currentWalletName,
+        importType: state.importType,
         lastWalletName,
         pendingBackup,
         autoLockMinutes,
@@ -388,6 +390,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       await new Promise(resolve => setTimeout(resolve, 100));
 
   const result = await walletBridge.createWallet(password, name, true);
+  const state = await walletBridge.getState();
 
       await AsyncStorage.setItem(PENDING_BACKUP_KEY, 'true');
       await AsyncStorage.setItem(LAST_WALLET_KEY, name);
@@ -398,6 +401,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         hasWallet: true,
         address: result.address,
         currentWalletName: name,
+        importType: state.importType,
         lastWalletName: name,
         pendingBackup: true,
       });
@@ -423,6 +427,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       await new Promise(resolve => setTimeout(resolve, 100));
 
       const result = await walletBridge.importWallet(mnemonic, password, name);
+      const state = await walletBridge.getState();
       await AsyncStorage.setItem(LAST_WALLET_KEY, name);
 
       set({
@@ -431,6 +436,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         hasWallet: true,
         address: result.address,
         currentWalletName: name,
+        importType: state.importType,
         lastWalletName: name,
       });
 
@@ -456,6 +462,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       set({ isLoading: true, error: null });
 
       const result = await walletBridge.unlockWallet(password, name);
+      const state = await walletBridge.getState();
       await AsyncStorage.setItem(LAST_WALLET_KEY, result.walletName);
 
       // Load accounts first to get the persisted currentAccountIndex
@@ -472,6 +479,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         isUnlocked: true,
         address: result.address,
         currentWalletName: result.walletName,
+        importType: state.importType,
         lastWalletName: result.walletName,
         accounts: accountList,
         currentAccountIndex: currentIndex,
@@ -945,6 +953,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
       // Unlock the new wallet (do not lock first to avoid losing session on failure).
       const result = await walletBridge.unlockWallet(passwordToUse, name);
+      const state = await walletBridge.getState();
       await AsyncStorage.setItem(LAST_WALLET_KEY, result.walletName);
 
       // Load accounts to get the persisted currentAccountIndex
@@ -964,6 +973,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         isUnlocked: true,
         address: result.address,
         currentWalletName: result.walletName,
+        importType: state.importType,
         lastWalletName: result.walletName,
         accounts: accountList,
         currentAccountIndex: currentIndex,

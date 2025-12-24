@@ -1126,7 +1126,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         hasWallet: walletService!.getAllWallets() && Object.keys(walletService!.getAllWallets()).length > 0,
         network: walletService!.config.network,
         address: isUnlocked ? walletService!.getAddress() : null,
-        currentWalletName: isUnlocked ? currentWalletName : null
+        currentWalletName: isUnlocked ? currentWalletName : null,
+        importType: isUnlocked ? walletService!.wallet.importType : null
       };
 
     case 'CREATE_WALLET': {
@@ -1179,11 +1180,27 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         throw new Error('Master password required');
       }
       setSessionPassword(importPassword);
-      const importedWallet = walletService!.importWallet(
-        payload.mnemonic,
-        importPassword,
-        payload.accountIndex || 0
-      );
+
+      let importedWallet;
+      if (payload.privateKey) {
+        // Private Key Import
+        if (!payload.chainType) {
+            throw new Error('Chain type required for private key import');
+        }
+        importedWallet = walletService!.importFromPrivateKey(
+            payload.privateKey,
+            payload.chainType,
+            importPassword
+        );
+      } else {
+        // Mnemonic Import (Default)
+        importedWallet = walletService!.importWallet(
+            payload.mnemonic,
+            importPassword,
+            payload.accountIndex || 0
+        );
+      }
+
       walletService!.saveWallet(importWalletName);
       currentWalletName = importWalletName;
       isUnlocked = true;
