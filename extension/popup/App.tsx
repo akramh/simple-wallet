@@ -49,6 +49,10 @@ interface WalletState {
   address: string | null;
   /** Current wallet name (null if locked) */
   currentWalletName?: string | null;
+  /** Import type: 'mnemonic' or 'privateKey' */
+  importType?: 'mnemonic' | 'privateKey' | null;
+  /** For private key imports, the chain type (evm, bitcoin, solana, xrp, ton) */
+  privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton' | null;
 }
 
 /**
@@ -308,6 +312,8 @@ function App() {
       <MainWallet
         address={state.address!}
         network={state.network}
+        importType={state.importType}
+        privateKeyType={state.privateKeyType}
         onLock={loadState}
         onStateChange={loadState}
       />

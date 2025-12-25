@@ -108,6 +108,36 @@ function isEvmNetwork(networkKey: string): boolean {
   return !isBitcoinNetwork(networkKey) && !isSolanaNetwork(networkKey) && !isXrpNetwork(networkKey) && !isTonNetwork(networkKey);
 }
 
+/**
+ * Map of private key types to compatible network type checks.
+ */
+const CHAIN_TYPE_COMPATIBILITY: Record<string, (networkKey: string) => boolean> = {
+  evm: isEvmNetwork,
+  bitcoin: isBitcoinNetwork,
+  solana: isSolanaNetwork,
+  xrp: isXrpNetwork,
+  ton: isTonNetwork
+};
+
+/**
+ * Check if a network should be disabled for the current wallet.
+ * Networks are disabled when using a private key import that only supports specific chains.
+ */
+function isNetworkDisabled(
+  networkKey: string,
+  importType?: 'mnemonic' | 'privateKey' | null,
+  privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton' | null
+): boolean {
+  // Mnemonic-based wallets support all networks
+  if (!importType || importType !== 'privateKey' || !privateKeyType) {
+    return false;
+  }
+  
+  // Check if network is compatible with the private key type
+  const isCompatible = CHAIN_TYPE_COMPATIBILITY[privateKeyType];
+  return isCompatible ? !isCompatible(networkKey) : false;
+}
+
 function isValidRecipientAddress(networkKey: string, address: string): boolean {
   if (isBitcoinNetwork(networkKey)) {
     const btcNetwork = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
@@ -131,6 +161,8 @@ function isValidRecipientAddress(networkKey: string, address: string): boolean {
 interface Props {
   address: string;
   network: string;
+  importType?: 'mnemonic' | 'privateKey' | null;
+  privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton' | null;
   onLock: () => void;
   onStateChange?: () => void;
 }
@@ -163,7 +195,7 @@ interface TokenWithBalance {
   isLoading: boolean;
 }
 
-function MainWallet({ address, network, onLock, onStateChange }: Props) {
+function MainWallet({ address, network, importType, privateKeyType, onLock, onStateChange }: Props) {
   const { showToast } = useToast();
   const notifyStateChange = () => {
     if (onStateChange) {
@@ -220,9 +252,11 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
          const file = SYMBOL_ICON_FALLBACK[net.nativeSymbol.toLowerCase()];
          if (file) icon = ICON_ASSETS[file];
       }
-      return { value: key, label: net.name, icon };
+      
+      const disabled = isNetworkDisabled(key, importType, privateKeyType);
+      return { value: key, label: net.name, icon, disabled };
     });
-  }, [networks, network, showTestnets]);
+  }, [networks, network, showTestnets, importType, privateKeyType]);
 
   // Load tokens immediately, then trigger async balance refresh
   useEffect(() => {
