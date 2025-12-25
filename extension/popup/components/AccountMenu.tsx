@@ -42,6 +42,68 @@ function AccountMenu({
   // Keep wallet names consistent with storage keys and background validation rules.
   const isValidWalletName = (name: string) => /^[A-Za-z0-9]{1,12}$/.test(name);
 
+  // Chain-specific private key validation patterns and help text
+  const chainValidation: Record<string, { pattern: RegExp; example: string; hint: string }> = {
+    evm: {
+      pattern: /^(0x)?[a-fA-F0-9]{64}$/,
+      example: '0x1234...abcd (64 hex chars)',
+      hint: '64-character hex string (with or without 0x prefix)'
+    },
+    bitcoin: {
+      pattern: /^([5KL][1-9A-HJ-NP-Za-km-z]{50,51}|[cT][1-9A-HJ-NP-Za-km-z]{50,51}|[a-fA-F0-9]{64})$/,
+      example: '5HueCGU8rM... or cVbmJ2TY...',
+      hint: 'WIF format (starts with 5, K, L for mainnet or c, T for testnet) or 64-char hex'
+    },
+    solana: {
+      pattern: /^([1-9A-HJ-NP-Za-km-z]{87,88}|[a-fA-F0-9]{64,128})$/,
+      example: 'Base58 or hex format',
+      hint: 'Base58 encoded (87-88 chars) or 64-128 char hex'
+    },
+    xrp: {
+      pattern: /^(s[a-km-zA-HJ-NP-Z1-9]{20,33}|[a-fA-F0-9]{64,66})$/,
+      example: 'sn3nxiW7v... or hex format',
+      hint: 'Family seed (starts with s, 21-34 chars) or 64-66 char hex'
+    },
+    ton: {
+      pattern: /^[a-fA-F0-9]{64,128}$/,
+      example: '64 or 128 hex characters',
+      hint: '64-char (32-byte) or 128-char (64-byte) hex string'
+    }
+  };
+
+  const validatePrivateKey = (key: string, chainType: string): { valid: boolean; message: string } => {
+    const trimmed = key.trim();
+    if (!trimmed) return { valid: false, message: '' };
+    const chain = chainValidation[chainType];
+    if (!chain) return { valid: false, message: 'Unknown chain type' };
+    if (chain.pattern.test(trimmed)) {
+      return { valid: true, message: '✓ Valid format' };
+    }
+    return { valid: false, message: `Invalid format. Expected: ${chain.hint}` };
+  };
+
+  const handlePrivateKeyChange = (value: string) => {
+    setImportPrivateKey(value);
+    if (value.trim()) {
+      setPrivateKeyValidation(validatePrivateKey(value, importChainType));
+    } else {
+      setPrivateKeyValidation(null);
+    }
+  };
+
+  const handlePastePrivateKey = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      setImportPrivateKey(text);
+      if (text.trim()) {
+        setPrivateKeyValidation(validatePrivateKey(text, importChainType));
+      }
+      showToast('Pasted from clipboard');
+    } catch (err) {
+      showToast('Failed to read clipboard');
+    }
+  };
+
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [wallets, setWallets] = useState<WalletMeta[]>([]);
   const [loading, setLoading] = useState(false);
@@ -52,6 +114,8 @@ function AccountMenu({
   const [importPrivateKey, setImportPrivateKey] = useState('');
   const [importType, setImportType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
   const [importChainType, setImportChainType] = useState('evm');
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [privateKeyValidation, setPrivateKeyValidation] = useState<{ valid: boolean; message: string } | null>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -408,9 +472,14 @@ function AccountMenu({
             {getWalletsWithAccounts().map((wallet) => (
               <div key={wallet.name} className="wallet-group">
                 <div className="wallet-group-header">
-                  <span>{wallet.name}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {wallet.name}
+                    {wallet.importType === 'privateKey' && (
+                      <span title="Private Key Wallet" style={{ fontSize: '12px' }}>🔑</span>
+                    )}
+                  </span>
                   {wallet.importType === 'privateKey' && (
-                    <span style={{ fontSize: '10px', marginLeft: '6px', opacity: 0.7 }}>(Private Key)</span>
+                    <span style={{ fontSize: '10px', opacity: 0.6 }}>Single account</span>
                   )}
                 </div>
 
@@ -564,6 +633,8 @@ function AccountMenu({
                 setImportStep('form');
                 setImportMnemonic('');
                 setImportPrivateKey('');
+                setShowPrivateKey(false);
+                setPrivateKeyValidation(null);
               }}>×</button>
             </div>
 
@@ -578,7 +649,7 @@ function AccountMenu({
                 <div className="tabs">
                     <button 
                         className={`tab ${importType === 'mnemonic' ? 'active' : ''}`}
-                        onClick={() => { setImportType('mnemonic'); setStatus({ type: '', message: '' }); }}
+                        onClick={() => { setImportType('mnemonic'); setStatus({ type: '', message: '' }); setPrivateKeyValidation(null); }}
                     >
                         Recovery Phrase
                     </button>
@@ -615,7 +686,12 @@ function AccountMenu({
                             <label>Chain Type</label>
                             <select 
                                 value={importChainType}
-                                onChange={(e) => setImportChainType(e.target.value)}
+                                onChange={(e) => {
+                                  setImportChainType(e.target.value);
+                                  if (importPrivateKey.trim()) {
+                                    setPrivateKeyValidation(validatePrivateKey(importPrivateKey, e.target.value));
+                                  }
+                                }}
                             >
                                 <option value="evm">Ethereum / EVM</option>
                                 <option value="bitcoin">Bitcoin</option>
@@ -625,13 +701,46 @@ function AccountMenu({
                             </select>
                         </div>
                         <div className="form-group">
-                            <label>Private Key</label>
-                            <textarea
-                                rows={3}
-                                placeholder="Enter raw private key"
+                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span>Private Key</span>
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                  type="button"
+                                  className="section-cta"
+                                  onClick={handlePastePrivateKey}
+                                  style={{ fontSize: '11px', padding: '2px 6px' }}
+                                >
+                                  📋 Paste
+                                </button>
+                                <button
+                                  type="button"
+                                  className="section-cta"
+                                  onClick={() => setShowPrivateKey(v => !v)}
+                                  style={{ fontSize: '11px', padding: '2px 6px' }}
+                                >
+                                  {showPrivateKey ? '👁️ Hide' : '👁️ Show'}
+                                </button>
+                              </div>
+                            </label>
+                            <input
+                                type={showPrivateKey ? 'text' : 'password'}
+                                placeholder={chainValidation[importChainType]?.example || 'Enter private key'}
                                 value={importPrivateKey}
-                                onChange={(e) => setImportPrivateKey(e.target.value)}
+                                onChange={(e) => handlePrivateKeyChange(e.target.value)}
+                                style={{ fontFamily: 'monospace', fontSize: '12px' }}
                             />
+                            {privateKeyValidation && (
+                              <div style={{
+                                fontSize: '11px',
+                                marginTop: '4px',
+                                color: privateKeyValidation.valid ? '#4ade80' : '#f87171'
+                              }}>
+                                {privateKeyValidation.message}
+                              </div>
+                            )}
+                            <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '4px' }}>
+                              {chainValidation[importChainType]?.hint}
+                            </div>
                         </div>
                     </>
                 )}
