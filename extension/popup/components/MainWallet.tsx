@@ -613,6 +613,7 @@ function MainWallet({ address, network, onLock, onStateChange }: Props) {
         <AccountMenu
           currentAddress={address}
           currentWalletName={currentWalletName}
+          currentAccountIndex={currentAccountIndex}
           onClose={() => setShowAccountMenu(false)}
           onAccountSwitch={() => {
             loadTokensAndData();

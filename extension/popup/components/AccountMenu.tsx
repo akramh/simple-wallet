@@ -23,6 +23,7 @@ interface WalletMeta {
 interface Props {
   currentAddress: string;
   currentWalletName?: string;
+  currentAccountIndex?: number;
   onClose: () => void;
   onAccountSwitch: () => void;
   onWalletSwitch?: () => void;
@@ -32,6 +33,7 @@ interface Props {
 function AccountMenu({
   currentAddress,
   currentWalletName,
+  currentAccountIndex,
   onClose,
   onAccountSwitch,
   onWalletSwitch,
@@ -414,8 +416,11 @@ function AccountMenu({
 
                 <div className="account-list">
                   {wallet.accounts.map((account) => {
-                    const isActive = wallet.name === currentWalletName && 
-                                     account.address.toLowerCase() === currentAddress.toLowerCase();
+                    // Compare by account index (more reliable across networks) or fall back to address
+                    const isActive = wallet.name === currentWalletName &&
+                                     (currentAccountIndex !== undefined
+                                       ? account.index === currentAccountIndex
+                                       : account.address.toLowerCase() === currentAddress.toLowerCase());
                     return (
                     <div
                       key={`${wallet.name}-${account.index}`}
