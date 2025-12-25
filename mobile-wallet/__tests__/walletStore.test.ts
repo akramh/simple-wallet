@@ -417,3 +417,102 @@ describe('useWalletStore error handling', () => {
     expect(state.isUnlocked).toBe(false);
   });
 });
+
+// ============================================================================
+// importType State Tests
+// ============================================================================
+
+describe('useWalletStore importType state', () => {
+  beforeEach(() => {
+    AsyncStorage.clear();
+    useWalletStore.setState({
+      isLoading: false,
+      isInitialized: true,
+      isUnlocked: false,
+      hasWallet: true,
+      network: 'sepolia',
+      address: null,
+      currentWalletName: null,
+      importType: undefined,
+      autoLockMinutes: 15,
+      walletList: [],
+      accounts: [],
+      currentAccountIndex: 0,
+      balances: [],
+      isRefreshingBalances: false,
+      balancesLastUpdated: null,
+      prices: {},
+      totalValue: 0,
+      formattedTotal: '$0.00',
+      isLoadingPrices: false,
+      transactions: [],
+      isLoadingTransactions: false,
+      transactionFilter: 'all',
+      transactionsLastUpdated: null,
+      networks: {},
+      error: null,
+    } as any);
+  });
+
+  test('unlock sets importType from walletBridge state', async () => {
+    const { walletBridge } = require('../services');
+    
+    // Mock unlockWallet to succeed
+    walletBridge.unlockWallet.mockResolvedValueOnce({
+      success: true,
+      address: '0xpkwallet',
+      walletName: 'pk-wallet',
+    });
+    
+    // Mock getState to return privateKey importType
+    walletBridge.getState.mockResolvedValueOnce({
+      isUnlocked: true,
+      hasWallet: true,
+      network: 'sepolia',
+      address: '0xpkwallet',
+      currentWalletName: 'pk-wallet',
+      importType: 'privateKey',
+    });
+    
+    // Mock getAccounts
+    walletBridge.getAccounts.mockResolvedValueOnce({
+      accounts: { 0: { address: '0xpkwallet' } },
+      currentIndex: 0,
+    });
+
+    await useWalletStore.getState().unlock('password', 'pk-wallet');
+
+    const state = useWalletStore.getState();
+    expect(state.importType).toBe('privateKey');
+    expect(state.isUnlocked).toBe(true);
+  });
+
+  test('importType is undefined/mnemonic for mnemonic-based wallet', async () => {
+    const { walletBridge } = require('../services');
+    
+    walletBridge.unlockWallet.mockResolvedValueOnce({
+      success: true,
+      address: '0xmnemonicwallet',
+      walletName: 'mnemonic-wallet',
+    });
+    
+    walletBridge.getState.mockResolvedValueOnce({
+      isUnlocked: true,
+      hasWallet: true,
+      network: 'sepolia',
+      address: '0xmnemonicwallet',
+      currentWalletName: 'mnemonic-wallet',
+      importType: 'mnemonic',
+    });
+    
+    walletBridge.getAccounts.mockResolvedValueOnce({
+      accounts: { 0: { address: '0xmnemonicwallet' } },
+      currentIndex: 0,
+    });
+
+    await useWalletStore.getState().unlock('password', 'mnemonic-wallet');
+
+    const state = useWalletStore.getState();
+    expect(state.importType).toBe('mnemonic');
+  });
+});
