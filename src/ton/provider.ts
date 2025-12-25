@@ -17,6 +17,7 @@
 
 import { WalletContractV4 } from '@ton/ton';
 import { Buffer } from 'buffer';
+import nacl from 'tweetnacl';
 import type { TonAddressInfo, TonBalance, TonFeeEstimate, NormalizedTonTransaction } from './types.js';
 import { deriveTonAddress, deriveTonKeypair, isValidTonAddress } from './address.js';
 import { TonExplorer, getTonExplorer } from './explorer.js';
@@ -247,26 +248,45 @@ export class TonProvider {
    *
    * @param toAddress - Recipient TON address
    * @param amountTon - Amount in TON string
-   * @param mnemonic - BIP-39 mnemonic for signing
+   * @param mnemonic - BIP-39 mnemonic for signing (optional if secretKey provided)
+   * @param accountIndex - Account index for mnemonic derivation
+   * @param secretKey - Raw secret key (hex) for signing (optional)
    * @returns Fee estimate in nanoTON and TON
    */
   async estimateFee(
     toAddress: string,
     amountTon: string,
     mnemonic?: string,
-    accountIndex?: number
+    accountIndex?: number,
+    secretKey?: string
   ): Promise<TonFeeEstimate> {
     if (!isValidTonAddress(toAddress)) {
       throw new Error('Invalid TON recipient address');
     }
 
-    if (!mnemonic) {
+    if (!mnemonic && !secretKey) {
       return { feeNano: '0', feeTon: '0' };
     }
 
-    const keypair = deriveTonKeypair(mnemonic, accountIndex ?? this.accountIndex);
+    let keypair: { publicKey: Uint8Array; secretKey: Uint8Array };
+
+    if (secretKey) {
+      // Use raw secret key
+      const keyBytes = Buffer.from(secretKey, 'hex');
+      if (keyBytes.length === 64) {
+         keypair = nacl.sign.keyPair.fromSecretKey(keyBytes);
+      } else if (keyBytes.length === 32) {
+         keypair = nacl.sign.keyPair.fromSeed(keyBytes);
+      } else {
+         throw new Error('Invalid secret key length');
+      }
+    } else {
+      // Derive from mnemonic
+      keypair = deriveTonKeypair(mnemonic!, accountIndex ?? this.accountIndex);
+    }
+
     const publicKey = Buffer.from(keypair.publicKey);
-    const secretKey = Buffer.from(keypair.secretKey);
+    const secretKeyBytes = Buffer.from(keypair.secretKey);
     const wallet = WalletContractV4.create({
       publicKey,
       workchain: this.config.workchain ?? 0,
@@ -284,7 +304,7 @@ export class TonProvider {
     if (typeof (client as any).estimateExternalMessageFee === 'function') {
       const transfer = await contract.createTransfer({
         seqno,
-        secretKey,
+        secretKey: secretKeyBytes,
         messages: [message],
       });
       const init = wallet.init ?? null;
@@ -314,9 +334,10 @@ export class TonProvider {
    * @param fromAddress - Sender TON address (optional)
    * @param toAddress - Recipient TON address
    * @param amountTon - Amount in TON string
-   * @param mnemonic - BIP-39 mnemonic for signing
+   * @param mnemonic - BIP-39 mnemonic for signing (optional if secretKey provided)
    * @param comment - Optional comment payload
    * @param accountIndex - HD account index for key derivation
+   * @param secretKey - Raw secret key (hex) for signing (optional)
    * @returns Transaction hash if resolved, or 'pending' if hash resolution timed out
    * @throws {Error} If recipient address is invalid or no sender address available
    */
@@ -324,9 +345,10 @@ export class TonProvider {
     fromAddress: string | undefined,
     toAddress: string,
     amountTon: string,
-    mnemonic: string,
+    mnemonic?: string,
     comment?: string,
-    accountIndex?: number
+    accountIndex?: number,
+    secretKey?: string
   ): Promise<{ hash: string }>
   {
     if (!isValidTonAddress(toAddress)) {
@@ -338,9 +360,26 @@ export class TonProvider {
       throw new Error('No TON address available');
     }
 
-    const keypair = deriveTonKeypair(mnemonic, accountIndex ?? this.accountIndex);
+    let keypair: { publicKey: Uint8Array; secretKey: Uint8Array };
+
+    if (secretKey) {
+        // Use raw secret key
+        const keyBytes = Buffer.from(secretKey, 'hex');
+        if (keyBytes.length === 64) {
+             keypair = nacl.sign.keyPair.fromSecretKey(keyBytes);
+        } else if (keyBytes.length === 32) {
+             keypair = nacl.sign.keyPair.fromSeed(keyBytes);
+        } else {
+             throw new Error('Invalid secret key length');
+        }
+    } else if (mnemonic) {
+        keypair = deriveTonKeypair(mnemonic, accountIndex ?? this.accountIndex);
+    } else {
+        throw new Error('Missing mnemonic or secret key for signing');
+    }
+
     const publicKey = Buffer.from(keypair.publicKey);
-    const secretKey = Buffer.from(keypair.secretKey);
+    const secretKeyBytes = Buffer.from(keypair.secretKey);
     const wallet = WalletContractV4.create({
       publicKey,
       workchain: this.config.workchain ?? 0,
@@ -358,7 +397,7 @@ export class TonProvider {
 
     await contract.sendTransfer({
       seqno,
-      secretKey,
+      secretKey: secretKeyBytes,
       messages: [message],
     });
 
