@@ -40,6 +40,54 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     return true;
   };
 
+  const validatePrivateKey = (key: string, type: string) => {
+    const trimmedKey = key.trim();
+    
+    switch (type) {
+      case 'evm':
+        // 64 hex chars, optional 0x prefix
+        const evmKey = trimmedKey.startsWith('0x') ? trimmedKey.slice(2) : trimmedKey;
+        if (!/^[0-9a-fA-F]{64}$/.test(evmKey)) {
+          setError('Invalid EVM private key. Expected 64 hex characters.');
+          return false;
+        }
+        break;
+      case 'bitcoin':
+        // WIF format (Base58, starts with 5, K, L, 9, or c, length 51-52)
+        if (!/^[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}$/.test(trimmedKey)) {
+          setError('Invalid Bitcoin WIF private key.');
+          return false;
+        }
+        break;
+      case 'solana':
+        // Base58 encoded secret key (64 bytes -> 87-88 chars)
+        if (!/^[1-9A-HJ-NP-Za-km-z]{87,88}$/.test(trimmedKey)) {
+          setError('Invalid Solana private key. Expected Base58 secret key (87-88 chars).');
+          return false;
+        }
+        break;
+      case 'xrp':
+        // Hex (64 chars) or Family Seed (starts with 's', length 29)
+        const isXrpSeed = /^s[1-9A-HJ-NP-Za-km-z]{28,}$/.test(trimmedKey);
+        const isXrpHex = /^[0-9a-fA-F]{64}$/.test(trimmedKey);
+        if (!isXrpSeed && !isXrpHex) {
+          setError('Invalid XRP key. Expected Family Seed (s...) or 64-char Hex.');
+          return false;
+        }
+        break;
+      case 'ton':
+        // Hex (64 or 128 chars)
+        if (!/^[0-9a-fA-F]{64}$/.test(trimmedKey) && !/^[0-9a-fA-F]{128}$/.test(trimmedKey)) {
+          setError('Invalid TON private key. Expected 64 or 128 hex characters.');
+          return false;
+        }
+        break;
+      default:
+        return true;
+    }
+    return true;
+  };
+
   // Keep wallet names consistent with storage keys and background validation rules.
   const isValidWalletName = (name: string) => /^[A-Za-z0-9]{1,12}$/.test(name);
 
@@ -193,11 +241,15 @@ function WelcomeScreen({ onWalletCreated }: Props) {
         if (!mnemonic.trim() || !validateMnemonicInput(mnemonic)) return;
         payload.mnemonic = mnemonic.trim();
     } else {
-        if (!privateKey.trim()) {
+        const key = privateKey.trim();
+        if (!key) {
             setError('Private key is required');
             return;
         }
-        payload.privateKey = privateKey.trim();
+        if (!validatePrivateKey(key, chainType)) {
+            return;
+        }
+        payload.privateKey = key;
         payload.chainType = chainType;
     }
 

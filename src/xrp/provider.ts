@@ -24,6 +24,10 @@ import {
   validateRecipientActivation,
   type XRPTransactionResult,
 } from './transaction.js';
+import { Wallet } from 'xrpl';
+import * as ecc from 'tiny-secp256k1';
+import { Buffer } from 'buffer';
+import { validateMnemonic } from '../crypto-utils.js';
 
 /**
  * Portfolio result for XRP (matches EVM/Bitcoin pattern).
@@ -460,7 +464,7 @@ export class XRPProvider {
    * @param fromAddress - Sender address
    * @param toAddress - Recipient address
    * @param amountXrp - Amount in XRP as string
-   * @param mnemonic - Mnemonic for signing
+   * @param mnemonicOrPrivateKey - Mnemonic or private key (hex/seed) for signing
    * @param destinationTag - Optional destination tag
    * @returns Transaction result with hash and fee
    */
@@ -468,7 +472,7 @@ export class XRPProvider {
     fromAddress: string,
     toAddress: string,
     amountXrp: string,
-    mnemonic: string,
+    mnemonicOrPrivateKey: string,
     destinationTag?: number
   ): Promise<XRPTransactionResult> {
     // Validate and estimate
@@ -488,7 +492,13 @@ export class XRPProvider {
     const lastLedgerSequence = ledgerIndex + 20;
 
     // Get wallet for signing
-    const wallet = this.getWallet(mnemonic);
+    let wallet: Wallet;
+    if (validateMnemonic(mnemonicOrPrivateKey)) {
+      wallet = this.getWallet(mnemonicOrPrivateKey);
+    } else {
+      // Assume private key or seed
+      wallet = this.getWalletFromPrivateKey(mnemonicOrPrivateKey);
+    }
 
     // Build and sign transaction
     const signedTx = buildAndSignPayment(
@@ -516,6 +526,37 @@ export class XRPProvider {
       feeXrp: estimate.feeXrpStr,
       accepted: true,
     };
+  }
+
+  /**
+   * Helper to create a Wallet instance from a private key or seed.
+   */
+  private getWalletFromPrivateKey(key: string): Wallet {
+    try {
+      if (key.startsWith('s')) {
+        // It's a seed
+        return Wallet.fromSeed(key);
+      } else {
+        // Assume hex private key
+        if (!/^[0-9a-fA-F]{64}$/.test(key)) {
+          throw new Error('Invalid private key hex');
+        }
+        
+        const privateKeyBuffer = Buffer.from(key, 'hex');
+        if (!ecc.isPrivate(privateKeyBuffer)) {
+           throw new Error('Invalid private key');
+        }
+        const publicKeyBuffer = ecc.pointFromScalar(privateKeyBuffer, true);
+        if (!publicKeyBuffer) throw new Error('Failed to derive public key');
+        
+        const publicKey = Buffer.from(publicKeyBuffer).toString('hex').toUpperCase();
+        const privateKey = key.toUpperCase();
+        
+        return new Wallet(publicKey, privateKey);
+      }
+    } catch (error) {
+      throw new Error(`Invalid XRP key: ${(error as Error).message}`);
+    }
   }
 
   /**

@@ -37,7 +37,9 @@ import {
   type SolanaExplorer,
   type SolTransferResult,
 } from './solana/index.js';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, Keypair } from '@solana/web3.js';
+// @ts-ignore
+import bs58 from 'bs58';
 import {
   BitcoinProvider,
   getBitcoinProvider,
@@ -1314,7 +1316,7 @@ export class WalletAppService {
    *
    * @param toAddress - Recipient Solana address (base58)
    * @param amountSol - Amount to send in SOL (e.g., "0.5")
-   * @param password - Wallet password to decrypt mnemonic for signing
+   * @param password - Wallet password to decrypt mnemonic/key for signing
    * @returns Transaction result with signature and fee
    */
   async sendSolanaTransaction(
@@ -1337,10 +1339,22 @@ export class WalletAppService {
       throw new Error('No Solana address available');
     }
 
-    // Get mnemonic to derive keypair
-    const mnemonic = this.wallet.getMnemonic(password);
-    const accountIndex = this.wallet.getCurrentAccountIndex();
-    const keypair = deriveSolanaKeypair(mnemonic, accountIndex);
+    let keypair: Keypair;
+
+    if (this.wallet.importType === 'privateKey') {
+      const privateKey = this.wallet.getPrivateKey(password);
+      if (!privateKey) {
+        throw new Error('Failed to decrypt private key');
+      }
+      // Decode base58 private key
+      const secretKey = bs58.decode(privateKey);
+      keypair = Keypair.fromSecretKey(secretKey);
+    } else {
+      // Get mnemonic to derive keypair
+      const mnemonic = this.wallet.getMnemonic(password);
+      const accountIndex = this.wallet.getCurrentAccountIndex();
+      keypair = deriveSolanaKeypair(mnemonic, accountIndex);
+    }
 
     // Get provider for RPC operations
     const provider = this.getSolanaProviderForNetwork(this.config.network);
@@ -1628,8 +1642,13 @@ export class WalletAppService {
       throw new Error('No XRP address available');
     }
 
-    // Get mnemonic for signing
-    const mnemonic = this.wallet.getMnemonic(password);
+    let mnemonicOrPrivateKey: string;
+    if (this.wallet.importType === 'privateKey') {
+      mnemonicOrPrivateKey = this.wallet.getPrivateKey(password);
+    } else {
+      // Get mnemonic for signing
+      mnemonicOrPrivateKey = this.wallet.getMnemonic(password);
+    }
 
     // Get provider and send transaction
     const provider = this.getXRPProviderForNetwork(this.config.network);
@@ -1637,7 +1656,7 @@ export class WalletAppService {
       xrpInfo.address,
       toAddress,
       amountXrp,
-      mnemonic,
+      mnemonicOrPrivateKey,
       destinationTag
     );
 
@@ -1800,17 +1819,30 @@ export class WalletAppService {
       throw new Error('No TON address available');
     }
 
-    const mnemonic = this.wallet.getMnemonic(password);
     const provider = this.getTonProviderForNetwork(this.config.network);
-
     const accountIndex = this.wallet.getCurrentAccountIndex();
-    return provider.sendTransaction(
-      tonInfo.address,
-      toAddress,
-      amountTon,
-      mnemonic,
-      comment,
-      accountIndex
-    );
+
+    if (this.wallet.importType === 'privateKey') {
+      const secretKey = this.wallet.getPrivateKey(password);
+      return provider.sendTransaction(
+        tonInfo.address,
+        toAddress,
+        amountTon,
+        undefined, // No mnemonic
+        comment,
+        accountIndex,
+        secretKey
+      );
+    } else {
+      const mnemonic = this.wallet.getMnemonic(password);
+      return provider.sendTransaction(
+        tonInfo.address,
+        toAddress,
+        amountTon,
+        mnemonic,
+        comment,
+        accountIndex
+      );
+    }
   }
 }
