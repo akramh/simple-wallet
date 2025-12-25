@@ -2,7 +2,7 @@
  * @fileoverview Core HD wallet implementation.
  * 
  * This module provides the main Wallet class that acts as a manager for:
- * - Key management (Mnemonic encryption/decryption)
+ * - Key management (Mnemonic/PrivateKey encryption/decryption)
  * - Account management (BIP-44)
  * - Delegation to chain-specific providers (Ethereum, Bitcoin, Solana, XRP, TON)
  * 
@@ -16,15 +16,35 @@ import {
   encryptMnemonicAsync, 
   decryptMnemonicAsync, 
   validateMnemonic, 
-  generateMnemonic 
+  generateMnemonic,
+  encryptData,
+  decryptData
 } from './crypto-utils.js';
 import type { Config, TokenMetadata, Token } from './types/index.js';
 import type { StorageAdapter } from './storage.js';
 import type { ProviderFactory } from './providers.js';
-import { deriveBitcoinAddress, getBitcoinPrivateKey, type BitcoinAddressInfo } from './bitcoin/index.js';
-import { deriveSolanaAddress, type SolanaAddressInfo } from './solana/index.js';
-import { deriveXRPAddress, getXRPPrivateKey, type XRPAddressInfo } from './xrp/index.js';
-import { deriveTonAddress, type TonAddressInfo } from './ton/index.js';
+import { 
+  deriveBitcoinAddress, 
+  deriveBitcoinAddressFromPrivateKey, 
+  getBitcoinPrivateKey, 
+  type BitcoinAddressInfo 
+} from './bitcoin/index.js';
+import { 
+  deriveSolanaAddress, 
+  deriveSolanaAddressFromSecretKey, 
+  type SolanaAddressInfo 
+} from './solana/index.js';
+import { 
+  deriveXRPAddress, 
+  deriveXRPAddressFromPrivateKey, 
+  getXRPPrivateKey, 
+  type XRPAddressInfo 
+} from './xrp/index.js';
+import { 
+  deriveTonAddress, 
+  deriveTonAddressFromSecretKey, 
+  type TonAddressInfo 
+} from './ton/index.js';
 import { EthereumProvider } from './ethereum/provider.js';
 import { deriveEthereumWallet } from './ethereum/address.js';
 
@@ -33,10 +53,10 @@ import { deriveEthereumWallet } from './ethereum/address.js';
 // ============================================================================
 
 /** Wallet creation/import result with sensitive data */
-interface WalletInfo {
+export interface WalletInfo {
   address: string;
-  mnemonic: string;
-  privateKey: string;
+  mnemonic?: string;
+  privateKey?: string;
 }
 
 /** Account switch result */
@@ -52,9 +72,12 @@ interface TransactionReceipt {
   gasUsed: string;
 }
 
-/** Encrypted wallet storage format */
+/** Encrypted wallet storage format (internal mapping to EncryptedWallet) */
 interface WalletData {
-  encryptedMnemonic: string;
+  encryptedMnemonic?: string;
+  encryptedPrivateKey?: string;
+  importType?: 'mnemonic' | 'privateKey';
+  privateKeyType?: 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton';
   salt: string;
   iv: string;
   authTag: string;
@@ -97,9 +120,16 @@ export class Wallet {
   ethereumProvider: EthereumProvider;
 
   // State
-  wallet: ethers.HDNodeWallet | null;
+  wallet: ethers.HDNodeWallet | ethers.Wallet | null;
   mnemonic: string | null;
+  privateKey: string | null; // Raw private key for non-HD wallets
+  
+  // Persistence State
   encryptedMnemonic: string | null;
+  encryptedPrivateKey: string | null;
+  importType: 'mnemonic' | 'privateKey';
+  privateKeyType?: 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton';
+  
   salt: string | null;
   iv: string | null;
   authTag: string | null;
@@ -125,7 +155,12 @@ export class Wallet {
     this.storage = storage;
     this.wallet = null;
     this.mnemonic = null;
+    this.privateKey = null;
+    
     this.encryptedMnemonic = null;
+    this.encryptedPrivateKey = null;
+    this.importType = 'mnemonic';
+    
     this.salt = null;
     this.iv = null;
     this.authTag = null;
@@ -181,14 +216,21 @@ export class Wallet {
         await this.ethereumProvider.ensureProvider(networkKey);
     }
 
-    if (this.wallet && this.mnemonic) {
-      this.wallet = this._deriveAccount(this.currentAccountIndex).connect(this.provider!);
+    if (this.wallet) {
+      if (this.importType === 'mnemonic') {
+        this.wallet = this._deriveAccount(this.currentAccountIndex).connect(this.provider!);
+      } else if (this.importType === 'privateKey' && this.privateKeyType === 'evm') {
+        // Re-connect the single private key wallet to the new provider
+        this.wallet = new ethers.Wallet(this.privateKey!, this.provider!);
+      }
     }
   }
 
   createNewWallet(password: string): WalletInfo {
     // Generate 24-word mnemonic by default for maximum security (256-bit entropy)
     this.mnemonic = generateMnemonic(24);
+    this.importType = 'mnemonic';
+    this.privateKey = null;
 
     const { encrypted, salt, iv, authTag } = encryptMnemonic(this.mnemonic, password);
     this.encryptedMnemonic = encrypted;
@@ -216,6 +258,8 @@ export class Wallet {
 
     try {
       this.mnemonic = normalizedMnemonic;
+      this.importType = 'mnemonic';
+      this.privateKey = null;
 
       const { encrypted, salt, iv, authTag } = encryptMnemonic(this.mnemonic, password);
       this.encryptedMnemonic = encrypted;
@@ -237,14 +281,105 @@ export class Wallet {
     }
   }
 
-  _deriveAccount(index: number): ethers.HDNodeWallet {
-    if (!this.mnemonic) {
-      throw new Error('No mnemonic available');
+  /**
+   * Imports a wallet from a raw private key (non-HD, single-address wallet).
+   *
+   * Unlike mnemonic-based wallets, private key wallets:
+   * - Support only one account (no HD derivation)
+   * - Are locked to a single chain family
+   * - Cannot derive additional addresses
+   *
+   * @param key - Raw private key in chain-specific format:
+   *   - EVM: Hex string with or without 0x prefix (64 hex chars)
+   *   - Bitcoin: WIF (Wallet Import Format) string
+   *   - Solana: Base58-encoded secret key (64 bytes)
+   *   - XRP: Hex seed or family seed (s...) format
+   *   - TON: Hex-encoded secret key (32 or 64 bytes)
+   * @param type - Chain family for this private key
+   * @param password - Master password for encrypting the key
+   * @returns Wallet info containing the derived address
+   * @throws Error if key is empty or invalid for the specified chain type
+   *
+   * @security This method handles raw private key material. The key is encrypted
+   *   immediately using AES-256-GCM before being stored. The raw key is held in
+   *   memory only for the duration of the session.
+   *
+   * @example
+   * ```typescript
+   * // Import an EVM private key
+   * const info = wallet.importFromPrivateKey(
+   *   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+   *   'evm',
+   *   'mySecurePassword123'
+   * );
+   * console.log(info.address); // 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+   * ```
+   */
+  importFromPrivateKey(key: string, type: 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton', password: string): WalletInfo {
+    if (!key || key.trim() === '') {
+      throw new Error('Private key cannot be empty');
     }
-    return deriveEthereumWallet(this.mnemonic, index);
+
+    this.mnemonic = null;
+    this.encryptedMnemonic = null;
+    this.importType = 'privateKey';
+    this.privateKeyType = type;
+    this.privateKey = key.trim();
+    this.currentAccountIndex = 0;
+
+    // Encrypt the key using encryptData which returns { encrypted (string), salt }
+    // The encrypted string contains iv:authTag:ciphertext
+    const { encrypted, salt } = encryptData(this.privateKey, password);
+    
+    // We need to split the encrypted string to extract IV and AuthTag for storage consistency
+    const parts = encrypted.split(':');
+    if (parts.length !== 3) throw new Error('Encryption failed');
+    const [iv, authTag, ciphertext] = parts;
+
+    // Store ciphertext in encryptedPrivateKey field
+    this.encryptedPrivateKey = ciphertext;
+    this.salt = salt;
+    this.iv = iv;
+    this.authTag = authTag;
+
+    let address = '';
+
+    // Handle derivation based on type
+    if (type === 'evm') {
+      try {
+        const wallet = new ethers.Wallet(this.privateKey, this.provider || undefined);
+        this.wallet = wallet;
+        address = wallet.address.toLowerCase();
+      } catch (e) {
+        throw new Error('Invalid EVM private key');
+      }
+    } else {
+      // Non-EVM keys are stored but don't create an ethers.Wallet instance
+      this.wallet = null; 
+      address = 'Generated on demand';
+    }
+
+    return {
+      address,
+      privateKey: this.privateKey
+    };
+  }
+
+  _deriveAccount(index: number): ethers.HDNodeWallet {
+    if (this.importType === 'mnemonic') {
+        if (!this.mnemonic) {
+            throw new Error('No mnemonic available');
+        }
+        return deriveEthereumWallet(this.mnemonic, index);
+    }
+    throw new Error('Cannot derive accounts from a single private key wallet');
   }
 
   switchAccount(accountIndex: number): AccountInfo {
+    if (this.importType === 'privateKey') {
+      throw new Error('Cannot switch accounts on a private key wallet');
+    }
+
     if (!this.mnemonic) {
       throw new Error('No mnemonic loaded');
     }
@@ -258,6 +393,13 @@ export class Wallet {
   }
 
   getAccountAddress(index: number): string {
+    if (this.importType === 'privateKey') {
+        // Index is ignored for private key wallets, but we should enforce 0
+        if (index !== 0) throw new Error('Private key wallets only support account index 0');
+        if (this.wallet) return this.wallet.address.toLowerCase();
+        return ''; // Should derive for non-EVM
+    }
+
     if (!this.mnemonic) {
       throw new Error('No mnemonic loaded');
     }
@@ -312,38 +454,57 @@ export class Wallet {
   // ============================================================================
 
   saveWallet(walletName?: string): string {
-    if (!this.wallet) {
+    if (!this.wallet && !this.encryptedPrivateKey) {
+      // Must have either a loaded wallet (EVM) or encrypted key (Non-EVM private key)
       throw new Error('No wallet loaded');
     }
 
-    if (!this.encryptedMnemonic || !this.salt || !this.iv || !this.authTag) {
-      throw new Error('Wallet not properly encrypted');
+    if ((this.importType === 'mnemonic' && !this.encryptedMnemonic) ||
+        (this.importType === 'privateKey' && !this.encryptedPrivateKey)) {
+         throw new Error('Wallet not properly encrypted');
+    }
+    
+    if (!this.salt || !this.iv || !this.authTag) {
+      throw new Error('Wallet encryption metadata missing');
     }
 
     const wallets = this.storage.readJSON<WalletsFile>('wallets.json', {});
 
     if (!walletName) {
-      walletName = this.wallet.address.substring(0, 10);
+      walletName = this.wallet ? this.wallet.address.substring(0, 10) : 'wallet';
     }
 
-    if (!wallets[walletName]) {
-      wallets[walletName] = {
-        encryptedMnemonic: this.encryptedMnemonic,
+    // Prepare wallet data
+    const walletData: WalletData = {
+        importType: this.importType,
+        privateKeyType: this.privateKeyType,
+        encryptedMnemonic: this.encryptedMnemonic || undefined,
+        encryptedPrivateKey: this.encryptedPrivateKey || undefined,
         salt: this.salt,
         iv: this.iv,
         authTag: this.authTag,
         createdAt: new Date().toISOString(),
         accounts: {},
         currentAccountIndex: 0
-      };
-    }
-
-    wallets[walletName].accounts[this.currentAccountIndex] = {
-      address: this.wallet.address.toLowerCase(),
-      createdAt: wallets[walletName].accounts[this.currentAccountIndex]?.createdAt || new Date().toISOString()
     };
 
-    wallets[walletName].currentAccountIndex = this.currentAccountIndex;
+    if (wallets[walletName]) {
+        // Preserve existing creation date and accounts if updating
+        walletData.createdAt = wallets[walletName].createdAt;
+        walletData.accounts = wallets[walletName].accounts;
+        // But we overwrite secrets
+    }
+
+    const address = this.wallet ? this.wallet.address.toLowerCase() : 'derived-on-demand';
+
+    walletData.accounts[this.currentAccountIndex] = {
+      address: address,
+      createdAt: walletData.accounts[this.currentAccountIndex]?.createdAt || new Date().toISOString()
+    };
+
+    walletData.currentAccountIndex = this.currentAccountIndex;
+    
+    wallets[walletName] = walletData;
 
     this.storage.writeJSON('wallets.json', wallets);
 
@@ -353,7 +514,7 @@ export class Wallet {
   /**
    * Change the master password for a stored wallet.
    *
-   * Re-encrypts the mnemonic with the new password and updates wallets.json.
+   * Re-encrypts the mnemonic/key with the new password and updates wallets.json.
    */
   changePassword(walletName: string, currentPassword: string, newPassword: string): void {
     if (!walletName) {
@@ -366,41 +527,87 @@ export class Wallet {
       throw new Error('Wallet not found');
     }
 
-    let mnemonic: string;
-    try {
-      mnemonic = decryptMnemonic(
-        walletData.encryptedMnemonic,
-        currentPassword,
-        walletData.salt,
-        walletData.iv,
-        walletData.authTag
-      );
-    } catch (error) {
-      throw new Error('Incorrect password');
+    // Determine import type (default to mnemonic for legacy compatibility)
+    const importType = walletData.importType || 'mnemonic';
+
+    if (importType === 'mnemonic') {
+        if (!walletData.encryptedMnemonic) throw new Error('Corrupted wallet data');
+        
+        let mnemonic: string;
+        try {
+            mnemonic = decryptMnemonic(
+                walletData.encryptedMnemonic,
+                currentPassword,
+                walletData.salt,
+                walletData.iv,
+                walletData.authTag
+            );
+        } catch (error) {
+            throw new Error('Incorrect password');
+        }
+
+        if (!validateMnemonic(mnemonic)) {
+            throw new Error('Incorrect password');
+        }
+
+        const { encrypted, salt, iv, authTag } = encryptMnemonic(mnemonic, newPassword);
+
+        wallets[walletName] = {
+            ...walletData,
+            encryptedMnemonic: encrypted,
+            salt,
+            iv,
+            authTag,
+        };
+        
+        // Update current instance if it matches
+        if (this.mnemonic === mnemonic) {
+            this.encryptedMnemonic = encrypted;
+            this.salt = salt;
+            this.iv = iv;
+            this.authTag = authTag;
+        }
+
+    } else {
+        // Private Key
+        if (!walletData.encryptedPrivateKey) throw new Error('Corrupted wallet data');
+
+        let privateKey: string;
+        try {
+            // Reconstruct full encrypted string iv:authTag:ciphertext
+            const fullEncrypted = `${walletData.iv}:${walletData.authTag}:${walletData.encryptedPrivateKey}`;
+            
+            privateKey = decryptData(
+                fullEncrypted,
+                currentPassword,
+                walletData.salt
+            );
+        } catch (error) {
+             throw new Error('Incorrect password');
+        }
+
+        const { encrypted, salt } = encryptData(privateKey, newPassword);
+        // encrypted is iv:authTag:ciphertext
+        const parts = encrypted.split(':');
+        const [iv, authTag, ciphertext] = parts;
+
+        wallets[walletName] = {
+            ...walletData,
+            encryptedPrivateKey: ciphertext,
+            salt,
+            iv,
+            authTag
+        };
+
+        if (this.privateKey === privateKey) {
+            this.encryptedPrivateKey = ciphertext;
+            this.salt = salt;
+            this.iv = iv;
+            this.authTag = authTag;
+        }
     }
-
-    if (!validateMnemonic(mnemonic)) {
-      throw new Error('Incorrect password');
-    }
-
-    const { encrypted, salt, iv, authTag } = encryptMnemonic(mnemonic, newPassword);
-
-    wallets[walletName] = {
-      ...walletData,
-      encryptedMnemonic: encrypted,
-      salt,
-      iv,
-      authTag,
-    };
 
     this.storage.writeJSON('wallets.json', wallets);
-
-    if (this.mnemonic === mnemonic) {
-      this.encryptedMnemonic = encrypted;
-      this.salt = salt;
-      this.iv = iv;
-      this.authTag = authTag;
-    }
   }
 
   /**
@@ -413,35 +620,74 @@ export class Wallet {
 
       if (walletName && wallets[walletName]) {
         const walletData = wallets[walletName];
+        this.importType = walletData.importType || 'mnemonic';
+        this.privateKeyType = walletData.privateKeyType;
 
-        const mnemonic = decryptMnemonic(
-          walletData.encryptedMnemonic,
-          password,
-          walletData.salt,
-          walletData.iv,
-          walletData.authTag
-        );
+        if (this.importType === 'mnemonic') {
+            if (!walletData.encryptedMnemonic) throw new Error('Missing mnemonic data');
+            
+            const mnemonic = decryptMnemonic(
+              walletData.encryptedMnemonic,
+              password,
+              walletData.salt,
+              walletData.iv,
+              walletData.authTag
+            );
+    
+            if (!validateMnemonic(mnemonic)) {
+              throw new Error('Incorrect password');
+            }
+    
+            this.encryptedMnemonic = walletData.encryptedMnemonic;
+            this.mnemonic = mnemonic;
+            
+            const indexToLoad = accountIndex !== null ? accountIndex : (walletData.currentAccountIndex || 0);
+            this.currentAccountIndex = indexToLoad;
+            const derived = this._deriveAccount(indexToLoad);
+            this.wallet = this.provider ? derived.connect(this.provider) : derived;
+            
+            this.salt = walletData.salt;
+            this.iv = walletData.iv;
+            this.authTag = walletData.authTag;
+    
+            return {
+              address: this.wallet.address.toLowerCase(),
+              mnemonic: this.mnemonic,
+              privateKey: this.wallet.privateKey
+            };
+        } else {
+            // Private Key
+            if (!walletData.encryptedPrivateKey) throw new Error('Missing private key data');
+            
+            const fullEncrypted = `${walletData.iv}:${walletData.authTag}:${walletData.encryptedPrivateKey}`;
+            const privateKey = decryptData(
+                fullEncrypted,
+                password,
+                walletData.salt
+            );
 
-        if (!validateMnemonic(mnemonic)) {
-          throw new Error('Incorrect password');
+            this.encryptedPrivateKey = walletData.encryptedPrivateKey;
+            this.privateKey = privateKey;
+            this.salt = walletData.salt;
+            this.iv = walletData.iv;
+            this.authTag = walletData.authTag;
+            this.currentAccountIndex = 0; // Always 0
+
+            let address = '';
+            if (this.privateKeyType === 'evm') {
+                const wallet = new ethers.Wallet(privateKey, this.provider || undefined);
+                this.wallet = wallet;
+                address = wallet.address.toLowerCase();
+            } else {
+                this.wallet = null;
+                address = 'derived-on-demand';
+            }
+
+            return {
+                address,
+                privateKey
+            };
         }
-
-        this.encryptedMnemonic = walletData.encryptedMnemonic;
-        this.salt = walletData.salt;
-        this.iv = walletData.iv;
-        this.authTag = walletData.authTag;
-        this.mnemonic = mnemonic;
-
-        const indexToLoad = accountIndex !== null ? accountIndex : (walletData.currentAccountIndex || 0);
-        this.currentAccountIndex = indexToLoad;
-        const derived = this._deriveAccount(indexToLoad);
-        this.wallet = this.provider ? derived.connect(this.provider) : derived;
-
-        return {
-          address: this.wallet.address.toLowerCase(),
-          mnemonic: this.mnemonic,
-          privateKey: this.wallet.privateKey
-        };
       }
 
       return null;
@@ -471,35 +717,45 @@ export class Wallet {
 
       if (walletName && wallets[walletName]) {
         const walletData = wallets[walletName];
+        this.importType = walletData.importType || 'mnemonic';
+        this.privateKeyType = walletData.privateKeyType;
+        
+        if (this.importType === 'mnemonic') {
+            if (!walletData.encryptedMnemonic) throw new Error('Missing mnemonic data');
 
-        const mnemonic = await decryptMnemonicAsync(
-          walletData.encryptedMnemonic,
-          password,
-          walletData.salt,
-          walletData.iv,
-          walletData.authTag
-        );
-
-        if (!validateMnemonic(mnemonic)) {
-          throw new Error('Incorrect password');
+            const mnemonic = await decryptMnemonicAsync(
+              walletData.encryptedMnemonic,
+              password,
+              walletData.salt,
+              walletData.iv,
+              walletData.authTag
+            );
+    
+            if (!validateMnemonic(mnemonic)) {
+              throw new Error('Incorrect password');
+            }
+    
+            this.encryptedMnemonic = walletData.encryptedMnemonic;
+            this.mnemonic = mnemonic;
+            
+            const indexToLoad = accountIndex !== null ? accountIndex : (walletData.currentAccountIndex || 0);
+            this.currentAccountIndex = indexToLoad;
+            const derived = this._deriveAccount(indexToLoad);
+            this.wallet = this.provider ? derived.connect(this.provider) : derived;
+            
+            this.salt = walletData.salt;
+            this.iv = walletData.iv;
+            this.authTag = walletData.authTag;
+    
+            return {
+              address: this.wallet.address.toLowerCase(),
+              mnemonic: this.mnemonic,
+              privateKey: this.wallet.privateKey
+            };
+        } else {
+             // Use sync load for private keys for now (small payload)
+             return this.loadWallet(walletName, password, accountIndex);
         }
-
-        this.encryptedMnemonic = walletData.encryptedMnemonic;
-        this.salt = walletData.salt;
-        this.iv = walletData.iv;
-        this.authTag = walletData.authTag;
-        this.mnemonic = mnemonic;
-
-        const indexToLoad = accountIndex !== null ? accountIndex : (walletData.currentAccountIndex || 0);
-        this.currentAccountIndex = indexToLoad;
-        const derived = this._deriveAccount(indexToLoad);
-        this.wallet = this.provider ? derived.connect(this.provider) : derived;
-
-        return {
-          address: this.wallet.address.toLowerCase(),
-          mnemonic: this.mnemonic,
-          privateKey: this.wallet.privateKey
-        };
       }
 
       return null;
@@ -600,18 +856,31 @@ export class Wallet {
       }
       const backupData: ExportData = JSON.parse(fileContents);
 
-      if (!backupData.wallet || !backupData.wallet.encryptedMnemonic) {
+      if (!backupData.wallet) {
         throw new Error('Invalid backup file format');
       }
+      
+      const importType = backupData.wallet.importType || 'mnemonic';
 
       try {
-        decryptMnemonic(
-          backupData.wallet.encryptedMnemonic,
-          password,
-          backupData.wallet.salt,
-          backupData.wallet.iv,
-          backupData.wallet.authTag
-        );
+        if (importType === 'mnemonic') {
+            if (!backupData.wallet.encryptedMnemonic) throw new Error('Missing mnemonic');
+            decryptMnemonic(
+              backupData.wallet.encryptedMnemonic,
+              password,
+              backupData.wallet.salt,
+              backupData.wallet.iv,
+              backupData.wallet.authTag
+            );
+        } else {
+             if (!backupData.wallet.encryptedPrivateKey) throw new Error('Missing private key');
+             const fullEncrypted = `${backupData.wallet.iv}:${backupData.wallet.authTag}:${backupData.wallet.encryptedPrivateKey}`;
+             decryptData(
+              fullEncrypted,
+              password,
+              backupData.wallet.salt
+            );
+        }
       } catch {
         throw new Error('Incorrect password for backup file');
       }
@@ -627,7 +896,10 @@ export class Wallet {
       }
 
       wallets[walletName] = {
+        importType,
+        privateKeyType: backupData.wallet.privateKeyType,
         encryptedMnemonic: backupData.wallet.encryptedMnemonic,
+        encryptedPrivateKey: backupData.wallet.encryptedPrivateKey,
         salt: backupData.wallet.salt,
         iv: backupData.wallet.iv,
         authTag: backupData.wallet.authTag,
@@ -645,20 +917,26 @@ export class Wallet {
   }
 
   getPrivateKey(password: string): string {
-    if (!this.wallet) {
-      throw new Error('No wallet loaded');
+    if (this.importType === 'mnemonic') {
+        if (!this.encryptedMnemonic || !this.salt || !this.iv || !this.authTag) {
+          throw new Error('No encrypted wallet loaded');
+        }
+        decryptMnemonic(this.encryptedMnemonic, password, this.salt, this.iv, this.authTag);
+        if (!this.wallet) throw new Error('Wallet not initialized');
+        return this.wallet.privateKey;
+    } else {
+        if (!this.encryptedPrivateKey || !this.salt || !this.iv || !this.authTag) {
+          throw new Error('No encrypted wallet loaded');
+        }
+        const fullEncrypted = `${this.iv}:${this.authTag}:${this.encryptedPrivateKey}`;
+        return decryptData(fullEncrypted, password, this.salt);
     }
-
-    if (!this.encryptedMnemonic || !this.salt || !this.iv || !this.authTag) {
-      throw new Error('No encrypted wallet loaded');
-    }
-
-    decryptMnemonic(this.encryptedMnemonic, password, this.salt, this.iv, this.authTag);
-
-    return this.wallet.privateKey;
   }
 
   getMnemonic(password: string): string {
+    if (this.importType === 'privateKey') {
+        throw new Error('This wallet has no mnemonic phrase');
+    }
     if (!this.encryptedMnemonic || !this.salt || !this.iv || !this.authTag) {
       throw new Error('No encrypted wallet loaded');
     }
@@ -674,6 +952,15 @@ export class Wallet {
     network: 'mainnet' | 'testnet' = 'mainnet',
     accountIndex?: number
   ): BitcoinAddressInfo {
+    if (this.importType === 'privateKey') {
+        if (this.privateKeyType !== 'bitcoin') {
+             throw new Error('This wallet does not support Bitcoin');
+        }
+        if (!this.privateKey) throw new Error('Private key not loaded');
+        // Derive address from the raw private key (WIF)
+        return deriveBitcoinAddressFromPrivateKey(this.privateKey, network);
+    }
+
     if (!this.mnemonic) {
       throw new Error('No mnemonic loaded');
     }
@@ -686,6 +973,13 @@ export class Wallet {
     password: string,
     network: 'mainnet' | 'testnet' = 'mainnet'
   ): string {
+    if (this.importType === 'privateKey') {
+        if (this.privateKeyType !== 'bitcoin') {
+             throw new Error('This wallet does not support Bitcoin');
+        }
+        return this.getPrivateKey(password);
+    }
+  
     if (!this.encryptedMnemonic || !this.salt || !this.iv || !this.authTag) {
       throw new Error('No encrypted wallet loaded');
     }
@@ -707,6 +1001,12 @@ export class Wallet {
   // ============================================================================
 
   getSolanaAddress(accountIndex?: number): SolanaAddressInfo {
+    if (this.importType === 'privateKey') {
+        if (this.privateKeyType !== 'solana') throw new Error('This wallet does not support Solana');
+        if (!this.privateKey) throw new Error('Private key not loaded');
+        return deriveSolanaAddressFromSecretKey(this.privateKey);
+    }
+
     if (!this.mnemonic) {
       throw new Error('No mnemonic loaded');
     }
@@ -719,6 +1019,12 @@ export class Wallet {
   // ============================================================================
 
   getXRPAddress(accountIndex?: number): XRPAddressInfo {
+    if (this.importType === 'privateKey') {
+        if (this.privateKeyType !== 'xrp') throw new Error('This wallet does not support XRP');
+        if (!this.privateKey) throw new Error('Private key not loaded');
+        return deriveXRPAddressFromPrivateKey(this.privateKey);
+    }
+
     if (!this.mnemonic) {
       throw new Error('No mnemonic loaded');
     }
@@ -727,6 +1033,11 @@ export class Wallet {
   }
 
   getXRPPrivateKey(password: string): string {
+    if (this.importType === 'privateKey') {
+        if (this.privateKeyType !== 'xrp') throw new Error('This wallet does not support XRP');
+        return this.getPrivateKey(password);
+    }
+
     if (!this.encryptedMnemonic || !this.salt || !this.iv || !this.authTag) {
       throw new Error('No encrypted wallet loaded');
     }
@@ -754,6 +1065,12 @@ export class Wallet {
    * @returns TON address info
    */
   getTonAddress(accountIndex?: number): TonAddressInfo {
+    if (this.importType === 'privateKey') {
+        if (this.privateKeyType !== 'ton') throw new Error('This wallet does not support TON');
+        if (!this.privateKey) throw new Error('Private key not loaded');
+        return deriveTonAddressFromSecretKey(this.privateKey);
+    }
+
     if (!this.mnemonic) {
       throw new Error('No mnemonic loaded');
     }

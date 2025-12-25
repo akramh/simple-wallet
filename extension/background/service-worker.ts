@@ -1120,14 +1120,25 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       return { success: true };
     }
 
-    case 'GET_STATE':
+    case 'GET_STATE': {
+      let address: string | null = null;
+      if (isUnlocked) {
+        try {
+          address = walletService!.getAddress();
+        } catch (err) {
+          // Address not available for current network/wallet type
+        }
+      }
       return {
         isUnlocked,
         hasWallet: walletService!.getAllWallets() && Object.keys(walletService!.getAllWallets()).length > 0,
         network: walletService!.config.network,
-        address: isUnlocked ? walletService!.getAddress() : null,
-        currentWalletName: isUnlocked ? currentWalletName : null
+        address,
+        currentWalletName: isUnlocked ? currentWalletName : null,
+        importType: isUnlocked ? walletService!.wallet.importType : null,
+        privateKeyType: isUnlocked ? walletService!.wallet.privateKeyType : null
       };
+    }
 
     case 'CREATE_WALLET': {
       const walletName = payload.name || 'default';
@@ -1179,11 +1190,40 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         throw new Error('Master password required');
       }
       setSessionPassword(importPassword);
-      const importedWallet = walletService!.importWallet(
-        payload.mnemonic,
-        importPassword,
-        payload.accountIndex || 0
-      );
+
+      let importedWallet;
+      if (payload.privateKey) {
+        // Private Key Import
+        if (!payload.chainType) {
+            throw new Error('Chain type required for private key import');
+        }
+        importedWallet = walletService!.importFromPrivateKey(
+            payload.privateKey,
+            payload.chainType,
+            importPassword
+        );
+
+        // Auto-switch to appropriate network for the imported chain type
+        const chainToNetwork: Record<string, string> = {
+          evm: 'mainnet',
+          bitcoin: 'bitcoin-mainnet',
+          solana: 'solana-mainnet',
+          xrp: 'xrp-mainnet',
+          ton: 'ton-mainnet'
+        };
+        const targetNetwork = chainToNetwork[payload.chainType];
+        if (targetNetwork && walletService!.config.network !== targetNetwork) {
+          await walletService!.setNetwork(targetNetwork);
+        }
+      } else {
+        // Mnemonic Import (Default)
+        importedWallet = walletService!.importWallet(
+            payload.mnemonic,
+            importPassword,
+            payload.accountIndex || 0
+        );
+      }
+
       walletService!.saveWallet(importWalletName);
       currentWalletName = importWalletName;
       isUnlocked = true;

@@ -45,6 +45,7 @@ export {
 export {
   getXRPDerivationPath,
   deriveXRPAddress,
+  deriveXRPAddressFromPrivateKey,
   deriveXRPAddresses,
   getXRPPrivateKey,
   getXRPWallet,

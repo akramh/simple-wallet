@@ -382,6 +382,8 @@ export const useNetworkSelectScreenSelector = () =>
       enabledNetworks: state.enabledNetworks,
       showTestnets: state.showTestnets,
       isLoading: state.isLoading,
+      importType: state.importType,
+      privateKeyType: state.privateKeyType,
       switchNetwork: state.switchNetwork,
       setEnabledNetworks: state.setEnabledNetworks,
       toggleShowTestnets: state.toggleShowTestnets,

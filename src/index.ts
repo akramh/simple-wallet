@@ -411,6 +411,7 @@ async function initialMenu(): Promise<void> {
       choices: [
         ui.menuChoice('Create New Wallet', 'Generate a new wallet', 'create'),
         ui.menuChoice('Import Existing Wallet', 'Restore from recovery phrase', 'import'),
+        ui.menuChoice('Import Wallet (Private Key)', 'Restore from raw private key', 'import_pk'),
         ui.menuChoice('Import from Backup', 'Restore from backup file', 'import_backup'),
         new inquirer.Separator(''),
         ui.menuChoice('Change Network', 'Switch between networks', 'network'),
@@ -426,6 +427,9 @@ async function initialMenu(): Promise<void> {
       break;
     case 'import':
       await importWallet();
+      break;
+    case 'import_pk':
+      await importWalletFromPrivateKey();
       break;
     case 'import_backup':
       await importWalletFromBackup();
@@ -478,15 +482,17 @@ async function createWallet(): Promise<void> {
 
     const walletData = wallet.createNewWallet(password);
 
-  ui.clearScreen();
-  ui.showHeader();
-  ui.showSuccess('Wallet created successfully!');
-  console.log('');
+    ui.clearScreen();
+    ui.showHeader();
+    ui.showSuccess('Wallet created successfully!');
+    console.log('');
 
-  ui.showAccountInfo(walletData.address);
-  ui.showMnemonic(walletData.mnemonic);
+    ui.showAccountInfo(walletData.address);
+    if (walletData.mnemonic) {
+      ui.showMnemonic(walletData.mnemonic);
+    }
 
-  const answers = await inquirer.prompt<{ save: boolean; walletName?: string }>([
+    const answers = await inquirer.prompt<{ save: boolean; walletName?: string }>([
     {
       type: 'confirm',
       name: 'save',
@@ -609,6 +615,107 @@ async function importWallet(): Promise<void> {
       savedWalletName = wallet.saveWallet(answers.walletName.trim());
       ui.showSuccess(`Wallet saved as "${savedWalletName}"`);
       ui.showWarning('Keep this file secure and back up your mnemonic phrase!');
+    }
+
+    await mainMenu(savedWalletName);
+  } catch (error) {
+    const err = error as Error;
+    console.log('\n❌ Error:', err.message, '\n');
+    await initialMenu();
+  }
+}
+
+/**
+ * Imports a wallet from a raw private key.
+ * Prompts for chain type and the private key itself.
+ * 
+ * @async
+ */
+async function importWalletFromPrivateKey(): Promise<void> {
+  console.log('\n📥 Import Private Key\n');
+
+  // Check if first-time setup
+  const isFirstWallet = !hasExistingWallets();
+
+  // Get password (setup or use cached)
+  let password: string;
+  if (isFirstWallet) {
+    password = await promptMasterPasswordSetup();
+  } else {
+    password = await ensureMasterPassword();
+  }
+
+  const { chainType } = await inquirer.prompt<{ chainType: string }>([
+    {
+      type: 'list',
+      name: 'chainType',
+      message: 'Select chain type:',
+      choices: [
+        { name: 'Ethereum / EVM', value: 'evm' },
+        { name: 'Bitcoin', value: 'bitcoin' },
+        { name: 'Solana', value: 'solana' },
+        { name: 'XRP Ledger', value: 'xrp' },
+        { name: 'TON', value: 'ton' }
+      ]
+    }
+  ]);
+
+  const { privateKey } = await inquirer.prompt<{ privateKey: string }>([
+    {
+      type: 'password',
+      name: 'privateKey',
+      message: 'Enter raw private key:',
+      mask: '*'
+    }
+  ]);
+
+  try {
+    const walletData = walletService.importFromPrivateKey(
+      privateKey.trim(), 
+      chainType as 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton', 
+      password
+    );
+    
+    console.log('\n✅ Private key imported successfully!');
+    if (walletData.address && walletData.address !== 'Generated on demand') {
+      console.log('📍 Address:', walletData.address, '\n');
+    } else {
+      console.log('📍 Wallet imported (address will be generated on use)\n');
+    }
+
+    const answers = await inquirer.prompt<{ save: boolean; walletName?: string }>([
+      {
+        type: 'confirm',
+        name: 'save',
+        message: 'Save wallet to file?',
+        default: true
+      },
+      {
+        type: 'input',
+        name: 'walletName',
+        message: 'Enter a name for this wallet:',
+        default: chainType === 'evm' && walletData.address 
+          ? `PK_${walletData.address.substring(2, 8)}` 
+          : `PK_${chainType}_Wallet`,
+        when: (answers) => answers.save,
+        validate: (input) => {
+          if (!input || input.trim().length === 0) {
+            return 'Wallet name cannot be empty';
+          }
+          const existingWallets = wallet.getAllWallets();
+          if (existingWallets[input.trim()]) {
+            return 'A wallet with this name already exists';
+          }
+          return true;
+        }
+      }
+    ]);
+
+    let savedWalletName: string | null = null;
+    if (answers.save && answers.walletName) {
+      savedWalletName = wallet.saveWallet(answers.walletName.trim());
+      ui.showSuccess(`Wallet saved as "${savedWalletName}"`);
+      ui.showWarning('Keep this file secure!');
     }
 
     await mainMenu(savedWalletName);
@@ -2278,7 +2385,11 @@ async function showWalletSecrets(currentWalletName: string | null): Promise<void
 
   try {
     const privateKey = wallet.getPrivateKey(password);
-    const mnemonic = wallet.getMnemonic(password);
+    let mnemonic: string | null = null;
+    
+    if (wallet.importType === 'mnemonic') {
+        mnemonic = wallet.getMnemonic(password);
+    }
 
     ui.clearScreen();
     ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
@@ -2291,8 +2402,14 @@ async function showWalletSecrets(currentWalletName: string | null): Promise<void
     console.log(chalk.gray('Private Key:  ') + ui.formatTxHash(privateKey));
     ui.showSeparator();
 
-    console.log('');
-    ui.showMnemonic(mnemonic);
+    if (mnemonic) {
+        console.log('');
+        ui.showMnemonic(mnemonic);
+    } else {
+        console.log('');
+        ui.showInfo('This wallet was imported from a private key. No mnemonic available.');
+        console.log('');
+    }
 
     console.log(chalk.red.bold('⚠  SECURITY REMINDERS'));
     console.log(chalk.white('  • Never share your private key or secret phrase with anyone'));

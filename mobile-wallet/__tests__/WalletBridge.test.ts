@@ -43,12 +43,22 @@ jest.mock('../services/MobileCryptoAdapter', () => ({
 jest.mock('@wallet/wallet', () => ({
   __esModule: true,
   Wallet: class {
+    importType: 'mnemonic' | 'privateKey' = 'mnemonic';
+    privateKeyType?: string;
+    
     constructor() {}
     createNewWallet() {
+      this.importType = 'mnemonic';
       return { address: '0xabc', mnemonic: 'test test test', privateKey: '0xpriv' };
     }
     importWallet() {
+      this.importType = 'mnemonic';
       return { address: '0xabc' };
+    }
+    importFromPrivateKey(key: string, type: string, password: string) {
+      this.importType = 'privateKey';
+      this.privateKeyType = type;
+      return { address: '0xpkaddr', privateKey: key };
     }
     get mnemonic() {
       return 'test test test';
@@ -156,4 +166,41 @@ describe('WalletBridge state management', () => {
   });
 });
 
+// ============================================================================
+// Private Key Import Tests
+// ============================================================================
 
+describe('WalletBridge.importFromPrivateKey', () => {
+  beforeEach(async () => {
+    await walletBridge.initialize();
+    await walletBridge.lockWallet();
+  });
+
+  test('importFromPrivateKey creates wallet and returns address', async () => {
+    const testKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+    const result = await walletBridge.importFromPrivateKey(testKey, 'evm', 'password123', 'pktest');
+
+    expect(result).toBeDefined();
+    expect(result.success).toBe(true);
+    expect(result.address).toBeDefined();
+  });
+
+  test('importFromPrivateKey sets session state correctly', async () => {
+    const testKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+    await walletBridge.importFromPrivateKey(testKey, 'evm', 'password123', 'pksession');
+
+    const state = await walletBridge.getState();
+    expect(state.isUnlocked).toBe(true);
+    expect(state.currentWalletName).toBe('pksession');
+    expect(state.importType).toBe('privateKey');
+  });
+
+  test('importFromPrivateKey rejects invalid wallet name', async () => {
+    const testKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+    
+    // Name with spaces should be rejected
+    await expect(
+      walletBridge.importFromPrivateKey(testKey, 'evm', 'password123', 'invalid name!')
+    ).rejects.toThrow(/name/i);
+  });
+});

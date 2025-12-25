@@ -13,7 +13,12 @@ export type { SolanaAddressInfo, SolanaBalance } from './types.js';
 export { LAMPORTS_PER_SOL, lamportsToSol, solToLamports } from './types.js';
 
 // Address/keypair derivation
-export { getSolanaDerivationPath, deriveSolanaKeypair, deriveSolanaAddress } from './address.js';
+export { 
+  getSolanaDerivationPath, 
+  deriveSolanaKeypair, 
+  deriveSolanaAddress,
+  deriveSolanaAddressFromSecretKey
+} from './address.js';
 
 // Provider (RPC operations)
 export type {

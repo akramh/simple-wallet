@@ -38,6 +38,8 @@ export interface WalletState {
   network: string;
   address: string | null;
   currentWalletName: string | null;
+  importType?: 'mnemonic' | 'privateKey';
+  privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
 }
 
 export interface CreateWalletResult {
@@ -257,6 +259,8 @@ class WalletBridge {
       network: this.config?.network || 'sepolia',
       address: this._isUnlocked && this.service ? this.service.getAddress() : null,
       currentWalletName: this._isUnlocked ? this.currentWalletName : null,
+      importType: this._isUnlocked && this.wallet ? this.wallet.importType : undefined,
+      privateKeyType: this._isUnlocked && this.wallet ? this.wallet.privateKeyType : undefined,
     };
   }
 
@@ -411,6 +415,71 @@ class WalletBridge {
     return {
       success: true,
       address,
+    };
+  }
+
+  /**
+   * Import a wallet from a raw private key.
+   *
+   * @param key - Raw private key (hex, WIF, base58).
+   * @param chainType - Chain family ('evm', 'bitcoin', 'solana', 'xrp', 'ton').
+   * @param password - Master password for encryption.
+   * @param name - Wallet name.
+   */
+  async importFromPrivateKey(
+    key: string,
+    chainType: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton',
+    password: string,
+    name: string = 'default'
+  ): Promise<ImportWalletResult> {
+    await this.ensureInitialized();
+
+    if (!this.validateWalletName(name)) {
+        throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+    }
+
+    const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getBundledTokens } = require('../config/bundled-config');
+
+    setCryptoAdapter(mobileCrypto);
+
+    this.wallet = new Wallet(this.config!, mobileStorage);
+    // Use the core SDK's importFromPrivateKey
+    const result = this.wallet.importFromPrivateKey(key, chainType, password);
+
+    this.service = new WalletAppService(this.wallet, this.config!, {
+        storage: mobileStorage,
+        builtInTokens: getBundledTokens(),
+    });
+    await this.service.initialize();
+
+    // Auto-switch to appropriate network for the imported chain type
+    const chainToNetwork: Record<string, string> = {
+      evm: 'mainnet',
+      bitcoin: 'bitcoin-mainnet',
+      solana: 'solana-mainnet',
+      xrp: 'xrp-mainnet',
+      ton: 'ton-mainnet'
+    };
+    const targetNetwork = chainToNetwork[chainType];
+    if (targetNetwork && this.config!.network !== targetNetwork) {
+      await this.service.setNetwork(targetNetwork);
+      this.config!.network = targetNetwork;
+    }
+
+    this.service.saveWallet(name);
+
+    this.sessionPassword = password;
+    this.currentWalletName = name;
+    this._isUnlocked = true;
+    this.resetAutoLockTimer();
+
+    const address = this.service.getAddress();
+
+    return {
+        success: true,
+        address
     };
   }
 

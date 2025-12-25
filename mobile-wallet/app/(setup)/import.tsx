@@ -1,7 +1,6 @@
 /**
  * @fileoverview Import existing wallet screen.
- * If user is already unlocked (adding a wallet), uses session password.
- * Otherwise, prompts for a new master password.
+ * Supports importing via BIP-39 mnemonic or raw private key.
  */
 
 import { useState, useEffect } from 'react';
@@ -15,6 +14,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Clipboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -25,10 +25,49 @@ import { safeGoBack } from '../../utils/navigation';
 
 export default function ImportWalletScreen() {
   const router = useRouter();
-  const { importWallet, isLoading, error, clearError, isUnlocked } = useWalletStore();
+  const { importWallet, importFromPrivateKey, isLoading, error, clearError, isUnlocked } = useWalletStore();
 
   const [walletName, setWalletName] = useState('');
+  const [importType, setImportType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
+  
+  // Mnemonic State
   const [mnemonic, setMnemonic] = useState('');
+  
+  // Private Key State
+  const [privateKey, setPrivateKey] = useState('');
+  const [chainType, setChainType] = useState('evm');
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [pkValidation, setPkValidation] = useState<{ valid: boolean; message: string } | null>(null);
+
+  // Chain-specific validation patterns and help text
+  const chainValidation: Record<string, { pattern: RegExp; example: string; hint: string }> = {
+    evm: {
+      pattern: /^(0x)?[a-fA-F0-9]{64}$/,
+      example: '0x1234...abcd (64 hex chars)',
+      hint: '64-character hex string (with or without 0x prefix)'
+    },
+    bitcoin: {
+      pattern: /^([5KL][1-9A-HJ-NP-Za-km-z]{50,51}|[cT][1-9A-HJ-NP-Za-km-z]{50,51}|[a-fA-F0-9]{64})$/,
+      example: '5HueCGU8rM... or cVbmJ2TY...',
+      hint: 'WIF format (starts with 5, K, L for mainnet or c, T for testnet) or 64-char hex'
+    },
+    solana: {
+      pattern: /^([1-9A-HJ-NP-Za-km-z]{87,88}|[a-fA-F0-9]{64,128})$/,
+      example: 'Base58 or hex format',
+      hint: 'Base58 encoded (87-88 chars) or 64-128 char hex'
+    },
+    xrp: {
+      pattern: /^(s[a-km-zA-HJ-NP-Z1-9]{20,33}|[a-fA-F0-9]{64,66})$/,
+      example: 'sn3nxiW7v... or hex format',
+      hint: 'Family seed (starts with s, 21-34 chars) or 64-66 char hex'
+    },
+    ton: {
+      pattern: /^[a-fA-F0-9]{64,128}$/,
+      example: '64 or 128 hex characters',
+      hint: '64-char (32-byte) or 128-char (64-byte) hex string'
+    }
+  };
+
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -38,39 +77,92 @@ export default function ImportWalletScreen() {
   const isAddingWallet = isUnlocked && sessionPassword !== null;
 
   useEffect(() => {
-    // If already unlocked, get the session password
     if (isUnlocked) {
       const pwd = walletBridge.getSessionPassword();
       setSessionPassword(pwd);
     }
   }, [isUnlocked]);
 
-  // Validate mnemonic has 12 or 24 words
-  const wordCount = mnemonic.trim().split(/\s+/).filter(Boolean).length;
-  const isValidMnemonic = wordCount === 12 || wordCount === 24;
+  // Validation
+  const isValidMnemonic = () => {
+    const wordCount = mnemonic.trim().split(/\s+/).filter(Boolean).length;
+    return wordCount === 12 || wordCount === 24;
+  };
 
-  // Different validation based on whether we're adding or creating first wallet
-  const isValid = isAddingWallet
-    ? walletName.length >= 1 && walletName.length <= 12 && isValidMnemonic
-    : walletName.length >= 1 &&
-      walletName.length <= 12 &&
-      isValidMnemonic &&
-      password.length >= 8 &&
-      password === confirmPassword;
+  const validatePrivateKeyFormat = (key: string, chain: string): { valid: boolean; message: string } => {
+    const trimmed = key.trim();
+    if (!trimmed) return { valid: false, message: '' };
+    const config = chainValidation[chain];
+    if (!config) return { valid: false, message: 'Unknown chain type' };
+    if (config.pattern.test(trimmed)) {
+      return { valid: true, message: '✓ Valid format' };
+    }
+    return { valid: false, message: `Invalid format` };
+  };
+
+  const handlePrivateKeyChange = (value: string) => {
+    setPrivateKey(value);
+    if (value.trim()) {
+      setPkValidation(validatePrivateKeyFormat(value, chainType));
+    } else {
+      setPkValidation(null);
+    }
+  };
+
+  const handleChainTypeChange = (newChain: string) => {
+    setChainType(newChain);
+    if (privateKey.trim()) {
+      setPkValidation(validatePrivateKeyFormat(privateKey, newChain));
+    }
+  };
+
+  const handlePastePrivateKey = async () => {
+    try {
+      const text = await Clipboard.getString();
+      setPrivateKey(text);
+      if (text.trim()) {
+        setPkValidation(validatePrivateKeyFormat(text, chainType));
+      }
+    } catch (err) {
+      // Clipboard access failed
+    }
+  };
+
+  const isValidPrivateKey = () => {
+    return privateKey.trim().length > 0;
+  };
+
+  const isNameValid = walletName.length >= 1 && walletName.length <= 12;
+  const isPasswordValid = isAddingWallet ? true : (password.length >= 8 && password === confirmPassword);
+
+  const isValid = isNameValid && isPasswordValid && (
+    importType === 'mnemonic' ? isValidMnemonic() : isValidPrivateKey()
+  );
 
   const handleImport = async () => {
     if (!isValid || isLoading) return;
 
     try {
-      const normalizedMnemonic = mnemonic.trim().toLowerCase().replace(/\s+/g, ' ');
-      // Use session password if adding wallet, otherwise use entered password
       const passwordToUse = isAddingWallet ? sessionPassword! : password;
-      await importWallet(normalizedMnemonic, passwordToUse, walletName || 'default');
+      const finalName = walletName || 'default';
 
-      // Navigate to main app
+      if (importType === 'mnemonic') {
+        const normalizedMnemonic = mnemonic.trim().toLowerCase().replace(/\s+/g, ' ');
+        await importWallet(normalizedMnemonic, passwordToUse, finalName);
+      } else {
+        // Import via store action (updates state and triggers navigation)
+        await importFromPrivateKey(
+            privateKey.trim(),
+            chainType,
+            passwordToUse,
+            finalName
+        );
+      }
+
+      // Navigate to main app (refresh logic is handled by store/bridge)
       router.replace('/(tabs)/wallet');
-    } catch (err) {
-      Alert.alert('Error', error || 'Failed to import wallet. Check your recovery phrase.');
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to import wallet.');
     }
   };
 
@@ -95,13 +187,25 @@ export default function ImportWalletScreen() {
           </Text>
         </View>
 
-        {/* Instructions */}
-        <Text className="text-gray-400 mb-6">
-          {isAddingWallet
-            ? 'Enter your 12 or 24 word recovery phrase. It will use your existing master password.'
-            : 'Enter your 12 or 24 word recovery phrase to restore your wallet.'
-          }
-        </Text>
+        {/* Tabs */}
+        <View className="flex-row bg-gray-900 rounded-xl p-1 mb-6">
+            <TouchableOpacity 
+                className={`flex-1 py-3 rounded-lg ${importType === 'mnemonic' ? 'bg-gray-800' : ''}`}
+                onPress={() => setImportType('mnemonic')}
+            >
+                <Text className={`text-center font-medium ${importType === 'mnemonic' ? 'text-white' : 'text-gray-500'}`}>
+                    Recovery Phrase
+                </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+                className={`flex-1 py-3 rounded-lg ${importType === 'privateKey' ? 'bg-gray-800' : ''}`}
+                onPress={() => setImportType('privateKey')}
+            >
+                <Text className={`text-center font-medium ${importType === 'privateKey' ? 'text-white' : 'text-gray-500'}`}>
+                    Private Key
+                </Text>
+            </TouchableOpacity>
+        </View>
 
         {/* Wallet Name */}
         <View className="mb-4">
@@ -117,30 +221,94 @@ export default function ImportWalletScreen() {
           />
         </View>
 
-        {/* Recovery Phrase */}
-        <View className="mb-4">
-          <Text className="text-white mb-2">Recovery Phrase</Text>
-          <TextInput
-            value={mnemonic}
-            onChangeText={setMnemonic}
-            placeholder="Enter your 12 or 24 word phrase"
-            placeholderTextColor="#6b7280"
-            multiline
-            numberOfLines={4}
-            autoCapitalize="none"
-            autoCorrect={false}
-            className="bg-gray-900 rounded-xl px-4 py-4 text-white min-h-[120px]"
-            textAlignVertical="top"
-          />
-          <Text className={`text-xs mt-1 ${isValidMnemonic ? 'text-green-400' : 'text-gray-500'}`}>
-            {wordCount} / 12 or 24 words
-          </Text>
-        </View>
+        {importType === 'mnemonic' ? (
+            <View className="mb-4">
+            <Text className="text-white mb-2">Recovery Phrase</Text>
+            <TextInput
+                value={mnemonic}
+                onChangeText={setMnemonic}
+                placeholder="Enter your 12 or 24 word phrase"
+                placeholderTextColor="#6b7280"
+                multiline
+                numberOfLines={4}
+                autoCapitalize="none"
+                autoCorrect={false}
+                className="bg-gray-900 rounded-xl px-4 py-4 text-white min-h-[120px]"
+                textAlignVertical="top"
+            />
+            <Text className={`text-xs mt-1 ${isValidMnemonic() ? 'text-green-400' : 'text-gray-500'}`}>
+                {mnemonic.trim().split(/\s+/).filter(Boolean).length} / 12 or 24 words
+            </Text>
+            </View>
+        ) : (
+            <>
+                {/* Chain Selector */}
+                <View className="mb-4">
+                    <Text className="text-white mb-2">Chain Type</Text>
+                    <View className="flex-row flex-wrap gap-2">
+                        {['evm', 'bitcoin', 'solana', 'xrp', 'ton'].map((type) => (
+                            <TouchableOpacity
+                                key={type}
+                                onPress={() => handleChainTypeChange(type)}
+                                className={`px-4 py-2 rounded-full border ${
+                                    chainType === type 
+                                    ? 'bg-purple-600 border-purple-600' 
+                                    : 'bg-gray-900 border-gray-800'
+                                }`}
+                            >
+                                <Text className={`text-sm font-medium ${chainType === type ? 'text-white' : 'text-gray-400'}`}>
+                                    {type === 'evm' ? 'EVM' : type.charAt(0).toUpperCase() + type.slice(1)}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+
+                <View className="mb-4">
+                    <View className="flex-row justify-between items-center mb-2">
+                        <Text className="text-white">Private Key</Text>
+                        <View className="flex-row gap-2">
+                            <TouchableOpacity
+                                onPress={handlePastePrivateKey}
+                                className="flex-row items-center bg-gray-800 px-3 py-1 rounded-lg"
+                            >
+                                <Ionicons name="clipboard-outline" size={14} color="#a855f7" />
+                                <Text className="text-purple-400 text-xs ml-1">Paste</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                onPress={() => setShowPrivateKey(!showPrivateKey)}
+                                className="flex-row items-center bg-gray-800 px-3 py-1 rounded-lg"
+                            >
+                                <Ionicons name={showPrivateKey ? 'eye-off-outline' : 'eye-outline'} size={14} color="#a855f7" />
+                                <Text className="text-purple-400 text-xs ml-1">{showPrivateKey ? 'Hide' : 'Show'}</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                    <TextInput
+                        value={privateKey}
+                        onChangeText={handlePrivateKeyChange}
+                        placeholder={chainValidation[chainType]?.example || 'Enter private key'}
+                        placeholderTextColor="#6b7280"
+                        secureTextEntry={!showPrivateKey}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        className="bg-gray-900 rounded-xl px-4 py-4 text-white font-mono"
+                    />
+                    {pkValidation && (
+                        <Text className={`text-xs mt-1 ${pkValidation.valid ? 'text-green-400' : 'text-red-400'}`}>
+                            {pkValidation.message}
+                        </Text>
+                    )}
+                    <Text className="text-gray-500 text-xs mt-1">
+                        {chainValidation[chainType]?.hint}
+                    </Text>
+                </View>
+            </>
+        )}
 
         {/* Only show password fields if creating first wallet */}
         {!isAddingWallet && (
           <>
-            {/* Password */}
             <View className="mb-4">
               <Text className="text-white mb-2">New Password</Text>
               <View className="flex-row bg-gray-900 rounded-xl items-center">
@@ -171,7 +339,6 @@ export default function ImportWalletScreen() {
               )}
             </View>
 
-            {/* Confirm Password */}
             <View className="mb-6">
               <Text className="text-white mb-2">Confirm Password</Text>
               <TextInput
@@ -192,7 +359,7 @@ export default function ImportWalletScreen() {
           </>
         )}
 
-        {/* Info banner when using master password */}
+        {/* Info banner */}
         {isAddingWallet && (
           <View className="bg-purple-900/30 rounded-xl p-4 mb-6 flex-row items-center">
             <Ionicons name="lock-closed" size={20} color="#a78bfa" />
@@ -202,14 +369,15 @@ export default function ImportWalletScreen() {
           </View>
         )}
 
-        {/* Warning */}
         <View className="bg-yellow-500/10 rounded-xl p-4 mb-6">
           <View className="flex-row items-center mb-2">
             <Ionicons name="warning-outline" size={20} color="#eab308" />
             <Text className="text-yellow-500 font-semibold ml-2">Important</Text>
           </View>
           <Text className="text-yellow-500/80 text-sm">
-            Never share your recovery phrase with anyone. Anyone with this phrase can access your wallet.
+            {importType === 'mnemonic' 
+                ? 'Never share your recovery phrase with anyone.' 
+                : 'Never share your private key with anyone. This grants full access to your funds.'}
           </Text>
         </View>
 
@@ -225,7 +393,7 @@ export default function ImportWalletScreen() {
             <View className="flex-row items-center justify-center">
               <ActivityIndicator color="white" size="small" />
               <Text className="text-white font-semibold ml-3">
-                Importing wallet...
+                Importing...
               </Text>
             </View>
           ) : (

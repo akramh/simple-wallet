@@ -224,3 +224,69 @@ export function normalizeTonAddress(address: string, testOnly: boolean = false):
   const parsed = parseTonAddress(address);
   return formatTonAddress(parsed, { bounceable: false, testOnly });
 }
+
+/**
+ * Derives a TON wallet address from a raw secret key (hex format).
+ *
+ * This function is used for importing existing TON wallets via private key
+ * rather than mnemonic. The resulting wallet is single-address (non-HD).
+ *
+ * Supports two key formats:
+ * - 32-byte seed: Used as ed25519 seed to derive keypair
+ * - 64-byte secret key: Full ed25519 secret key (seed + public key)
+ *
+ * The derived address uses WalletContractV4 (the most common TON wallet type)
+ * in non-bounceable format.
+ *
+ * @param secretKeyHex - Hex-encoded secret key:
+ *   - 64 hex characters for 32-byte seed
+ *   - 128 hex characters for 64-byte full secret key
+ * @returns TON address information including the friendly address
+ * @throws Error if the key length is invalid or the hex format is malformed
+ *
+ * @security This function accepts raw private key material. Callers should
+ *   ensure the secret key string is handled securely and not logged.
+ *
+ * @example
+ * ```typescript
+ * // Import from 32-byte seed
+ * const info = deriveTonAddressFromSecretKey(
+ *   'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
+ * );
+ * console.log(info.address); // UQ... (non-bounceable address)
+ *
+ * // Import from 64-byte full secret key
+ * const info2 = deriveTonAddressFromSecretKey(
+ *   'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80...' // 128 hex chars
+ * );
+ * ```
+ */
+export function deriveTonAddressFromSecretKey(secretKeyHex: string): TonAddressInfo {
+  try {
+    const keyBytes = Buffer.from(secretKeyHex, 'hex');
+    let keypair: { publicKey: Uint8Array; secretKey: Uint8Array };
+
+    if (keyBytes.length === 32) {
+      keypair = nacl.sign.keyPair.fromSeed(keyBytes);
+    } else if (keyBytes.length === 64) {
+      keypair = nacl.sign.keyPair.fromSecretKey(keyBytes);
+    } else {
+      throw new Error('Invalid secret key length (must be 32 or 64 bytes)');
+    }
+
+    const publicKey = Buffer.from(keypair.publicKey);
+    const wallet = WalletContractV4.create({ publicKey, workchain: 0 });
+    const address = wallet.address;
+
+    return {
+      address: formatTonAddress(address, { bounceable: false }),
+      addressRaw: address.toRawString(),
+      publicKeyHex: bytesToHex(publicKey),
+      derivationPath: 'imported-private-key',
+      workchain: 0,
+      isTestOnly: false,
+    };
+  } catch (error) {
+    throw new Error(`Invalid TON key: ${(error as Error).message}`);
+  }
+}

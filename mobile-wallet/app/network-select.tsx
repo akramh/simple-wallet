@@ -10,6 +10,18 @@ import { useNetworkSelectScreenSelector } from '../store';
 import { getNetworkIcon } from '../utils/tokenIcons';
 import { safeGoBack } from '../utils/navigation';
 
+/**
+ * Maps privateKeyType to compatible network types.
+ * Mnemonic wallets support all network types.
+ */
+const CHAIN_TYPE_COMPATIBILITY: Record<string, string[]> = {
+  evm: ['evm', undefined as any], // undefined = legacy EVM networks without explicit type
+  bitcoin: ['bitcoin'],
+  solana: ['solana'],
+  xrp: ['xrp'],
+  ton: ['ton'],
+};
+
 export default function NetworkSelectScreen() {
   const router = useRouter();
   const { 
@@ -18,10 +30,30 @@ export default function NetworkSelectScreen() {
     switchNetwork, 
     isLoading,
     showTestnets,
-    toggleShowTestnets 
+    toggleShowTestnets,
+    importType,
+    privateKeyType,
   } = useNetworkSelectScreenSelector();
 
-  const handleNetworkSelect = async (networkKey: string) => {
+  /**
+   * Check if a network is compatible with the current wallet type.
+   * Mnemonic wallets support all networks. Private key wallets only support their chain type.
+   */
+  const isNetworkCompatible = (networkConfig: any): boolean => {
+    // Mnemonic wallets support all networks
+    if (importType !== 'privateKey') return true;
+    
+    // No privateKeyType means we can't determine compatibility - allow all
+    if (!privateKeyType) return true;
+    
+    const compatibleTypes = CHAIN_TYPE_COMPATIBILITY[privateKeyType] || [];
+    const networkType = networkConfig.type || 'evm'; // default to EVM if not specified
+    return compatibleTypes.includes(networkType);
+  };
+
+  const handleNetworkSelect = async (networkKey: string, isDisabled: boolean) => {
+    if (isDisabled) return;
+    
     if (networkKey === network) {
       safeGoBack(router);
       return;
@@ -62,23 +94,37 @@ export default function NetworkSelectScreen() {
       </View>
 
       <ScrollView className="flex-1 px-5 pt-4">
+        {/* Private key wallet notice */}
+        {importType === 'privateKey' && privateKeyType && (
+          <View className="bg-yellow-500/10 rounded-xl p-3 mb-4 flex-row items-center">
+            <Ionicons name="information-circle-outline" size={20} color="#eab308" />
+            <Text className="text-yellow-500 text-sm ml-2 flex-1">
+              This wallet only supports {privateKeyType.toUpperCase()} networks
+            </Text>
+          </View>
+        )}
+
         {/* EVM Networks */}
         {evmNetworks.length > 0 && (
           <>
             <Text className="text-gray-400 text-sm uppercase mb-3">EVM Networks</Text>
             <View className="bg-gray-900 rounded-2xl overflow-hidden mb-6">
-              {evmNetworks.map(([key, config], index) => (
-                <NetworkRow
-                  key={key}
-                  networkKey={key}
-                  name={config.name}
-                  symbol={config.nativeSymbol}
-                  chainId={config.chainId}
-                  isSelected={key === network}
-                  isLast={index === evmNetworks.length - 1}
-                  onPress={() => handleNetworkSelect(key)}
-                />
-              ))}
+              {evmNetworks.map(([key, config], index) => {
+                const isDisabled = !isNetworkCompatible(config);
+                return (
+                  <NetworkRow
+                    key={key}
+                    networkKey={key}
+                    name={config.name}
+                    symbol={config.nativeSymbol}
+                    chainId={config.chainId}
+                    isSelected={key === network}
+                    isDisabled={isDisabled}
+                    isLast={index === evmNetworks.length - 1}
+                    onPress={() => handleNetworkSelect(key, isDisabled)}
+                  />
+                );
+              })}
             </View>
           </>
         )}
@@ -88,18 +134,22 @@ export default function NetworkSelectScreen() {
           <>
             <Text className="text-gray-400 text-sm uppercase mb-3">Other Networks</Text>
             <View className="bg-gray-900 rounded-2xl overflow-hidden mb-6">
-              {otherNetworks.map(([key, config], index) => (
-                <NetworkRow
-                  key={key}
-                  networkKey={key}
-                  name={config.name}
-                  symbol={config.nativeSymbol}
-                  type={config.type}
-                  isSelected={key === network}
-                  isLast={index === otherNetworks.length - 1}
-                  onPress={() => handleNetworkSelect(key)}
-                />
-              ))}
+              {otherNetworks.map(([key, config], index) => {
+                const isDisabled = !isNetworkCompatible(config);
+                return (
+                  <NetworkRow
+                    key={key}
+                    networkKey={key}
+                    name={config.name}
+                    symbol={config.nativeSymbol}
+                    type={config.type}
+                    isSelected={key === network}
+                    isDisabled={isDisabled}
+                    isLast={index === otherNetworks.length - 1}
+                    onPress={() => handleNetworkSelect(key, isDisabled)}
+                  />
+                );
+              })}
             </View>
           </>
         )}
@@ -132,6 +182,7 @@ function NetworkRow({
   chainId,
   type,
   isSelected,
+  isDisabled,
   isLast,
   onPress,
 }: {
@@ -141,6 +192,7 @@ function NetworkRow({
   chainId?: number;
   type?: string;
   isSelected: boolean;
+  isDisabled?: boolean;
   isLast: boolean;
   onPress: () => void;
 }) {
@@ -170,7 +222,9 @@ function NetworkRow({
   return (
     <TouchableOpacity
       onPress={onPress}
+      disabled={isDisabled}
       className={`flex-row items-center px-4 py-4 ${!isLast ? 'border-b border-gray-800' : ''}`}
+      style={isDisabled ? { opacity: 0.4 } : undefined}
     >
       {/* Network Icon */}
       <View
@@ -192,14 +246,19 @@ function NetworkRow({
 
       {/* Network Info */}
       <View className="flex-1">
-        <Text className="text-white font-medium">{name}</Text>
+        <View className="flex-row items-center">
+          <Text className={`font-medium ${isDisabled ? 'text-gray-500' : 'text-white'}`}>{name}</Text>
+          {isDisabled && (
+            <Ionicons name="lock-closed" size={12} color="#6b7280" style={{ marginLeft: 6 }} />
+          )}
+        </View>
         <Text className="text-gray-500 text-sm">
-          {chainId ? `Chain ID: ${chainId}` : type?.toUpperCase() || 'Network'}
+          {isDisabled ? 'Unavailable' : (chainId ? `Chain ID: ${chainId}` : type?.toUpperCase() || 'Network')}
         </Text>
       </View>
 
       {/* Selected Indicator */}
-      {isSelected && (
+      {isSelected && !isDisabled && (
         <View className="w-6 h-6 rounded-full bg-green-500 items-center justify-center">
           <Ionicons name="checkmark" size={16} color="white" />
         </View>

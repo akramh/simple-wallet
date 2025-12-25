@@ -8,6 +8,7 @@ interface NetworkOption {
   value: string;
   label: string;
   icon?: string;
+  disabled?: boolean;
 }
 
 interface Props {
@@ -74,11 +75,14 @@ export function NetworkSelector({
           {options.map((option) => (
             <div 
               key={option.value} 
-              className={`network-option ${option.value === value ? 'active' : ''}`}
+              className={`network-option ${option.value === value ? 'active' : ''} ${option.disabled ? 'disabled' : ''}`}
               onClick={() => {
+                if (option.disabled) return;
                 onChange(option.value);
                 setIsOpen(false);
               }}
+              style={option.disabled ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+              title={option.disabled ? 'Not available for private key wallets' : undefined}
             >
               {option.icon ? (
                 <img src={option.icon} alt="" style={{ width: 20, height: 20, borderRadius: '50%' }} />
@@ -86,6 +90,9 @@ export function NetworkSelector({
                 <div className="network-dot" />
               )}
               <span>{option.label}</span>
+              {option.disabled && (
+                <span style={{ marginLeft: 'auto', fontSize: 12 }}>🔒</span>
+              )}
             </div>
           ))}
           {onToggleShowTestnets && (
