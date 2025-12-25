@@ -203,11 +203,37 @@ export function getBitcoinPrivateKey(
 }
 
 /**
- * Derives a Bitcoin address from a WIF private key.
+ * Derives a Native SegWit (P2WPKH) Bitcoin address from a WIF private key.
  *
- * @param wif - Private key in WIF format
- * @param network - Bitcoin network
- * @returns Bitcoin address information
+ * This function is used for importing existing Bitcoin wallets via private key
+ * rather than mnemonic. The resulting wallet is single-address (non-HD).
+ *
+ * @param wif - Private key in WIF (Wallet Import Format) string.
+ *   - Mainnet WIF starts with '5', 'K', or 'L'
+ *   - Testnet WIF starts with '9' or 'c'
+ * @param network - Bitcoin network ('mainnet' or 'testnet')
+ * @returns Bitcoin address information including the derived P2WPKH address
+ * @throws Error if WIF is invalid or doesn't match the specified network
+ *
+ * @security This function accepts raw private key material. Callers should
+ *   ensure the WIF string is handled securely and not logged.
+ *
+ * @example
+ * ```typescript
+ * // Import a mainnet private key
+ * const info = deriveBitcoinAddressFromPrivateKey(
+ *   'L1aW4aubDFB7yfras2S1mN3bqg9nwySY8nkoLmJebSLD5BWv3ENZ',
+ *   'mainnet'
+ * );
+ * console.log(info.address); // bc1q...
+ *
+ * // Import a testnet private key
+ * const testInfo = deriveBitcoinAddressFromPrivateKey(
+ *   'cTj8Ydq9LhZLLrBeHpZAalyztwlTZe4PHn46L86T55Fj3W96VTq6',
+ *   'testnet'
+ * );
+ * console.log(testInfo.address); // tb1q...
+ * ```
  */
 export function deriveBitcoinAddressFromPrivateKey(
   wif: string,

@@ -265,10 +265,36 @@ export function isXAddress(address: string): boolean {
 }
 
 /**
- * Derives an XRP address from a private key (hex or seed).
+ * Derives an XRP address from a private key (hex or seed format).
  *
- * @param key - Private key (hex) or seed (starting with 's')
- * @returns XRP address info
+ * This function is used for importing existing XRP wallets via private key
+ * rather than mnemonic. The resulting wallet is single-address (non-HD).
+ *
+ * Supported key formats:
+ * - Family seed: Starts with 's' (e.g., 'sEdTM1uX8pu2...')
+ * - Hex private key: 64 hex characters (32 bytes)
+ *
+ * @param key - Private key in one of the supported formats:
+ *   - XRP family seed starting with 's'
+ *   - Raw 64-character hex string (secp256k1 private key)
+ * @returns XRP address information including the classic address (r...)
+ * @throws Error if the key format is invalid or the key is not a valid secp256k1 private key
+ *
+ * @security This function accepts raw private key material. Callers should
+ *   ensure the key string is handled securely and not logged.
+ *
+ * @example
+ * ```typescript
+ * // Import from family seed
+ * const info1 = deriveXRPAddressFromPrivateKey('sEdTM1uX8pu2do5XvTnutH6HsouMaM2');
+ * console.log(info1.address); // rXXX...
+ *
+ * // Import from hex private key
+ * const info2 = deriveXRPAddressFromPrivateKey(
+ *   'AC0974BEC39A17E36BA4A6B4D238FF944BACB478CBED5EFCAE784D7BF4F2FF80'
+ * );
+ * console.log(info2.address); // rXXX...
+ * ```
  */
 export function deriveXRPAddressFromPrivateKey(key: string): XRPAddressInfo {
   let wallet: Wallet;

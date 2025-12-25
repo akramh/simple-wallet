@@ -95,6 +95,29 @@ export function deriveSolanaAddress(mnemonic: string, accountIndex: number = 0):
   };
 }
 
+/**
+ * Derives a Solana address from a Base58-encoded secret key.
+ *
+ * This function is used for importing existing Solana wallets via private key
+ * rather than mnemonic. The resulting wallet is single-address (non-HD).
+ *
+ * @param secretKeyBase58 - Base58-encoded secret key (64 bytes when decoded).
+ *   This is the format used by Phantom, Solflare, and other Solana wallets
+ *   when exporting private keys.
+ * @returns Solana address information including the derived public key
+ * @throws Error if the secret key is invalid or malformed
+ *
+ * @security This function accepts raw private key material. Callers should
+ *   ensure the secret key string is handled securely and not logged.
+ *
+ * @example
+ * ```typescript
+ * const info = deriveSolanaAddressFromSecretKey(
+ *   '5MaiiCavjCmn9Hs1o3eznqDEhRwxo7pXiAYez7keQUviUkauRiTMD8DrESdrNjN8zd9mTmVhRvBJeg5vhyvgrAhG'
+ * );
+ * console.log(info.address); // Base58 public key address
+ * ```
+ */
 export function deriveSolanaAddressFromSecretKey(secretKeyBase58: string): SolanaAddressInfo {
   try {
     const secretKey = bs58.decode(secretKeyBase58);

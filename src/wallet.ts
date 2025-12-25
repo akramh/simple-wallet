@@ -281,8 +281,41 @@ export class Wallet {
     }
   }
 
+  /**
+   * Imports a wallet from a raw private key (non-HD, single-address wallet).
+   *
+   * Unlike mnemonic-based wallets, private key wallets:
+   * - Support only one account (no HD derivation)
+   * - Are locked to a single chain family
+   * - Cannot derive additional addresses
+   *
+   * @param key - Raw private key in chain-specific format:
+   *   - EVM: Hex string with or without 0x prefix (64 hex chars)
+   *   - Bitcoin: WIF (Wallet Import Format) string
+   *   - Solana: Base58-encoded secret key (64 bytes)
+   *   - XRP: Hex seed or family seed (s...) format
+   *   - TON: Hex-encoded secret key (32 or 64 bytes)
+   * @param type - Chain family for this private key
+   * @param password - Master password for encrypting the key
+   * @returns Wallet info containing the derived address
+   * @throws Error if key is empty or invalid for the specified chain type
+   *
+   * @security This method handles raw private key material. The key is encrypted
+   *   immediately using AES-256-GCM before being stored. The raw key is held in
+   *   memory only for the duration of the session.
+   *
+   * @example
+   * ```typescript
+   * // Import an EVM private key
+   * const info = wallet.importFromPrivateKey(
+   *   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+   *   'evm',
+   *   'mySecurePassword123'
+   * );
+   * console.log(info.address); // 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+   * ```
+   */
   importFromPrivateKey(key: string, type: 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton', password: string): WalletInfo {
-    // Basic validation
     if (!key || key.trim() === '') {
       throw new Error('Private key cannot be empty');
     }
