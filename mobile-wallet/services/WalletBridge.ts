@@ -39,6 +39,7 @@ export interface WalletState {
   address: string | null;
   currentWalletName: string | null;
   importType?: 'mnemonic' | 'privateKey';
+  privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
 }
 
 export interface CreateWalletResult {
@@ -259,6 +260,7 @@ class WalletBridge {
       address: this._isUnlocked && this.service ? this.service.getAddress() : null,
       currentWalletName: this._isUnlocked ? this.currentWalletName : null,
       importType: this._isUnlocked && this.wallet ? this.wallet.importType : undefined,
+      privateKeyType: this._isUnlocked && this.wallet ? this.wallet.privateKeyType : undefined,
     };
   }
 

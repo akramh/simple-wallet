@@ -86,6 +86,7 @@ interface WalletStore {
   pendingBackup: boolean;
   autoLockMinutes: number;
   importType?: 'mnemonic' | 'privateKey';
+  privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
 
   // Wallet list
   walletList: WalletInfo[];
@@ -363,6 +364,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         address: state.address,
         currentWalletName: state.currentWalletName,
         importType: state.importType,
+        privateKeyType: state.privateKeyType,
         lastWalletName,
         pendingBackup,
         autoLockMinutes,
@@ -404,6 +406,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         address: result.address,
         currentWalletName: name,
         importType: state.importType,
+        privateKeyType: state.privateKeyType,
         lastWalletName: name,
         pendingBackup: true,
       });
@@ -439,6 +442,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         address: result.address,
         currentWalletName: name,
         importType: state.importType,
+        privateKeyType: state.privateKeyType,
         lastWalletName: name,
       });
 
@@ -470,8 +474,10 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         isUnlocked: true,
         hasWallet: true,
         address: result.address,
+        network: state.network, // Sync network after auto-switch in bridge
         currentWalletName: name,
         importType: state.importType,
+        privateKeyType: state.privateKeyType,
         lastWalletName: name,
       });
 
@@ -515,6 +521,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         address: result.address,
         currentWalletName: result.walletName,
         importType: state.importType,
+        privateKeyType: state.privateKeyType,
         lastWalletName: result.walletName,
         accounts: accountList,
         currentAccountIndex: currentIndex,
@@ -1009,6 +1016,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         address: result.address,
         currentWalletName: result.walletName,
         importType: state.importType,
+        privateKeyType: state.privateKeyType,
         lastWalletName: result.walletName,
         accounts: accountList,
         currentAccountIndex: currentIndex,
