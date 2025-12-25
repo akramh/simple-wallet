@@ -34,6 +34,7 @@ export default function WalletScreen() {
     refreshBalances,
     refreshBalancesAndPrices,
     prices,
+    isLoadingPrices,
     accounts,
     currentAccountIndex,
     currentWalletName,
@@ -51,7 +52,7 @@ export default function WalletScreen() {
 
   // Pull-to-refresh handler - shows loading indicator (user-initiated)
   const handleRefresh = useCallback(() => {
-    refreshBalancesAndPrices({ silent: false });
+    refreshBalancesAndPrices({ silent: false, force: true });
   }, [refreshBalancesAndPrices]);
 
   const navigateOnce = useCallback(
@@ -217,7 +218,7 @@ export default function WalletScreen() {
         }
         refreshControl={
           <RefreshControl
-            refreshing={isRefreshingBalances}
+            refreshing={isRefreshingBalances || isLoadingPrices}
             onRefresh={handleRefresh}
             tintColor="#a855f7"
           />

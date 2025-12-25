@@ -1382,9 +1382,7 @@ class WalletBridge {
 
     // 1. Check in-memory cache
     const memoryCached = this.balanceCache.get(cacheKey);
-    if (!opts.force && memoryCached && now - memoryCached.fetchedAt < opts.ttlMs) {
-      return memoryCached;
-    }
+    if (!opts.force && memoryCached && now - memoryCached.fetchedAt < opts.ttlMs) return memoryCached;
 
     // 2. Check persistent cache (if allowed)
     if (!opts.force) {
@@ -1404,9 +1402,7 @@ class WalletBridge {
       }
     }
 
-    if (this.inflightBalances.has(cacheKey)) {
-      return this.inflightBalances.get(cacheKey)!;
-    }
+    if (this.inflightBalances.has(cacheKey)) return this.inflightBalances.get(cacheKey)!;
 
     const run = (async () => {
       const maxRetries = 2;

@@ -278,6 +278,7 @@ export const useWalletScreenSelector = () =>
       // Prices
       prices: state.prices,
       formattedTotal: state.formattedTotal,
+      isLoadingPrices: state.isLoadingPrices,
       // Accounts
       accounts: state.accounts,
       // Actions

@@ -47,9 +47,8 @@ interface Props {
 }
 
 export function TransactionDetailsModal({ visible, transaction, onClose }: Props) {
-  if (!transaction) return null;
-
   const { copy, isCopied } = useClipboard();
+  if (!transaction) return null;
   const { hash, from, to, value, network, status, type, timestamp, blockNumber, tokenSymbol, fee } = transaction;
   
   const isSend = type === 'send';
