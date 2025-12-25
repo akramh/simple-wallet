@@ -14,6 +14,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Clipboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -24,7 +25,7 @@ import { safeGoBack } from '../../utils/navigation';
 
 export default function ImportWalletScreen() {
   const router = useRouter();
-  const { importWallet, isLoading, error, clearError, isUnlocked } = useWalletStore();
+  const { importWallet, importFromPrivateKey, isLoading, error, clearError, isUnlocked } = useWalletStore();
 
   const [walletName, setWalletName] = useState('');
   const [importType, setImportType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
@@ -35,6 +36,37 @@ export default function ImportWalletScreen() {
   // Private Key State
   const [privateKey, setPrivateKey] = useState('');
   const [chainType, setChainType] = useState('evm');
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [pkValidation, setPkValidation] = useState<{ valid: boolean; message: string } | null>(null);
+
+  // Chain-specific validation patterns and help text
+  const chainValidation: Record<string, { pattern: RegExp; example: string; hint: string }> = {
+    evm: {
+      pattern: /^(0x)?[a-fA-F0-9]{64}$/,
+      example: '0x1234...abcd (64 hex chars)',
+      hint: '64-character hex string (with or without 0x prefix)'
+    },
+    bitcoin: {
+      pattern: /^([5KL][1-9A-HJ-NP-Za-km-z]{50,51}|[cT][1-9A-HJ-NP-Za-km-z]{50,51}|[a-fA-F0-9]{64})$/,
+      example: '5HueCGU8rM... or cVbmJ2TY...',
+      hint: 'WIF format (starts with 5, K, L for mainnet or c, T for testnet) or 64-char hex'
+    },
+    solana: {
+      pattern: /^([1-9A-HJ-NP-Za-km-z]{87,88}|[a-fA-F0-9]{64,128})$/,
+      example: 'Base58 or hex format',
+      hint: 'Base58 encoded (87-88 chars) or 64-128 char hex'
+    },
+    xrp: {
+      pattern: /^(s[a-km-zA-HJ-NP-Z1-9]{20,33}|[a-fA-F0-9]{64,66})$/,
+      example: 'sn3nxiW7v... or hex format',
+      hint: 'Family seed (starts with s, 21-34 chars) or 64-66 char hex'
+    },
+    ton: {
+      pattern: /^[a-fA-F0-9]{64,128}$/,
+      example: '64 or 128 hex characters',
+      hint: '64-char (32-byte) or 128-char (64-byte) hex string'
+    }
+  };
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -55,6 +87,45 @@ export default function ImportWalletScreen() {
   const isValidMnemonic = () => {
     const wordCount = mnemonic.trim().split(/\s+/).filter(Boolean).length;
     return wordCount === 12 || wordCount === 24;
+  };
+
+  const validatePrivateKeyFormat = (key: string, chain: string): { valid: boolean; message: string } => {
+    const trimmed = key.trim();
+    if (!trimmed) return { valid: false, message: '' };
+    const config = chainValidation[chain];
+    if (!config) return { valid: false, message: 'Unknown chain type' };
+    if (config.pattern.test(trimmed)) {
+      return { valid: true, message: '✓ Valid format' };
+    }
+    return { valid: false, message: `Invalid format` };
+  };
+
+  const handlePrivateKeyChange = (value: string) => {
+    setPrivateKey(value);
+    if (value.trim()) {
+      setPkValidation(validatePrivateKeyFormat(value, chainType));
+    } else {
+      setPkValidation(null);
+    }
+  };
+
+  const handleChainTypeChange = (newChain: string) => {
+    setChainType(newChain);
+    if (privateKey.trim()) {
+      setPkValidation(validatePrivateKeyFormat(privateKey, newChain));
+    }
+  };
+
+  const handlePastePrivateKey = async () => {
+    try {
+      const text = await Clipboard.getString();
+      setPrivateKey(text);
+      if (text.trim()) {
+        setPkValidation(validatePrivateKeyFormat(text, chainType));
+      }
+    } catch (err) {
+      // Clipboard access failed
+    }
   };
 
   const isValidPrivateKey = () => {
@@ -79,10 +150,10 @@ export default function ImportWalletScreen() {
         const normalizedMnemonic = mnemonic.trim().toLowerCase().replace(/\s+/g, ' ');
         await importWallet(normalizedMnemonic, passwordToUse, finalName);
       } else {
-        // Import Private Key directly via bridge
-        await walletBridge.importFromPrivateKey(
+        // Import via store action (updates state and triggers navigation)
+        await importFromPrivateKey(
             privateKey.trim(),
-            chainType as any,
+            chainType,
             passwordToUse,
             finalName
         );
@@ -178,7 +249,7 @@ export default function ImportWalletScreen() {
                         {['evm', 'bitcoin', 'solana', 'xrp', 'ton'].map((type) => (
                             <TouchableOpacity
                                 key={type}
-                                onPress={() => setChainType(type)}
+                                onPress={() => handleChainTypeChange(type)}
                                 className={`px-4 py-2 rounded-full border ${
                                     chainType === type 
                                     ? 'bg-purple-600 border-purple-600' 
@@ -194,24 +265,43 @@ export default function ImportWalletScreen() {
                 </View>
 
                 <View className="mb-4">
-                    <Text className="text-white mb-2">Private Key</Text>
+                    <View className="flex-row justify-between items-center mb-2">
+                        <Text className="text-white">Private Key</Text>
+                        <View className="flex-row gap-2">
+                            <TouchableOpacity
+                                onPress={handlePastePrivateKey}
+                                className="flex-row items-center bg-gray-800 px-3 py-1 rounded-lg"
+                            >
+                                <Ionicons name="clipboard-outline" size={14} color="#a855f7" />
+                                <Text className="text-purple-400 text-xs ml-1">Paste</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                onPress={() => setShowPrivateKey(!showPrivateKey)}
+                                className="flex-row items-center bg-gray-800 px-3 py-1 rounded-lg"
+                            >
+                                <Ionicons name={showPrivateKey ? 'eye-off-outline' : 'eye-outline'} size={14} color="#a855f7" />
+                                <Text className="text-purple-400 text-xs ml-1">{showPrivateKey ? 'Hide' : 'Show'}</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
                     <TextInput
                         value={privateKey}
-                        onChangeText={setPrivateKey}
-                        placeholder={
-                            chainType === 'evm' ? 'Hex string (0x...)' : 
-                            chainType === 'solana' ? 'Base58 string' : 
-                            chainType === 'bitcoin' ? 'WIF format' : 
-                            'Raw key format'
-                        }
+                        onChangeText={handlePrivateKeyChange}
+                        placeholder={chainValidation[chainType]?.example || 'Enter private key'}
                         placeholderTextColor="#6b7280"
-                        multiline
-                        numberOfLines={3}
+                        secureTextEntry={!showPrivateKey}
                         autoCapitalize="none"
                         autoCorrect={false}
-                        className="bg-gray-900 rounded-xl px-4 py-4 text-white min-h-[100px]"
-                        textAlignVertical="top"
+                        className="bg-gray-900 rounded-xl px-4 py-4 text-white font-mono"
                     />
+                    {pkValidation && (
+                        <Text className={`text-xs mt-1 ${pkValidation.valid ? 'text-green-400' : 'text-red-400'}`}>
+                            {pkValidation.message}
+                        </Text>
+                    )}
+                    <Text className="text-gray-500 text-xs mt-1">
+                        {chainValidation[chainType]?.hint}
+                    </Text>
                 </View>
             </>
         )}

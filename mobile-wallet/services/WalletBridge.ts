@@ -452,6 +452,20 @@ class WalletBridge {
     });
     await this.service.initialize();
 
+    // Auto-switch to appropriate network for the imported chain type
+    const chainToNetwork: Record<string, string> = {
+      evm: 'mainnet',
+      bitcoin: 'bitcoin-mainnet',
+      solana: 'solana-mainnet',
+      xrp: 'xrp-mainnet',
+      ton: 'ton-mainnet'
+    };
+    const targetNetwork = chainToNetwork[chainType];
+    if (targetNetwork && this.config!.network !== targetNetwork) {
+      await this.service.setNetwork(targetNetwork);
+      this.config!.network = targetNetwork;
+    }
+
     this.service.saveWallet(name);
 
     this.sessionPassword = password;
