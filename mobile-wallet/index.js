@@ -9,5 +9,8 @@
 // MUST be first - polyfill crypto before any library checks for it
 import './services/crypto-polyfill';
 
+// Register background tasks (side-effect: defines task)
+import './services/BackgroundNotificationService';
+
 // Now load the rest of the app via expo-router
 import 'expo-router/entry';

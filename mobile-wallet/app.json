@@ -50,10 +50,31 @@
           "cameraPermission": "Simple Wallet needs camera access to scan QR codes."
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#9333ea"
+        }
+      ],
+      "expo-background-fetch"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.akram.monkey",
+      "buildNumber": "1.0.7",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Simple Wallet needs camera access to scan QR codes for receiving crypto payments.",
+        "NSFaceIDUsageDescription": "Simple Wallet uses Face ID to securely unlock your wallet.",
+        "UIBackgroundModes": [
+          "fetch",
+          "remote-notification"
+        ]
+      }
+    },
   }
 }
