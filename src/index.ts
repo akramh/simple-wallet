@@ -39,6 +39,11 @@
  */
 
 import 'dotenv/config';
+import { applyNetworkGuard } from './utils/network-guard.js';
+
+// Apply security guard immediately
+applyNetworkGuard();
+
 import inquirer from 'inquirer';
 import { Wallet } from './wallet.js';
 import fs from 'fs';
@@ -494,52 +499,52 @@ async function createWallet(): Promise<void> {
     }
 
     const answers = await inquirer.prompt<{ save: boolean; walletName?: string }>([
-    {
-      type: 'confirm',
-      name: 'save',
-      message: 'Save wallet to file?',
-      default: true
-    },
-    {
-      type: 'input',
-      name: 'walletName',
-      message: 'Enter a name for this wallet:',
-      default: `Wallet_${walletData.address.substring(2, 8)}`,
-      when: (answers) => answers.save,
-      validate: (input) => {
-        if (!input || input.trim().length === 0) {
-          return 'Wallet name cannot be empty';
+      {
+        type: 'confirm',
+        name: 'save',
+        message: 'Save wallet to file?',
+        default: true
+      },
+      {
+        type: 'input',
+        name: 'walletName',
+        message: 'Enter a name for this wallet:',
+        default: `Wallet_${walletData.address.substring(2, 8)}`,
+        when: (answers) => answers.save,
+        validate: (input) => {
+          if (!input || input.trim().length === 0) {
+            return 'Wallet name cannot be empty';
+          }
+          const existingWallets = wallet.getAllWallets();
+          if (existingWallets[input.trim()]) {
+            return 'A wallet with this name already exists';
+          }
+          return true;
         }
-        const existingWallets = wallet.getAllWallets();
-        if (existingWallets[input.trim()]) {
-          return 'A wallet with this name already exists';
-        }
-        return true;
       }
+    ]);
+
+    let savedWalletName: string | null = null;
+    if (answers.save && answers.walletName) {
+      savedWalletName = wallet.saveWallet(answers.walletName.trim());
+      ui.showSuccess(`Wallet saved as "${savedWalletName}"`);
+      ui.showWarning('Keep this file secure and back up your mnemonic phrase!');
     }
-  ]);
 
-  let savedWalletName: string | null = null;
-  if (answers.save && answers.walletName) {
-    savedWalletName = wallet.saveWallet(answers.walletName.trim());
-    ui.showSuccess(`Wallet saved as "${savedWalletName}"`);
-    ui.showWarning('Keep this file secure and back up your mnemonic phrase!');
-  }
-
-  await mainMenu(savedWalletName);
+    await mainMenu(savedWalletName);
   } catch (error) {
     const err = error as Error;
     ui.showError(`Failed to create wallet: ${err.message}`, [
       'Please try again',
       'If the problem persists, check your system for issues'
     ]);
-    
+
     await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
     }]);
-    
+
     await initialMenu();
   }
 }
@@ -672,11 +677,11 @@ async function importWalletFromPrivateKey(): Promise<void> {
 
   try {
     const walletData = walletService.importFromPrivateKey(
-      privateKey.trim(), 
-      chainType as 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton', 
+      privateKey.trim(),
+      chainType as 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton',
       password
     );
-    
+
     console.log('\n✅ Private key imported successfully!');
     if (walletData.address && walletData.address !== 'Generated on demand') {
       console.log('📍 Address:', walletData.address, '\n');
@@ -695,8 +700,8 @@ async function importWalletFromPrivateKey(): Promise<void> {
         type: 'input',
         name: 'walletName',
         message: 'Enter a name for this wallet:',
-        default: chainType === 'evm' && walletData.address 
-          ? `PK_${walletData.address.substring(2, 8)}` 
+        default: chainType === 'evm' && walletData.address
+          ? `PK_${walletData.address.substring(2, 8)}`
           : `PK_${chainType}_Wallet`,
         when: (answers) => answers.save,
         validate: (input) => {
@@ -1449,13 +1454,13 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
     ui.showWarning(`Explorer API not configured for ${config.networks[config.network].name}`);
     console.log(chalk.gray('Ensure explorerApiUrl is set in config.json and set EXPLORER_API_KEY (or EXPLORER_API_KEY_<NETWORK>) in .env.'));
     console.log('');
-    
+
     await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
     }]);
-    
+
     await mainMenu(currentWalletName);
     return;
   }
@@ -1478,7 +1483,7 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
         const direction = isSent ? chalk.red('↑ SENT') : chalk.green('↓ RECEIVED');
         const otherAddress = isSent ? tx.to : tx.from;
         const shortAddr = otherAddress ? `${otherAddress.slice(0, 8)}...${otherAddress.slice(-6)}` : 'Contract Creation';
-        
+
         // Format value
         let valueStr: string;
         if (tx.tokenSymbol) {
@@ -1505,7 +1510,7 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
       }
 
       ui.showSeparator();
-      
+
       // Show block explorer link
       const explorerUrl = config.networks[config.network].blockExplorer;
       if (explorerUrl) {
@@ -1676,16 +1681,16 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
       .filter((token) => token.type === 'native' || token.type === 'spl');
     const selectedToken = solTokens.length > 1
       ? (await inquirer.prompt<{ token: Token }>([
-          {
-            type: 'list',
-            name: 'token',
-            message: 'Select a token to send:',
-            choices: solTokens.map((token) => ({
-              name: `${token.symbol} ${token.name ? `- ${token.name}` : ''}`.trim(),
-              value: token
-            }))
-          }
-        ])).token
+        {
+          type: 'list',
+          name: 'token',
+          message: 'Select a token to send:',
+          choices: solTokens.map((token) => ({
+            name: `${token.symbol} ${token.name ? `- ${token.name}` : ''}`.trim(),
+            value: token
+          }))
+        }
+      ])).token
       : solTokens[0];
 
     const tokenSymbol = selectedToken?.symbol || nativeSymbol;
@@ -2252,7 +2257,7 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
 
   // Check if user cancelled
   if (!answers.toAddress || answers.toAddress.trim() === '' ||
-      !answers.amount || answers.amount.trim() === '') {
+    !answers.amount || answers.amount.trim() === '') {
     ui.showWarning('Transaction cancelled');
     await mainMenu(currentWalletName);
     return;
@@ -2426,9 +2431,9 @@ async function showWalletSecrets(currentWalletName: string | null): Promise<void
   try {
     const privateKey = wallet.getPrivateKey(password);
     let mnemonic: string | null = null;
-    
+
     if (wallet.importType === 'mnemonic') {
-        mnemonic = wallet.getMnemonic(password);
+      mnemonic = wallet.getMnemonic(password);
     }
 
     ui.clearScreen();
@@ -2443,12 +2448,12 @@ async function showWalletSecrets(currentWalletName: string | null): Promise<void
     ui.showSeparator();
 
     if (mnemonic) {
-        console.log('');
-        ui.showMnemonic(mnemonic);
+      console.log('');
+      ui.showMnemonic(mnemonic);
     } else {
-        console.log('');
-        ui.showInfo('This wallet was imported from a private key. No mnemonic available.');
-        console.log('');
+      console.log('');
+      ui.showInfo('This wallet was imported from a private key. No mnemonic available.');
+      console.log('');
     }
 
     console.log(chalk.red.bold('⚠  SECURITY REMINDERS'));

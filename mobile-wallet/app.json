@@ -58,7 +58,8 @@
           "color": "#9333ea"
         }
       ],
-      "expo-background-fetch"
+      "expo-background-fetch",
+      "./plugins/withNetworkSecurity"
     ],
     "experiments": {
       "typedRoutes": true
