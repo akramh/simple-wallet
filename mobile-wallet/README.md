@@ -131,6 +131,7 @@ npm run build:android
 - QR code scanning for sending
 - Transaction history
 - Real-time balance updates
+- Background transaction notifications (approx. 15 min interval)
 
 ### User Experience
 - Pull-to-refresh balances
@@ -239,7 +240,6 @@ import { Wallet, WalletAppService } from '@wallet/sdk';
 
 ### Future Enhancements
 - QR code scanning for send addresses
-- Push notifications for transactions
 - WalletConnect integration
 - dApp browser
 - Hardware wallet support
