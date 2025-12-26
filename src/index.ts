@@ -58,6 +58,7 @@ import {
   getERC20TokenPrice,
   getBitcoinPrice,
   getSolanaPrice,
+  getTokenPriceBySymbol,
   getTonPrice,
   isBitcoinNetworkKey,
   calculateTotalValue,
@@ -948,9 +949,18 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
       const btcPrice = await getBitcoinPrice(config.network);
       prices = new Map([['native', btcPrice]]);
     } else if (isSolana) {
-      // Solana network - get SOL price
+      // Solana network - get SOL price + SPL token prices by symbol
       const solPrice = await getSolanaPrice(config.network);
       prices = new Map([['native', solPrice]]);
+
+      const splTokens = portfolio
+        .map((entry) => entry.token)
+        .filter((token) => token.type === 'spl' && token.address);
+
+      for (const token of splTokens) {
+        const tokenPrice = await getTokenPriceBySymbol(token.symbol);
+        prices.set(token.address.toLowerCase(), tokenPrice);
+      }
     } else if (isXRPNetwork(config.network)) {
       // XRP network - get XRP price
       const xrpPrice = await getXRPPrice(config.network);
@@ -1265,15 +1275,18 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
         console.log('');
         ui.showSeparator();
 
-        const symbol = config.networks[config.network].nativeSymbol || 'SOL';
+        const nativeSymbol = config.networks[config.network].nativeSymbol || 'SOL';
         for (const tx of txs) {
           const isSent = tx.type === 'send';
           const direction = isSent ? chalk.red('↑ SENT') : tx.type === 'receive' ? chalk.green('↓ RECEIVED') : chalk.gray('• OTHER');
           const otherAddress = isSent ? tx.to : tx.from;
           const shortAddr = otherAddress ? `${otherAddress.slice(0, 10)}...${otherAddress.slice(-8)}` : 'Unknown';
 
-          const solValue = tx.valueSol;
-          const valueStr = `${parseFloat(solValue).toFixed(9)} ${symbol}`;
+          const tokenSymbol = tx.tokenSymbol || nativeSymbol;
+          const rawValue = tx.valueToken ?? tx.valueSol;
+          const valueStr = tokenSymbol === nativeSymbol
+            ? `${parseFloat(rawValue).toFixed(9)} ${tokenSymbol}`
+            : `${rawValue} ${tokenSymbol}`;
 
           const date = new Date(tx.timestamp);
           const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1287,7 +1300,7 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
           }
           console.log(`  ${chalk.gray('Sig:')} ${chalk.gray(tx.signature.slice(0, 18))}...`);
           if (tx.feeLamports > 0) {
-            console.log(`  ${chalk.gray('Fee:')} ${chalk.gray(`${tx.feeSol} ${symbol}`)}`);
+            console.log(`  ${chalk.gray('Fee:')} ${chalk.gray(`${tx.feeSol} ${nativeSymbol}`)}`);
           }
           console.log('');
         }
@@ -1659,7 +1672,26 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     const solNetConfig = config.networks[config.network];
     const nativeSymbol = solNetConfig.nativeSymbol || 'SOL';
 
-    ui.showSection('Send SOL');
+    const solTokens = walletService.getTokensForNetwork(config.network)
+      .filter((token) => token.type === 'native' || token.type === 'spl');
+    const selectedToken = solTokens.length > 1
+      ? (await inquirer.prompt<{ token: Token }>([
+          {
+            type: 'list',
+            name: 'token',
+            message: 'Select a token to send:',
+            choices: solTokens.map((token) => ({
+              name: `${token.symbol} ${token.name ? `- ${token.name}` : ''}`.trim(),
+              value: token
+            }))
+          }
+        ])).token
+      : solTokens[0];
+
+    const tokenSymbol = selectedToken?.symbol || nativeSymbol;
+    const tokenDecimals = selectedToken?.decimals ?? 9;
+
+    ui.showSection(`Send ${tokenSymbol}`);
     ui.showInfo('Press Ctrl+C to cancel at any time');
     console.log('');
 
@@ -1683,14 +1715,16 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
       {
         type: 'input',
         name: 'amount',
-        message: `Amount (in ${nativeSymbol}):`,
+        message: `Amount (in ${tokenSymbol}):`,
         when: (a) => !!a.toAddress && a.toAddress.trim() !== '',
         validate: (input) => {
           if (!input || input.trim() === '') return true;
           if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
           const num = parseFloat(input);
           if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
-          if (input.includes('.') && input.split('.')[1].length > 9) return 'SOL supports up to 9 decimals';
+          if (input.includes('.') && input.split('.')[1].length > tokenDecimals) {
+            return `${tokenSymbol} supports up to ${tokenDecimals} decimals`;
+          }
           return true;
         }
       }
@@ -1703,8 +1737,11 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     }
 
     ui.showLoading('Estimating network fee...');
-    const solToken = walletService.getNativeToken(config.network);
-    const gasEstimate = await walletService.getGasEstimate(solToken, answers.toAddress.trim(), answers.amount.trim());
+    const gasEstimate = await walletService.getGasEstimate(
+      selectedToken,
+      answers.toAddress.trim(),
+      answers.amount.trim()
+    );
 
     let solPrice: number | null = null;
     try {
@@ -1713,9 +1750,10 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
       solPrice = null;
     }
 
+    const tokenPrice = selectedToken?.type === 'native' ? solPrice : null;
     const { amountUsd, gasCostUsd, totalUsd } = calculateTransactionCosts(
       answers.amount.trim(),
-      solPrice,
+      tokenPrice,
       gasEstimate.estimatedCostNative,
       solPrice
     );
@@ -1724,7 +1762,7 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     ui.showHeader(currentWalletName, wallet.currentAccountIndex, solNetConfig.name || config.network, address);
 
     ui.showTransactionConfirmation({
-      tokenSymbol: nativeSymbol,
+      tokenSymbol,
       amount: answers.amount.trim(),
       recipient: answers.toAddress.trim(),
       networkName: solNetConfig.name || config.network,
@@ -1758,7 +1796,9 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
 
     ui.showLoading('Broadcasting transaction...');
     const password = await ensureMasterPassword();
-    const result = await walletService.sendSolanaTransaction(answers.toAddress.trim(), answers.amount.trim(), password);
+    const result = selectedToken?.type === 'spl'
+      ? await walletService.sendSolanaTokenTransaction(selectedToken, answers.toAddress.trim(), answers.amount.trim(), password)
+      : await walletService.sendSolanaTransaction(answers.toAddress.trim(), answers.amount.trim(), password);
 
     ui.showSuccess('Transaction broadcasted (pending confirmation)');
     console.log('');

@@ -32,10 +32,12 @@ import baseIcon from '../../assets/img/base.svg';
 import lineaIcon from '../../assets/img/linea-logo-mainnet.svg';
 import usdcIcon from '../../assets/img/icon-usdc.png';
 import usdtIcon from '../../assets/img/usdt.svg';
+import usdtGoldIcon from '../../assets/img/usdt-gold.svg';
 import polIcon from '../../assets/img/pol-token.svg';
 import bitcoinIcon from '../../assets/img/bitcoin-logo.svg';
 import xrpIcon from '../../assets/img/xrp.svg';
 import tonIcon from '../../assets/img/ton_symbol.svg';
+import raydiumIcon from '../../assets/img/raydium-ray-logo.svg';
 import sendIcon from '../../assets/icons/send.svg';
 import receiveIcon from '../../assets/icons/receive.svg';
 import backIcon from '../../assets/icons/arrow-left.svg';
@@ -54,9 +56,11 @@ const ICON_ASSETS: Record<string, string> = {
   'linea-logo-mainnet.svg': lineaIcon,
   'icon-usdc.png': usdcIcon,
   'usdt.svg': usdtIcon,
+  'usdt-gold.svg': usdtGoldIcon,
   'pol-token.svg': polIcon,
   'xrp.svg': xrpIcon,
   'ton_symbol.svg': tonIcon,
+  'raydium-ray-logo.svg': raydiumIcon,
   // Backwards-compatible aliases used by existing token lists/configs.
   'bitcoin-logo.svg': bitcoinIcon,
   'btc.svg': bitcoinIcon
@@ -75,6 +79,8 @@ const SYMBOL_ICON_FALLBACK: Record<string, string> = {
   linea: 'linea-logo-mainnet.svg',
   usdc: 'icon-usdc.png',
   usdt: 'usdt.svg',
+  xaut: 'usdt-gold.svg',
+  ray: 'raydium-ray-logo.svg',
   pol: 'pol-token.svg',
   matic: 'pol-token.svg',
   btc: 'bitcoin-logo.svg',
@@ -437,6 +443,8 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
         type: 'SWITCH_NETWORK',
         payload: { network: newNetwork }
       });
+      setTokenPrices({});
+      setTotalBalance('$0.00');
       notifyStateChange();
       // Load tokens immediately for new network
       loadTokensAndData();
@@ -516,7 +524,12 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) return null;
     
-    const priceKey = selectedToken.type === 'native' ? 'native' : selectedToken.address?.toLowerCase();
+    const priceKey =
+      selectedToken.type === 'native'
+        ? 'native'
+        : selectedToken.type === 'spl'
+          ? selectedToken.address
+          : selectedToken.address?.toLowerCase();
     if (!priceKey) return null;
     
     const price = tokenPrices[priceKey];
@@ -609,7 +622,12 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
   };
 
   const getTokenUsdValue = (token: Token, balance: string): string | null => {
-    const priceKey = token.type === 'native' ? 'native' : token.address?.toLowerCase();
+    const priceKey =
+      token.type === 'native'
+        ? 'native'
+        : token.type === 'spl'
+          ? token.address
+          : token.address?.toLowerCase();
     if (!priceKey) return null;
     
     const price = tokenPrices[priceKey];

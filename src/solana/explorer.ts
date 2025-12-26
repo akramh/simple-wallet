@@ -6,10 +6,22 @@
  *
  * Phase 2: transaction history (native SOL movements).
  *
+ * @responsibilities
+ * - Fetch SOL and SPL token transaction history via Solana RPC
+ * - Normalize Solana transactions for UI display
+ *
+ * @security
+ * - Read-only RPC access; no signing or key material handled here
+ *
  * @module solana/explorer
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
+import {
+  getAssociatedTokenAddress,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID
+} from '@solana/spl-token';
 import { lamportsToSol } from './types.js';
 
 export interface NormalizedSolanaTransaction {
@@ -20,6 +32,8 @@ export interface NormalizedSolanaTransaction {
   valueLamports: number;
   /** Amount in SOL for UI display */
   valueSol: string;
+  /** Token transfer amount for SPL tokens (formatted in display units) */
+  valueToken?: string;
   feeLamports: number;
   feeSol: string;
   /** Solana slot number */
@@ -27,6 +41,9 @@ export interface NormalizedSolanaTransaction {
   timestamp: number;
   status: 'confirmed' | 'failed' | 'pending';
   type: 'send' | 'receive' | 'contract_interaction';
+  tokenSymbol?: string;
+  tokenAddress?: string;
+  tokenDecimals?: number;
 }
 
 export interface SolanaExplorerConfig {
@@ -71,6 +88,44 @@ function findSolTransferCounterparty(parsedTx: any, address: string, direction: 
 
     if (direction === 'send' && source === address) return destination;
     if (direction === 'receive' && destination === address) return source;
+  }
+
+  return null;
+}
+
+function formatTokenAmountFixed(amount: bigint, decimals: number): string {
+  if (decimals <= 0) return amount.toString();
+  const base = 10n ** BigInt(decimals);
+  const whole = amount / base;
+  const fraction = amount % base;
+  const fractionStr = fraction.toString().padStart(decimals, '0');
+  const trimmedFraction = fractionStr.replace(/0+$/, '');
+  if (!trimmedFraction) return whole.toString();
+  return `${whole.toString()}.${trimmedFraction}`;
+}
+
+function findSplTransferCounterparty(
+  parsedTx: any,
+  tokenAccount: string,
+  direction: 'send' | 'receive'
+): string | null {
+  const message = parsedTx?.transaction?.message;
+  const instructions = Array.isArray(message?.instructions) ? message.instructions : [];
+
+  for (const ix of instructions) {
+    const program = ix?.program || ix?.programId;
+    const parsed = ix?.parsed;
+    const info = parsed?.info;
+    if (!parsed || !info) continue;
+    if (program !== 'spl-token' && program !== TOKEN_PROGRAM_ID.toBase58()) continue;
+    if (parsed.type !== 'transfer' && parsed.type !== 'transferChecked') continue;
+
+    const source = typeof info.source === 'string' ? info.source : null;
+    const destination = typeof info.destination === 'string' ? info.destination : null;
+    if (!source || !destination) continue;
+
+    if (direction === 'send' && source === tokenAccount) return destination;
+    if (direction === 'receive' && destination === tokenAccount) return source;
   }
 
   return null;
@@ -209,6 +264,150 @@ export class SolanaExplorer {
     }
 
     // All endpoints failed with errors
+    throw new Error(
+      `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
+  }
+
+  async getTokenTransactionHistory(
+    ownerAddress: string,
+    mintAddress: string,
+    tokenSymbol: string,
+    tokenDecimals: number,
+    limit: number = 25
+  ): Promise<NormalizedSolanaTransaction[]> {
+    const ownerPubkey = new PublicKey(ownerAddress);
+    const mintPubkey = new PublicKey(mintAddress);
+    const commitment = this.config.commitment ?? 'confirmed';
+    let lastError: Error | undefined;
+    let successfulEmptyResponse = false;
+
+    const tokenAccount = await getAssociatedTokenAddress(
+      mintPubkey,
+      ownerPubkey,
+      false,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    const tokenAccountBase58 = tokenAccount.toBase58();
+
+    for (const connection of this.connections) {
+      try {
+        const sigs = await connection.getSignaturesForAddress(tokenAccount, { limit }, commitment as any);
+
+        if (sigs.length === 0) {
+          successfulEmptyResponse = true;
+          continue;
+        }
+
+        const results: NormalizedSolanaTransaction[] = [];
+
+        for (const sig of sigs) {
+          const signature = sig.signature;
+          const slot = sig.slot;
+          const timestamp = (sig.blockTime ? sig.blockTime * 1000 : Date.now());
+          const sigStatus: 'confirmed' | 'failed' | 'pending' = sig.err ? 'failed' : 'confirmed';
+
+          let parsedTx: any = null;
+          try {
+            parsedTx = await connection.getParsedTransaction(signature, {
+              maxSupportedTransactionVersion: 0,
+              commitment
+            } as any);
+          } catch {
+            parsedTx = null;
+          }
+
+          if (!parsedTx) {
+            results.push({
+              signature,
+              from: ownerAddress,
+              to: null,
+              valueLamports: 0,
+              valueSol: '0',
+              valueToken: '0',
+              feeLamports: 0,
+              feeSol: '0',
+              slot,
+              timestamp,
+              status: sigStatus === 'confirmed' ? 'pending' : sigStatus,
+              type: 'contract_interaction',
+              tokenSymbol,
+              tokenAddress: mintAddress,
+              tokenDecimals
+            });
+            continue;
+          }
+
+          const message = parsedTx.transaction?.message;
+          const accountKeys = Array.isArray(message?.accountKeys) ? message.accountKeys : [];
+          const accountBase58 = accountKeys.map(extractPubkeyBase58);
+          const tokenAccountIndex = accountBase58.indexOf(tokenAccountBase58);
+
+          const meta = parsedTx.meta;
+          const feeLamports = Number(meta?.fee ?? 0);
+          const preTokenBalances = Array.isArray(meta?.preTokenBalances) ? meta.preTokenBalances : [];
+          const postTokenBalances = Array.isArray(meta?.postTokenBalances) ? meta.postTokenBalances : [];
+
+          const preEntry = preTokenBalances.find(
+            (entry: any) => entry.accountIndex === tokenAccountIndex && entry.mint === mintAddress
+          );
+          const postEntry = postTokenBalances.find(
+            (entry: any) => entry.accountIndex === tokenAccountIndex && entry.mint === mintAddress
+          );
+
+          const preAmount = BigInt(preEntry?.uiTokenAmount?.amount ?? '0');
+          const postAmount = BigInt(postEntry?.uiTokenAmount?.amount ?? '0');
+          const decimals = postEntry?.uiTokenAmount?.decimals ?? preEntry?.uiTokenAmount?.decimals ?? tokenDecimals;
+
+          const delta = postAmount - preAmount;
+          const absDelta = delta < 0n ? -delta : delta;
+
+          let type: 'send' | 'receive' | 'contract_interaction' = 'contract_interaction';
+          if (absDelta > 0n && delta < 0n) type = 'send';
+          if (absDelta > 0n && delta > 0n) type = 'receive';
+
+          const counterparty =
+            type === 'send'
+              ? findSplTransferCounterparty(parsedTx, tokenAccountBase58, 'send')
+              : type === 'receive'
+                ? findSplTransferCounterparty(parsedTx, tokenAccountBase58, 'receive')
+                : null;
+
+          const from = type === 'receive' ? (counterparty || ownerAddress) : ownerAddress;
+          const to = type === 'send' ? (counterparty || null) : ownerAddress;
+
+          const valueToken = formatTokenAmountFixed(absDelta, decimals);
+
+          results.push({
+            signature,
+            from,
+            to,
+            valueLamports: 0,
+            valueSol: valueToken,
+            valueToken,
+            feeLamports,
+            feeSol: lamportsToSol(feeLamports),
+            slot,
+            timestamp,
+            status: meta?.err ? 'failed' : sigStatus,
+            type,
+            tokenSymbol,
+            tokenAddress: mintAddress,
+            tokenDecimals: decimals
+          });
+        }
+
+        return results;
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    if (successfulEmptyResponse) {
+      return [];
+    }
+
     throw new Error(
       `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
     );

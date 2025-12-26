@@ -49,7 +49,7 @@ import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
-import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
+import { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
 import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
@@ -1439,17 +1439,39 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         }
       }
 
-      // Handle Solana networks (native SOL only in Phase 1)
+      // Handle Solana networks (native SOL + SPL token prices)
       if (isSolanaNetworkKey(priceNetwork)) {
         try {
           const solPrice = await getSolanaPrice();
           const cached = getCachedBalance(priceNetwork, { type: 'native' });
           const balance = cached?.balance || '0';
           const solAmount = parseFloat(balance);
-          const totalValue = solPrice ? solAmount * solPrice : 0;
+          let totalValue = solPrice ? solAmount * solPrice : 0;
+
+          const splTokens = walletService!.getTokensForNetwork(priceNetwork)
+            .filter((token) => token.type === 'spl' && token.address);
+          const prices: Record<string, number | null> = { native: solPrice };
+
+          if (splTokens.length) {
+            for (const token of splTokens) {
+              let tokenPrice: number | null = null;
+              try {
+                tokenPrice = await getTokenPriceBySymbol(token.symbol);
+              } catch (error) {
+                console.warn('[GET_TOKEN_PRICES] SPL token price error:', token.symbol, error);
+              }
+              prices[token.address] = tokenPrice;
+
+              const tokenCached = getCachedBalance(priceNetwork, token);
+              const tokenAmount = parseFloat(tokenCached?.balance || '0');
+              if (tokenPrice !== null && Number.isFinite(tokenAmount)) {
+                totalValue += tokenAmount * tokenPrice;
+              }
+            }
+          }
 
           return {
-            prices: { native: solPrice },
+            prices,
             totalValue,
             formattedTotal: formatUSDValue(totalValue),
             network: priceNetwork,
@@ -1601,11 +1623,19 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             throw new Error('Session password not available. Please unlock wallet again.');
           }
 
-          const result = await walletService!.sendSolanaTransaction(
-            payload.toAddress,
-            payload.amount,
-            solanaPassword
-          );
+          const isSplToken = payload.token?.type === 'spl';
+          const result = isSplToken
+            ? await walletService!.sendSolanaTokenTransaction(
+                payload.token,
+                payload.toAddress,
+                payload.amount,
+                solanaPassword
+              )
+            : await walletService!.sendSolanaTransaction(
+                payload.toAddress,
+                payload.amount,
+                solanaPassword
+              );
 
           // Track transaction in history as pending
           if (transactionHistory && result.signature) {
@@ -1618,8 +1648,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
               status: TransactionStatus.PENDING,
               type: TransactionType.SEND,
               timestamp: Date.now(),
-              tokenSymbol: sendNetworkConfig.nativeSymbol || 'SOL',
-              tokenAddress: ''
+              tokenSymbol: isSplToken ? payload.token.symbol : (sendNetworkConfig.nativeSymbol || 'SOL'),
+              tokenAddress: isSplToken ? payload.token.address : ''
             });
           }
 
@@ -1927,13 +1957,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             from: tx.from,
             to: tx.to || null,
             // valueSol is already formatted (avoid wei assumptions in ActivityView)
-            value: tx.valueSol,
+            value: tx.valueToken ?? tx.valueSol,
             network: explorerNetwork,
             status: tx.status,
             type: tx.type,
             timestamp: tx.timestamp,
             blockNumber: tx.slot || undefined,
-            tokenSymbol: nativeSymbol,
+            tokenSymbol: tx.tokenSymbol || nativeSymbol,
+            tokenAddress: tx.tokenAddress,
             fee: tx.feeSol
           }));
 

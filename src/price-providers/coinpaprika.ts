@@ -62,6 +62,7 @@ const SYMBOL_TO_COINPAPRIKA_ID: Record<string, string> = {
   // Stablecoins
   USDC: 'usdc-usd-coin',
   USDT: 'usdt-tether',
+  XAUT: 'xaut-tether-gold',
   DAI: 'dai-dai',
   BUSD: 'busd-binance-usd',
   FRAX: 'frax-frax',
@@ -86,6 +87,7 @@ const SYMBOL_TO_COINPAPRIKA_ID: Record<string, string> = {
   PEPE: 'pepe-pepe',
   ARB: 'arb-arbitrum',
   OP: 'op-optimism',
+  RAY: 'ray-raydium',
 
   // Wrapped tokens
   WETH: 'weth-weth',
