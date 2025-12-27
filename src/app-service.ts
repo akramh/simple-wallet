@@ -14,6 +14,14 @@
  * The service is initialized with a Wallet instance and configuration,
  * then coordinates between the wallet core and token registry.
  * 
+ * @responsibilities
+ * - Coordinate network-specific providers for balances, sends, and history
+ * - Normalize token registry usage across EVM and non-EVM networks
+ *
+ * @security
+ * - Uses storage adapters for encrypted wallet data; never logs secrets
+ * - Delegates signing to network-specific modules with validated inputs
+ *
  * @module app-service
  */
 
@@ -710,11 +718,36 @@ export class WalletAppService {
       try {
         const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
         const provider = this.getSolanaProviderForNetwork(networkKey);
-        const balance = await provider.getBalanceFormatted(solInfo.address);
-        return [{
-          token: this.getNativeToken(networkKey),
-          balance,
-        }];
+        const tokens = this.getTokensForNetwork(networkKey);
+        const results: Array<{ token: Token; balance: string; error?: string }> = [];
+
+        for (const token of tokens) {
+          try {
+            if (token.type === 'native') {
+              const balance = await provider.getBalanceFormatted(solInfo.address);
+              results.push({ token, balance });
+              continue;
+            }
+
+            if (token.type === 'spl' && token.address) {
+              const balance = await provider.getSplTokenBalanceFormatted(
+                solInfo.address,
+                token.address,
+                token.decimals
+              );
+              results.push({ token, balance });
+              continue;
+            }
+          } catch (tokenError) {
+            results.push({
+              token,
+              balance: 'Error',
+              error: (tokenError as Error).message
+            });
+          }
+        }
+
+        return results;
       } catch (error) {
         return [{
           token: this.getNativeToken(networkKey),
@@ -1160,13 +1193,14 @@ export class WalletAppService {
    * @returns Array of tokens with native first
    */
   getTokensForNetwork(networkKey: string): Token[] {
-    // Phase 1: Bitcoin/Solana/TON only support native balances (no tokens).
-    if (this.isNetworkBitcoin(networkKey) || this.isNetworkSolana(networkKey) || this.isNetworkTon(networkKey)) {
+    // Phase 1: Bitcoin/TON only support native balances (no tokens).
+    if (this.isNetworkBitcoin(networkKey) || this.isNetworkTon(networkKey)) {
       return [this.getNativeToken(networkKey)];
     }
 
     const tokens: Token[] = [];
     const nativeToken = this.getNativeToken(networkKey);
+    const defaultTokenType = this.isNetworkSolana(networkKey) ? 'spl' : 'erc20';
 
     // Always include native token first
     tokens.push(nativeToken);
@@ -1179,16 +1213,20 @@ export class WalletAppService {
       if (!token.address) {
         return;
       }
-      const key = token.address.toLowerCase();
+      const normalizedAddress =
+        token.type === 'spl' || this.isNetworkSolana(networkKey)
+          ? token.address
+          : token.address.toLowerCase();
+      const key = normalizedAddress.toLowerCase();
       if (seenAddresses.has(key)) {
         return;
       }
       seenAddresses.add(key);
       tokens.push({
         ...token,
-        address: token.address.toLowerCase(),
+        address: normalizedAddress,
         logoURI: token.logoURI || token.icon, // Map legacy icon
-        type: token.type || 'erc20', // Default type
+        type: token.type || defaultTokenType, // Default type per network
       } as Token);
     };
 
@@ -1401,6 +1439,73 @@ export class WalletAppService {
   }
 
   /**
+   * Send an SPL token on Solana.
+   * Only works when current network is Solana.
+   *
+   * @param token - SPL token to send
+   * @param toAddress - Recipient Solana address (base58)
+   * @param amount - Amount to send in display units (token decimals)
+   * @param password - Wallet password to decrypt mnemonic/key for signing
+   * @returns Transaction result with signature and fee
+   */
+  async sendSolanaTokenTransaction(
+    token: Token,
+    toAddress: string,
+    amount: string,
+    password: string
+  ): Promise<SolTransferResult> {
+    if (!this.isCurrentNetworkSolana()) {
+      throw new Error('Not on a Solana network');
+    }
+
+    if (token.type !== 'spl' || !token.address) {
+      throw new Error('Invalid SPL token');
+    }
+    if (typeof token.decimals !== 'number') {
+      throw new Error('SPL token decimals missing');
+    }
+
+    if (!isValidSolanaAddress(toAddress)) {
+      throw new Error('Invalid Solana recipient address');
+    }
+
+    const solInfo = this.getSolanaAddress();
+    if (!solInfo) {
+      throw new Error('No Solana address available');
+    }
+
+    let keypair: Keypair;
+
+    if (this.wallet.importType === 'privateKey') {
+      const privateKey = this.wallet.getPrivateKey(password);
+      if (!privateKey) {
+        throw new Error('Failed to decrypt private key');
+      }
+      const secretKey = bs58.decode(privateKey);
+      keypair = Keypair.fromSecretKey(secretKey);
+    } else {
+      const mnemonic = this.wallet.getMnemonic(password);
+      const accountIndex = this.wallet.getCurrentAccountIndex();
+      keypair = deriveSolanaKeypair(mnemonic, accountIndex);
+    }
+
+    const provider = this.getSolanaProviderForNetwork(this.config.network);
+    const result = await provider.sendSplTokenTransfer(
+      keypair,
+      toAddress,
+      token.address,
+      amount,
+      token.decimals
+    );
+
+    return {
+      signature: result.signature,
+      feeLamports: result.feeLamports,
+      feeSol: result.feeSol
+    };
+  }
+
+  /**
    * Get Solana transaction history for the current address.
    * Only works when current network is Solana.
    *
@@ -1429,7 +1534,27 @@ export class WalletAppService {
       return [];
     }
     const explorer = this.getSolanaExplorerForNetwork(this.config.network);
-    return explorer.getTransactionHistory(address, limit);
+    const solHistory = await explorer.getTransactionHistory(address, limit);
+    const tokens = this.getTokensForNetwork(this.config.network)
+      .filter((token) => token.type === 'spl' && token.address);
+
+    if (!tokens.length) {
+      return solHistory;
+    }
+
+    const tokenHistories = await Promise.all(tokens.map((token) =>
+      explorer.getTokenTransactionHistory(
+        address,
+        token.address!,
+        token.symbol,
+        token.decimals,
+        limit
+      )
+    ));
+
+    const merged = [...solHistory, ...tokenHistories.flat()];
+    merged.sort((a, b) => b.timestamp - a.timestamp);
+    return merged.slice(0, limit);
   }
 
   // ============================================================================

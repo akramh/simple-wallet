@@ -16,11 +16,24 @@ import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import * as Notifications from 'expo-notifications';
 import { useWalletStore } from '../store';
 import { ToastProvider } from '../contexts';
 import { useBackgroundRefresh } from '../hooks';
+import { BackgroundNotificationService } from '../services/BackgroundNotificationService';
 
 import '../global.css';
+
+// Configure notifications to show even when app is in foreground
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 // Create a client for React Query
 const queryClient = new QueryClient({
@@ -45,6 +58,17 @@ export default function RootLayout() {
     // Initialize wallet on app start
     initialize();
   }, [initialize]);
+
+  useEffect(() => {
+    // Setup notifications
+    const setupNotifications = async () => {
+      const hasPermission = await BackgroundNotificationService.requestPermissions();
+      if (hasPermission) {
+        await BackgroundNotificationService.register();
+      }
+    };
+    setupNotifications();
+  }, []);
 
   useEffect(() => {
     if (!isInitialized) return;

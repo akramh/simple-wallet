@@ -39,6 +39,11 @@
  */
 
 import 'dotenv/config';
+import { applyNetworkGuard } from './utils/network-guard.js';
+
+// Apply security guard immediately
+applyNetworkGuard();
+
 import inquirer from 'inquirer';
 import { Wallet } from './wallet.js';
 import fs from 'fs';
@@ -58,6 +63,7 @@ import {
   getERC20TokenPrice,
   getBitcoinPrice,
   getSolanaPrice,
+  getTokenPriceBySymbol,
   getTonPrice,
   isBitcoinNetworkKey,
   calculateTotalValue,
@@ -493,52 +499,52 @@ async function createWallet(): Promise<void> {
     }
 
     const answers = await inquirer.prompt<{ save: boolean; walletName?: string }>([
-    {
-      type: 'confirm',
-      name: 'save',
-      message: 'Save wallet to file?',
-      default: true
-    },
-    {
-      type: 'input',
-      name: 'walletName',
-      message: 'Enter a name for this wallet:',
-      default: `Wallet_${walletData.address.substring(2, 8)}`,
-      when: (answers) => answers.save,
-      validate: (input) => {
-        if (!input || input.trim().length === 0) {
-          return 'Wallet name cannot be empty';
+      {
+        type: 'confirm',
+        name: 'save',
+        message: 'Save wallet to file?',
+        default: true
+      },
+      {
+        type: 'input',
+        name: 'walletName',
+        message: 'Enter a name for this wallet:',
+        default: `Wallet_${walletData.address.substring(2, 8)}`,
+        when: (answers) => answers.save,
+        validate: (input) => {
+          if (!input || input.trim().length === 0) {
+            return 'Wallet name cannot be empty';
+          }
+          const existingWallets = wallet.getAllWallets();
+          if (existingWallets[input.trim()]) {
+            return 'A wallet with this name already exists';
+          }
+          return true;
         }
-        const existingWallets = wallet.getAllWallets();
-        if (existingWallets[input.trim()]) {
-          return 'A wallet with this name already exists';
-        }
-        return true;
       }
+    ]);
+
+    let savedWalletName: string | null = null;
+    if (answers.save && answers.walletName) {
+      savedWalletName = wallet.saveWallet(answers.walletName.trim());
+      ui.showSuccess(`Wallet saved as "${savedWalletName}"`);
+      ui.showWarning('Keep this file secure and back up your mnemonic phrase!');
     }
-  ]);
 
-  let savedWalletName: string | null = null;
-  if (answers.save && answers.walletName) {
-    savedWalletName = wallet.saveWallet(answers.walletName.trim());
-    ui.showSuccess(`Wallet saved as "${savedWalletName}"`);
-    ui.showWarning('Keep this file secure and back up your mnemonic phrase!');
-  }
-
-  await mainMenu(savedWalletName);
+    await mainMenu(savedWalletName);
   } catch (error) {
     const err = error as Error;
     ui.showError(`Failed to create wallet: ${err.message}`, [
       'Please try again',
       'If the problem persists, check your system for issues'
     ]);
-    
+
     await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
     }]);
-    
+
     await initialMenu();
   }
 }
@@ -671,11 +677,11 @@ async function importWalletFromPrivateKey(): Promise<void> {
 
   try {
     const walletData = walletService.importFromPrivateKey(
-      privateKey.trim(), 
-      chainType as 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton', 
+      privateKey.trim(),
+      chainType as 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton',
       password
     );
-    
+
     console.log('\n✅ Private key imported successfully!');
     if (walletData.address && walletData.address !== 'Generated on demand') {
       console.log('📍 Address:', walletData.address, '\n');
@@ -694,8 +700,8 @@ async function importWalletFromPrivateKey(): Promise<void> {
         type: 'input',
         name: 'walletName',
         message: 'Enter a name for this wallet:',
-        default: chainType === 'evm' && walletData.address 
-          ? `PK_${walletData.address.substring(2, 8)}` 
+        default: chainType === 'evm' && walletData.address
+          ? `PK_${walletData.address.substring(2, 8)}`
           : `PK_${chainType}_Wallet`,
         when: (answers) => answers.save,
         validate: (input) => {
@@ -948,9 +954,18 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
       const btcPrice = await getBitcoinPrice(config.network);
       prices = new Map([['native', btcPrice]]);
     } else if (isSolana) {
-      // Solana network - get SOL price
+      // Solana network - get SOL price + SPL token prices by symbol
       const solPrice = await getSolanaPrice(config.network);
       prices = new Map([['native', solPrice]]);
+
+      const splTokens = portfolio
+        .map((entry) => entry.token)
+        .filter((token) => token.type === 'spl' && token.address);
+
+      for (const token of splTokens) {
+        const tokenPrice = await getTokenPriceBySymbol(token.symbol);
+        prices.set(token.address.toLowerCase(), tokenPrice);
+      }
     } else if (isXRPNetwork(config.network)) {
       // XRP network - get XRP price
       const xrpPrice = await getXRPPrice(config.network);
@@ -1265,15 +1280,18 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
         console.log('');
         ui.showSeparator();
 
-        const symbol = config.networks[config.network].nativeSymbol || 'SOL';
+        const nativeSymbol = config.networks[config.network].nativeSymbol || 'SOL';
         for (const tx of txs) {
           const isSent = tx.type === 'send';
           const direction = isSent ? chalk.red('↑ SENT') : tx.type === 'receive' ? chalk.green('↓ RECEIVED') : chalk.gray('• OTHER');
           const otherAddress = isSent ? tx.to : tx.from;
           const shortAddr = otherAddress ? `${otherAddress.slice(0, 10)}...${otherAddress.slice(-8)}` : 'Unknown';
 
-          const solValue = tx.valueSol;
-          const valueStr = `${parseFloat(solValue).toFixed(9)} ${symbol}`;
+          const tokenSymbol = tx.tokenSymbol || nativeSymbol;
+          const rawValue = tx.valueToken ?? tx.valueSol;
+          const valueStr = tokenSymbol === nativeSymbol
+            ? `${parseFloat(rawValue).toFixed(9)} ${tokenSymbol}`
+            : `${rawValue} ${tokenSymbol}`;
 
           const date = new Date(tx.timestamp);
           const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1287,7 +1305,7 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
           }
           console.log(`  ${chalk.gray('Sig:')} ${chalk.gray(tx.signature.slice(0, 18))}...`);
           if (tx.feeLamports > 0) {
-            console.log(`  ${chalk.gray('Fee:')} ${chalk.gray(`${tx.feeSol} ${symbol}`)}`);
+            console.log(`  ${chalk.gray('Fee:')} ${chalk.gray(`${tx.feeSol} ${nativeSymbol}`)}`);
           }
           console.log('');
         }
@@ -1436,13 +1454,13 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
     ui.showWarning(`Explorer API not configured for ${config.networks[config.network].name}`);
     console.log(chalk.gray('Ensure explorerApiUrl is set in config.json and set EXPLORER_API_KEY (or EXPLORER_API_KEY_<NETWORK>) in .env.'));
     console.log('');
-    
+
     await inquirer.prompt<{ continue: string }>([{
       type: 'input',
       name: 'continue',
       message: 'Press Enter to continue...'
     }]);
-    
+
     await mainMenu(currentWalletName);
     return;
   }
@@ -1465,7 +1483,7 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
         const direction = isSent ? chalk.red('↑ SENT') : chalk.green('↓ RECEIVED');
         const otherAddress = isSent ? tx.to : tx.from;
         const shortAddr = otherAddress ? `${otherAddress.slice(0, 8)}...${otherAddress.slice(-6)}` : 'Contract Creation';
-        
+
         // Format value
         let valueStr: string;
         if (tx.tokenSymbol) {
@@ -1492,7 +1510,7 @@ async function viewTransactionHistory(currentWalletName: string | null): Promise
       }
 
       ui.showSeparator();
-      
+
       // Show block explorer link
       const explorerUrl = config.networks[config.network].blockExplorer;
       if (explorerUrl) {
@@ -1659,7 +1677,26 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     const solNetConfig = config.networks[config.network];
     const nativeSymbol = solNetConfig.nativeSymbol || 'SOL';
 
-    ui.showSection('Send SOL');
+    const solTokens = walletService.getTokensForNetwork(config.network)
+      .filter((token) => token.type === 'native' || token.type === 'spl');
+    const selectedToken = solTokens.length > 1
+      ? (await inquirer.prompt<{ token: Token }>([
+        {
+          type: 'list',
+          name: 'token',
+          message: 'Select a token to send:',
+          choices: solTokens.map((token) => ({
+            name: `${token.symbol} ${token.name ? `- ${token.name}` : ''}`.trim(),
+            value: token
+          }))
+        }
+      ])).token
+      : solTokens[0];
+
+    const tokenSymbol = selectedToken?.symbol || nativeSymbol;
+    const tokenDecimals = selectedToken?.decimals ?? 9;
+
+    ui.showSection(`Send ${tokenSymbol}`);
     ui.showInfo('Press Ctrl+C to cancel at any time');
     console.log('');
 
@@ -1683,14 +1720,16 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
       {
         type: 'input',
         name: 'amount',
-        message: `Amount (in ${nativeSymbol}):`,
+        message: `Amount (in ${tokenSymbol}):`,
         when: (a) => !!a.toAddress && a.toAddress.trim() !== '',
         validate: (input) => {
           if (!input || input.trim() === '') return true;
           if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
           const num = parseFloat(input);
           if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
-          if (input.includes('.') && input.split('.')[1].length > 9) return 'SOL supports up to 9 decimals';
+          if (input.includes('.') && input.split('.')[1].length > tokenDecimals) {
+            return `${tokenSymbol} supports up to ${tokenDecimals} decimals`;
+          }
           return true;
         }
       }
@@ -1703,8 +1742,11 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     }
 
     ui.showLoading('Estimating network fee...');
-    const solToken = walletService.getNativeToken(config.network);
-    const gasEstimate = await walletService.getGasEstimate(solToken, answers.toAddress.trim(), answers.amount.trim());
+    const gasEstimate = await walletService.getGasEstimate(
+      selectedToken,
+      answers.toAddress.trim(),
+      answers.amount.trim()
+    );
 
     let solPrice: number | null = null;
     try {
@@ -1713,9 +1755,10 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
       solPrice = null;
     }
 
+    const tokenPrice = selectedToken?.type === 'native' ? solPrice : null;
     const { amountUsd, gasCostUsd, totalUsd } = calculateTransactionCosts(
       answers.amount.trim(),
-      solPrice,
+      tokenPrice,
       gasEstimate.estimatedCostNative,
       solPrice
     );
@@ -1724,7 +1767,7 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     ui.showHeader(currentWalletName, wallet.currentAccountIndex, solNetConfig.name || config.network, address);
 
     ui.showTransactionConfirmation({
-      tokenSymbol: nativeSymbol,
+      tokenSymbol,
       amount: answers.amount.trim(),
       recipient: answers.toAddress.trim(),
       networkName: solNetConfig.name || config.network,
@@ -1758,7 +1801,9 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
 
     ui.showLoading('Broadcasting transaction...');
     const password = await ensureMasterPassword();
-    const result = await walletService.sendSolanaTransaction(answers.toAddress.trim(), answers.amount.trim(), password);
+    const result = selectedToken?.type === 'spl'
+      ? await walletService.sendSolanaTokenTransaction(selectedToken, answers.toAddress.trim(), answers.amount.trim(), password)
+      : await walletService.sendSolanaTransaction(answers.toAddress.trim(), answers.amount.trim(), password);
 
     ui.showSuccess('Transaction broadcasted (pending confirmation)');
     console.log('');
@@ -2212,7 +2257,7 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
 
   // Check if user cancelled
   if (!answers.toAddress || answers.toAddress.trim() === '' ||
-      !answers.amount || answers.amount.trim() === '') {
+    !answers.amount || answers.amount.trim() === '') {
     ui.showWarning('Transaction cancelled');
     await mainMenu(currentWalletName);
     return;
@@ -2386,9 +2431,9 @@ async function showWalletSecrets(currentWalletName: string | null): Promise<void
   try {
     const privateKey = wallet.getPrivateKey(password);
     let mnemonic: string | null = null;
-    
+
     if (wallet.importType === 'mnemonic') {
-        mnemonic = wallet.getMnemonic(password);
+      mnemonic = wallet.getMnemonic(password);
     }
 
     ui.clearScreen();
@@ -2403,12 +2448,12 @@ async function showWalletSecrets(currentWalletName: string | null): Promise<void
     ui.showSeparator();
 
     if (mnemonic) {
-        console.log('');
-        ui.showMnemonic(mnemonic);
+      console.log('');
+      ui.showMnemonic(mnemonic);
     } else {
-        console.log('');
-        ui.showInfo('This wallet was imported from a private key. No mnemonic available.');
-        console.log('');
+      console.log('');
+      ui.showInfo('This wallet was imported from a private key. No mnemonic available.');
+      console.log('');
     }
 
     console.log(chalk.red.bold('⚠  SECURITY REMINDERS'));

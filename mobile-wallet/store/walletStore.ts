@@ -596,7 +596,6 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
 
       console.log('[WalletStore] refreshBalances - calling walletBridge...');
       const balances = await walletBridge.refreshBalances({ force });
-      console.log('[WalletStore] refreshBalances - received balances:', JSON.stringify(balances, null, 2));
 
       // Batch state update
       batchUpdates(() => {
@@ -664,7 +663,6 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       // Fetch balances first (prices depend on balance data)
       console.log('[WalletStore] refreshBalancesAndPrices - fetching balances...');
       const balances = await walletBridge.refreshBalances({ force });
-
       // Then fetch prices based on the new balances
       console.log('[WalletStore] refreshBalancesAndPrices - fetching prices...');
       const priceData = await walletBridge.getTokenPrices(balances);
@@ -892,7 +890,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       const result = await walletBridge.sendTransaction(token, to, amount, destinationTag, comment);
 
       // Refresh balances after successful transaction (silent background refresh)
-      setTimeout(() => get().refreshBalances({ silent: true }), 2000);
+      setTimeout(() => get().refreshBalances({ silent: true, force: true }), 2000);
       
       // Refresh transactions after a short delay to include the new one
       setTimeout(() => get().loadTransactions(), 5000);

@@ -354,6 +354,17 @@ export async function getTokenPrices(
   return results;
 }
 
+/**
+ * Fetch the price for a token by symbol (non-EVM tokens like SPL).
+ *
+ * @param symbol - Token symbol (e.g., "RAY")
+ * @returns USD price or null if unavailable
+ */
+export async function getTokenPriceBySymbol(symbol: string): Promise<number | null> {
+  const result = await priceProviderManager.getCurrentPrice(symbol);
+  return result?.price ?? null;
+}
+
 // ============================================================================
 // Price History Functions (NEW)
 // ============================================================================

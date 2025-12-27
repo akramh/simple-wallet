@@ -26,7 +26,11 @@ const TOKEN_ICONS: Record<string, ImageSourcePropType> = {
 
   // Stablecoins
   USDC: require('../assets/crypto/icon-usdc.png'),
-  // USDT and DAI icons not available as PNG - will fallback to letter
+  USDT: require('../assets/crypto/usdt.png'),
+  XAUT: require('../assets/crypto/xaut.png'),
+
+  // Solana tokens
+  RAY: require('../assets/crypto/ray.png'),
 };
 
 // Network icon mappings by network key

@@ -9,5 +9,13 @@
 // MUST be first - polyfill crypto before any library checks for it
 import './services/crypto-polyfill';
 
+// Apply security network guard (blocks unauthorized connections)
+// Note: We access the source file directly, assuming Metro resolves shared code correctly via config
+import { applyNetworkGuard } from '../src/utils/network-guard';
+applyNetworkGuard();
+
+// Register background tasks (side-effect: defines task)
+import './services/BackgroundNotificationService';
+
 // Now load the rest of the app via expo-router
 import 'expo-router/entry';

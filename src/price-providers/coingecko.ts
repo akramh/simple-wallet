@@ -81,6 +81,7 @@ const SYMBOL_TO_COINGECKO_ID: Record<string, string> = {
   // Stablecoins
   USDC: 'usd-coin',
   USDT: 'tether',
+  XAUT: 'tether-gold',
   DAI: 'dai',
   BUSD: 'binance-usd',
   FRAX: 'frax',
@@ -105,6 +106,7 @@ const SYMBOL_TO_COINGECKO_ID: Record<string, string> = {
   PEPE: 'pepe',
   ARB: 'arbitrum',
   OP: 'optimism',
+  RAY: 'raydium',
 
   // Wrapped tokens
   WETH: 'weth',

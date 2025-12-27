@@ -20,6 +20,7 @@ export {
   isXRPNetworkKey,
   isTonNetworkKey,
   getTokenPrices,
+  getTokenPriceBySymbol,
   calculateTotalValue,
   formatUSDValue,
   getERC20TokenPrice,

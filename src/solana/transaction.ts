@@ -6,6 +6,13 @@
  *
  * Phase 3: Send SOL support.
  *
+ * @responsibilities
+ * - Build and sign SOL transfer transactions
+ * - Validate SOL transfer balances and fee assumptions
+ *
+ * @security
+ * - Does not persist or log private keys; callers provide keypairs
+ *
  * @module solana/transaction
  */
 

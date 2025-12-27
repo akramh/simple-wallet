@@ -4,10 +4,25 @@
  * Phase 1: read-only support (address + SOL balance).
  * Phase 3: send support (transactions + confirmation).
  *
+ * @responsibilities
+ * - Fetch native SOL and SPL token balances via RPC
+ * - Build, send, and confirm Solana transactions with RPC failover
+ *
+ * @security
+ * - Private keys are never logged or persisted here; signing uses provided keypairs only
+ * - RPC calls are read-only except when broadcasting signed transactions
+ *
  * @module solana/provider
  */
 
-import { Connection, PublicKey, type Transaction, type SignatureStatus } from '@solana/web3.js';
+import { Connection, PublicKey, Keypair, Transaction, type SignatureStatus } from '@solana/web3.js';
+import {
+  getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
+  createTransferCheckedInstruction,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID
+} from '@solana/spl-token';
 import { lamportsToSol } from './types.js';
 import { BASE_FEE_LAMPORTS } from './transaction.js';
 
@@ -39,6 +54,35 @@ export interface SolanaConfirmationResult {
 /** Transaction send result */
 export interface SolanaSendResult {
   signature: string;
+}
+
+function formatTokenAmountFixed(amount: bigint, decimals: number): string {
+  if (decimals <= 0) return amount.toString();
+  const base = 10n ** BigInt(decimals);
+  const whole = amount / base;
+  const fraction = amount % base;
+  const fractionStr = fraction.toString().padStart(decimals, '0');
+  const trimmedFraction = fractionStr.replace(/0+$/, '');
+  if (!trimmedFraction) return whole.toString();
+  return `${whole.toString()}.${trimmedFraction}`;
+}
+
+function parseTokenAmount(amount: string, decimals: number): bigint {
+  const trimmed = amount.trim();
+  if (!trimmed) return 0n;
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) {
+    throw new Error('Invalid token amount');
+  }
+
+  const [wholeRaw, fracRaw = ''] = trimmed.split('.');
+  if (fracRaw.length > decimals) {
+    throw new Error(`Token amount supports up to ${decimals} decimals`);
+  }
+
+  const whole = wholeRaw.replace(/^0+/, '') || '0';
+  const frac = fracRaw.padEnd(decimals, '0');
+  const combined = `${whole}${frac}`.replace(/^0+/, '') || '0';
+  return BigInt(combined);
 }
 
 export class SolanaProvider {
@@ -76,6 +120,158 @@ export class SolanaProvider {
   async getBalanceFormatted(address: string): Promise<string> {
     const lamports = await this.getBalanceLamports(address);
     return lamportsToSol(lamports);
+  }
+
+  async getSplTokenBalanceBaseUnits(
+    ownerAddress: string,
+    mintAddress: string,
+    decimalsOverride?: number
+  ): Promise<{ amount: bigint; decimals: number }> {
+    const owner = new PublicKey(ownerAddress);
+    const mint = new PublicKey(mintAddress);
+    let lastError: Error | undefined;
+
+    for (const connection of this.connections) {
+      try {
+        const accounts = await connection.getParsedTokenAccountsByOwner(owner, { mint });
+        if (!accounts.value.length) {
+          return { amount: 0n, decimals: decimalsOverride ?? 0 };
+        }
+
+        let total = 0n;
+        let decimals = decimalsOverride ?? 0;
+
+        for (const acc of accounts.value) {
+          const tokenAmount = acc.account?.data?.parsed?.info?.tokenAmount;
+          if (!tokenAmount?.amount) continue;
+          total += BigInt(tokenAmount.amount);
+          if (typeof tokenAmount.decimals === 'number') {
+            decimals = tokenAmount.decimals;
+          }
+        }
+
+        return { amount: total, decimals };
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    throw new Error(
+      `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
+  }
+
+  async getSplTokenBalanceFormatted(
+    ownerAddress: string,
+    mintAddress: string,
+    decimalsOverride?: number
+  ): Promise<string> {
+    const { amount, decimals } = await this.getSplTokenBalanceBaseUnits(ownerAddress, mintAddress, decimalsOverride);
+    return formatTokenAmountFixed(amount, decimals);
+  }
+
+  async sendSplTokenTransfer(
+    fromKeypair: Keypair,
+    toAddress: string,
+    mintAddress: string,
+    amount: string,
+    decimals: number
+  ): Promise<{ signature: string; feeLamports: number; feeSol: string }> {
+    const fromPubkey = fromKeypair.publicKey;
+    const toPubkey = new PublicKey(toAddress);
+    const mintPubkey = new PublicKey(mintAddress);
+
+    const tokenAmount = parseTokenAmount(amount, decimals);
+    if (tokenAmount <= 0n) {
+      throw new Error('Token amount must be greater than 0');
+    }
+
+    const feeEstimate = await this.estimateFee();
+    const solBalanceLamports = await this.getBalanceLamports(fromPubkey.toBase58());
+    if (solBalanceLamports < feeEstimate.feeLamports) {
+      throw new Error(
+        `Insufficient SOL for fees. Need ${lamportsToSol(feeEstimate.feeLamports)} SOL.`
+      );
+    }
+
+    const { amount: available } = await this.getSplTokenBalanceBaseUnits(
+      fromPubkey.toBase58(),
+      mintAddress,
+      decimals
+    );
+    if (available < tokenAmount) {
+      throw new Error('Insufficient token balance');
+    }
+
+    const [fromTokenAccount, toTokenAccount] = await Promise.all([
+      getAssociatedTokenAddress(mintPubkey, fromPubkey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID),
+      getAssociatedTokenAddress(mintPubkey, toPubkey, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
+    ]);
+
+    let lastError: Error | undefined;
+
+    for (const connection of this.connections) {
+      try {
+        const fromAccountInfo = await connection.getAccountInfo(fromTokenAccount);
+        if (!fromAccountInfo) {
+          throw new Error('Sender does not have an associated token account for this mint');
+        }
+
+        const toAccountInfo = await connection.getAccountInfo(toTokenAccount);
+        const instructions = [];
+
+        if (!toAccountInfo) {
+          instructions.push(
+            createAssociatedTokenAccountInstruction(
+              fromPubkey,
+              toTokenAccount,
+              toPubkey,
+              mintPubkey,
+              TOKEN_PROGRAM_ID,
+              ASSOCIATED_TOKEN_PROGRAM_ID
+            )
+          );
+        }
+
+        instructions.push(
+          createTransferCheckedInstruction(
+            fromTokenAccount,
+            mintPubkey,
+            toTokenAccount,
+            fromPubkey,
+            tokenAmount,
+            decimals,
+            [],
+            TOKEN_PROGRAM_ID
+          )
+        );
+
+        const blockhashInfo = await this.getRecentBlockhash();
+        const transaction = new Transaction({
+          feePayer: fromPubkey,
+          blockhash: blockhashInfo.blockhash,
+          lastValidBlockHeight: blockhashInfo.lastValidBlockHeight
+        });
+
+        instructions.forEach((ix) => transaction.add(ix));
+        transaction.sign(fromKeypair);
+
+        const serialized = transaction.serialize();
+        const result = await this.sendTransaction(serialized);
+
+        return {
+          signature: result.signature,
+          feeLamports: feeEstimate.feeLamports,
+          feeSol: feeEstimate.feeSol
+        };
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    throw new Error(
+      `Failed to send SPL token transfer on ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
   }
 
   /**
@@ -259,4 +455,3 @@ export function getSolanaProvider(
   }
   return provider;
 }
-

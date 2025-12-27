@@ -726,7 +726,7 @@ class WalletBridge {
 
     const network = this.config!.network;
     const networkConfig = this.config!.networks[network];
-    const { getTokenPrices, calculateTotalValue, getPriceByNetworkType } =
+    const { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, getPriceByNetworkType } =
       await import('./price-service');
 
     const cacheKey = this.makeBalanceCacheKey(network);
@@ -749,7 +749,8 @@ class WalletBridge {
       return Number.isFinite(val) && val > 0;
     });
 
-    const tokensForPricing = nonZeroBalances.map((b) => ({
+    const pricingBalances = networkConfig?.type === 'solana' ? balancesSnapshot : nonZeroBalances;
+    const tokensForPricing = pricingBalances.map((b) => ({
       type: (b.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
       symbol: b.token.symbol,
       address: b.token.address,
@@ -763,19 +764,33 @@ class WalletBridge {
       const map = await getTokenPrices(networkConfig.chainId, tokensForPricing);
       for (const [k, v] of map.entries()) priceMap.set(k, v);
     } else {
-      // Non-EVM networks: use unified price fetcher
-      const price = await getPriceByNetworkType(networkConfig?.type, network);
-      priceMap.set('native', price);
+      // Non-EVM networks: price native + supported tokens by symbol (e.g., SPL).
+      const nativePrice = await getPriceByNetworkType(networkConfig?.type, network);
+      priceMap.set('native', nativePrice);
+
+      if (networkConfig?.type === 'solana') {
+        for (const token of tokensForPricing) {
+          if (token.type === 'native') continue;
+          const tokenPrice = await getTokenPriceBySymbol(token.symbol);
+          if (token.address) {
+            priceMap.set(token.address, tokenPrice);
+          }
+        }
+      }
     }
 
     const prices: Record<string, number | null> = {};
-    for (const b of nonZeroBalances) {
-      const key = b.token.type === 'native' ? 'native' : b.token.address?.toLowerCase();
+    for (const b of pricingBalances) {
+      const key = b.token.type === 'native'
+        ? 'native'
+        : b.token.type === 'spl'
+          ? b.token.address
+          : b.token.address?.toLowerCase();
       prices[b.token.symbol] = key ? priceMap.get(key) ?? null : null;
     }
 
     const totalValue = calculateTotalValue(
-      nonZeroBalances.map((b) => ({
+      pricingBalances.map((b) => ({
         token: {
           type: (b.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
           symbol: b.token.symbol,
@@ -850,11 +865,18 @@ class WalletBridge {
     }
 
     if (networkConfig.type === 'solana') {
-      const result = await this.service.sendSolanaTransaction(
-        toAddress,
-        amount,
-        this.sessionPassword!
-      );
+      const result = token.type === 'spl'
+        ? await this.service.sendSolanaTokenTransaction(
+            token as any,
+            toAddress,
+            amount,
+            this.sessionPassword!
+          )
+        : await this.service.sendSolanaTransaction(
+            toAddress,
+            amount,
+            this.sessionPassword!
+          );
       return { hash: result.signature, status: 'pending' };
     }
 
@@ -1038,13 +1060,14 @@ class WalletBridge {
       hash: tx.signature,
       from: tx.from,
       to: tx.to || null,
-      value: tx.valueSol,
+      value: tx.valueToken ?? tx.valueSol,
       network,
       status: tx.status as 'pending' | 'confirmed' | 'failed',
       type: tx.type as 'send' | 'receive' | 'contract_interaction',
       timestamp: tx.timestamp,
       blockNumber: tx.slot,
-      tokenSymbol: nativeSymbol,
+      tokenSymbol: tx.tokenSymbol || nativeSymbol,
+      tokenAddress: tx.tokenAddress,
       fee: tx.feeSol,
     }));
   }
@@ -1305,7 +1328,7 @@ class WalletBridge {
       // Totals by network (USD) using price-service
       const totalsByNetwork: Record<string, number> = {};
       const enrichedHoldings: any[] = [];
-      const { getTokenPrices, getPriceByNetworkType } =
+      const { getTokenPrices, getTokenPriceBySymbol, getPriceByNetworkType } =
         await import('./price-service');
 
       for (const networkKey of enabledNetworks) {
@@ -1323,6 +1346,22 @@ class WalletBridge {
         if (netConfig.type && ['bitcoin', 'solana', 'xrp', 'ton'].includes(netConfig.type)) {
           const price = await getPriceByNetworkType(netConfig.type, networkKey);
           priceMap.set('native', price);
+
+          if (netConfig.type === 'solana') {
+            const splTokenInfos = assets.map(a => ({
+              type: (a.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
+              symbol: a.token.symbol,
+              address: a.token.address,
+              decimals: a.token.decimals
+            }));
+            for (const token of splTokenInfos) {
+              if (token.type === 'native') continue;
+              const tokenPrice = await getTokenPriceBySymbol(token.symbol);
+              if (token.address) {
+                priceMap.set(token.address, tokenPrice);
+              }
+            }
+          }
         } else if (netConfig.chainId) {
           // EVM: batch prices per chain
           const tokenInfos = assets.map(a => ({
@@ -1339,7 +1378,11 @@ class WalletBridge {
         for (const asset of assets) {
           const isNative = asset.token.type === 'native' || !asset.token.address || asset.token.address === 'native';
           // Price map keys: 'native' for native tokens, lowercase address for ERC-20
-          const key = isNative ? 'native' : asset.token.address?.toLowerCase() || '';
+          const key = isNative
+            ? 'native'
+            : asset.token.type === 'spl'
+              ? asset.token.address || ''
+              : asset.token.address?.toLowerCase() || '';
           const price = priceMap.get(key) || 0;
           const balance = parseFloat(asset.balance || '0');
           const value = Number.isFinite(balance) ? balance * price : 0;
@@ -1382,9 +1425,7 @@ class WalletBridge {
 
     // 1. Check in-memory cache
     const memoryCached = this.balanceCache.get(cacheKey);
-    if (!opts.force && memoryCached && now - memoryCached.fetchedAt < opts.ttlMs) {
-      return memoryCached;
-    }
+    if (!opts.force && memoryCached && now - memoryCached.fetchedAt < opts.ttlMs) return memoryCached;
 
     // 2. Check persistent cache (if allowed)
     if (!opts.force) {
@@ -1404,9 +1445,7 @@ class WalletBridge {
       }
     }
 
-    if (this.inflightBalances.has(cacheKey)) {
-      return this.inflightBalances.get(cacheKey)!;
-    }
+    if (this.inflightBalances.has(cacheKey)) return this.inflightBalances.get(cacheKey)!;
 
     const run = (async () => {
       const maxRetries = 2;

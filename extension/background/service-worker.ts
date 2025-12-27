@@ -41,6 +41,11 @@
 // These are lightweight shims that only set globals if missing - no startup delay.
 import '../../src/process-polyfill.js'; // process + window shims for @solana/web3.js, readable-stream
 import '../../src/buffer-polyfill.js'; // Buffer for crypto-utils, bitcoin module
+import { applyNetworkGuard } from '../../src/utils/network-guard.js';
+
+// Apply network security guard immediately
+applyNetworkGuard();
+
 import { Wallet } from '../../src/wallet.js';
 import { WalletAppService } from '../../src/app-service.js';
 import { ChromeStorageAdapter } from '../../src/chrome-storage.js';
@@ -49,7 +54,7 @@ import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
-import { getTokenPrices, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
+import { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
 import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
@@ -398,7 +403,7 @@ function broadcastBalanceUpdate(network: string, balances: { token: any; balance
     type: 'BALANCES_UPDATED',
     network,
     balances
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 /**
@@ -406,17 +411,17 @@ function broadcastBalanceUpdate(network: string, balances: { token: any; balance
  */
 function startBalancePolling(): void {
   if (balancePollingTimer) return;
-  
+
   balancePollingTimer = setInterval(async () => {
     if (!isUnlocked || !walletService) return;
-    
+
     try {
       await refreshBalancesForCurrentNetwork();
     } catch (err) {
       console.warn('[BalancePolling] Error:', err);
     }
   }, BALANCE_POLLING_INTERVAL);
-  
+
   console.log('[BalancePolling] Started');
 }
 
@@ -587,7 +592,7 @@ async function saveApprovedOrigins(): Promise<void> {
  * @param data - Event payload (accounts array, chain ID, etc.)
  */
 function emitProviderEvent(event: 'connect' | 'accountsChanged' | 'chainChanged', data: any): void {
-  chrome.runtime.sendMessage({ type: 'PROVIDER_EVENT', event, data }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'PROVIDER_EVENT', event, data }).catch(() => { });
 }
 
 /**
@@ -595,7 +600,7 @@ function emitProviderEvent(event: 'connect' | 'accountsChanged' | 'chainChanged'
  * Called when requests are added or resolved.
  */
 function broadcastPendingRequests(): void {
-  chrome.runtime.sendMessage({ type: 'PENDING_REQUESTS_UPDATED', pending: pendingRequests }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'PENDING_REQUESTS_UPDATED', pending: pendingRequests }).catch(() => { });
 }
 
 /**
@@ -859,7 +864,7 @@ async function initializeWalletService(): Promise<void> {
   // Load config from bundled asset (source of truth), with minimal fallback
   const bundledConfig = await loadBundledConfig();
   console.log('[Config] Loaded bundled config, networks:', Object.keys(bundledConfig.networks));
-  
+
   // User overrides from storage (e.g., selected network) merged with bundled config
   const storedConfig = storage.readJSON<Partial<Config & { network: string; explorerApiKey?: string }>>('config.json', {});
 
@@ -989,7 +994,7 @@ function startBitcoinConfirmationPolling(txid: string, networkKey: string): void
           transactionHistory.updateTransactionStatus(txid, TransactionStatus.CONFIRMED, blockNumber);
         }
         broadcastTransactionStatus(txid, 'confirmed', networkKey, blockNumber);
-        refreshBalancesForCurrentNetwork().catch(() => {});
+        refreshBalancesForCurrentNetwork().catch(() => { });
       }
     } catch {
       // Ignore transient errors; keep polling until timeout.
@@ -1054,7 +1059,7 @@ function startSolanaConfirmationPolling(signature: string, networkKey: string): 
           transactionHistory.updateTransactionStatus(signature, TransactionStatus.CONFIRMED, slot);
         }
         broadcastTransactionStatus(signature, 'confirmed', networkKey, slot);
-        refreshBalancesForCurrentNetwork().catch(() => {});
+        refreshBalancesForCurrentNetwork().catch(() => { });
       }
     } catch {
       // Ignore transient errors; keep polling until timeout.
@@ -1195,12 +1200,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (payload.privateKey) {
         // Private Key Import
         if (!payload.chainType) {
-            throw new Error('Chain type required for private key import');
+          throw new Error('Chain type required for private key import');
         }
         importedWallet = walletService!.importFromPrivateKey(
-            payload.privateKey,
-            payload.chainType,
-            importPassword
+          payload.privateKey,
+          payload.chainType,
+          importPassword
         );
 
         // Auto-switch to appropriate network for the imported chain type
@@ -1218,9 +1223,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       } else {
         // Mnemonic Import (Default)
         importedWallet = walletService!.importWallet(
-            payload.mnemonic,
-            importPassword,
-            payload.accountIndex || 0
+          payload.mnemonic,
+          importPassword,
+          payload.accountIndex || 0
         );
       }
 
@@ -1291,11 +1296,11 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       }
       currentWalletName = switchWalletName;
       isUnlocked = true;
-      
+
       // Initialize transaction history for the switched wallet
       const switchStorage = await ChromeStorageAdapter.create();
       transactionHistory = new TransactionHistoryManager(switchStorage, currentWalletName);
-      
+
       resetAutoLockTimer();
       return {
         success: true,
@@ -1365,7 +1370,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       const currentNetwork = walletService!.config.network;
       const tokenList = walletService!.getTokensForNetwork(currentNetwork);
-      
+
       // Attach cached balances to tokens
       const tokensWithCachedBalances = tokenList.map(token => {
         const cached = getCachedBalance(currentNetwork, token);
@@ -1376,7 +1381,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
           isLoading: cached === null
         };
       });
-      
+
       return { tokens: tokensWithCachedBalances, network: currentNetwork };
 
     case 'REFRESH_BALANCES':
@@ -1397,7 +1402,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       // Returns only cached balances for a network
       if (!isUnlocked) throw new Error('Wallet is locked');
       const cacheNetwork = payload?.network || walletService!.config.network;
-      return { 
+      return {
         balances: balanceCache[cacheNetwork] || {},
         network: cacheNetwork
       };
@@ -1439,17 +1444,39 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         }
       }
 
-      // Handle Solana networks (native SOL only in Phase 1)
+      // Handle Solana networks (native SOL + SPL token prices)
       if (isSolanaNetworkKey(priceNetwork)) {
         try {
           const solPrice = await getSolanaPrice();
           const cached = getCachedBalance(priceNetwork, { type: 'native' });
           const balance = cached?.balance || '0';
           const solAmount = parseFloat(balance);
-          const totalValue = solPrice ? solAmount * solPrice : 0;
+          let totalValue = solPrice ? solAmount * solPrice : 0;
+
+          const splTokens = walletService!.getTokensForNetwork(priceNetwork)
+            .filter((token) => token.type === 'spl' && token.address);
+          const prices: Record<string, number | null> = { native: solPrice };
+
+          if (splTokens.length) {
+            for (const token of splTokens) {
+              let tokenPrice: number | null = null;
+              try {
+                tokenPrice = await getTokenPriceBySymbol(token.symbol);
+              } catch (error) {
+                console.warn('[GET_TOKEN_PRICES] SPL token price error:', token.symbol, error);
+              }
+              prices[token.address] = tokenPrice;
+
+              const tokenCached = getCachedBalance(priceNetwork, token);
+              const tokenAmount = parseFloat(tokenCached?.balance || '0');
+              if (tokenPrice !== null && Number.isFinite(tokenAmount)) {
+                totalValue += tokenAmount * tokenPrice;
+              }
+            }
+          }
 
           return {
-            prices: { native: solPrice },
+            prices,
             totalValue,
             formattedTotal: formatUSDValue(totalValue),
             network: priceNetwork,
@@ -1601,11 +1628,19 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             throw new Error('Session password not available. Please unlock wallet again.');
           }
 
-          const result = await walletService!.sendSolanaTransaction(
-            payload.toAddress,
-            payload.amount,
-            solanaPassword
-          );
+          const isSplToken = payload.token?.type === 'spl';
+          const result = isSplToken
+            ? await walletService!.sendSolanaTokenTransaction(
+              payload.token,
+              payload.toAddress,
+              payload.amount,
+              solanaPassword
+            )
+            : await walletService!.sendSolanaTransaction(
+              payload.toAddress,
+              payload.amount,
+              solanaPassword
+            );
 
           // Track transaction in history as pending
           if (transactionHistory && result.signature) {
@@ -1618,8 +1653,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
               status: TransactionStatus.PENDING,
               type: TransactionType.SEND,
               timestamp: Date.now(),
-              tokenSymbol: sendNetworkConfig.nativeSymbol || 'SOL',
-              tokenAddress: ''
+              tokenSymbol: isSplToken ? payload.token.symbol : (sendNetworkConfig.nativeSymbol || 'SOL'),
+              tokenAddress: isSplToken ? payload.token.address : ''
             });
           }
 
@@ -1844,9 +1879,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const switchNetworkConfig = walletService!.config.networks[payload.network];
       // Clear cached balances for the target network to avoid stale data bleed
       clearBalanceCache(payload.network);
-      saveBalanceCache().catch(() => {});
+      saveBalanceCache().catch(() => { });
       // Kick off a refresh for the new network (non-blocking)
-      refreshBalancesForCurrentNetwork().catch(() => {});
+      refreshBalancesForCurrentNetwork().catch(() => { });
       // Only broadcast chainChanged for EVM networks (Bitcoin doesn't have chainId)
       if (isEVMNetworkConfig(switchNetworkConfig)) {
         const chainHex = '0x' + switchNetworkConfig.chainId.toString(16);
@@ -1927,13 +1962,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             from: tx.from,
             to: tx.to || null,
             // valueSol is already formatted (avoid wei assumptions in ActivityView)
-            value: tx.valueSol,
+            value: tx.valueToken ?? tx.valueSol,
             network: explorerNetwork,
             status: tx.status,
             type: tx.type,
             timestamp: tx.timestamp,
             blockNumber: tx.slot || undefined,
-            tokenSymbol: nativeSymbol,
+            tokenSymbol: tx.tokenSymbol || nativeSymbol,
+            tokenAddress: tx.tokenAddress,
             fee: tx.feeSol
           }));
 
@@ -1985,14 +2021,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         }
 
         const isSupported = explorerAPI.isSupported(explorerNetwork);
-        
+
         console.log('[Explorer] Request:', { network: explorerNetwork, address: explorerAddress, isSupported });
-        
+
         if (!isSupported) {
           console.log('[Explorer] Network not supported, registered networks:', explorerAPI.getRegisteredNetworks?.() || 'unknown');
           return { transactions: [], supported: false };
         }
-        
+
         const explorerTxs = await explorerAPI.getAllTransactions(
           explorerAddress,
           explorerNetwork,

@@ -10,6 +10,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SolanaExplorer } from '../dist/solana/explorer.js';
+import { PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
 
 test('SolanaExplorer fetches transaction history via RPC', async () => {
   const address = '11111111111111111111111111111111';
@@ -178,4 +180,85 @@ test('SolanaExplorer handles contract interactions', async () => {
   assert.equal(history[0].signature, 'sig_contract');
   // Only fee was paid, no transfer - should be contract_interaction or send with 0 value
   assert.ok(['send', 'contract_interaction'].includes(history[0].type));
+});
+
+test('SolanaExplorer fetches SPL token transfers', async () => {
+  const ownerAddress = '7YttLkHDoNj9wyDur5pM1ejNaAvT9X4eqaYcHQqtj2G5';
+  const mintAddress = '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R';
+  const tokenAccount = await getAssociatedTokenAddress(
+    new PublicKey(mintAddress),
+    new PublicKey(ownerAddress)
+  );
+  const destinationAccount = '4Nd1mK4uQmZ3bP3Wb2Z8vM7WfKq9v5o3GQ2o2bVvYz9x';
+
+  const signatures = [
+    { signature: 'sig_spl', slot: 321, blockTime: 1700000300, err: null }
+  ];
+
+  const parsedTx = {
+    transaction: {
+      message: {
+        accountKeys: [
+          { pubkey: tokenAccount.toBase58() },
+          { pubkey: ownerAddress }
+        ],
+        instructions: [
+          {
+            program: 'spl-token',
+            parsed: {
+              type: 'transferChecked',
+              info: {
+                source: tokenAccount.toBase58(),
+                destination: destinationAccount,
+                mint: mintAddress,
+                amount: '600000'
+              }
+            }
+          }
+        ]
+      }
+    },
+    meta: {
+      fee: 5_000,
+      preTokenBalances: [
+        {
+          accountIndex: 0,
+          mint: mintAddress,
+          owner: ownerAddress,
+          uiTokenAmount: { amount: '1000000', decimals: 6 }
+        }
+      ],
+      postTokenBalances: [
+        {
+          accountIndex: 0,
+          mint: mintAddress,
+          owner: ownerAddress,
+          uiTokenAmount: { amount: '400000', decimals: 6 }
+        }
+      ],
+      err: null
+    }
+  };
+
+  const explorer = new SolanaExplorer({
+    networkKey: 'solana-mainnet',
+    rpcUrls: ['mock://rpc'],
+    connectionFactory: () => ({
+      getSignaturesForAddress: async () => signatures,
+      getParsedTransaction: async () => parsedTx
+    })
+  });
+
+  const history = await explorer.getTokenTransactionHistory(
+    ownerAddress,
+    mintAddress,
+    'RAY',
+    6,
+    10
+  );
+
+  assert.equal(history.length, 1);
+  assert.equal(history[0].type, 'send');
+  assert.equal(history[0].tokenSymbol, 'RAY');
+  assert.equal(history[0].valueToken, '0.6');
 });
