@@ -34,6 +34,9 @@ export interface Token {
 
   /** URI for token logo image (optional) */
   logoURI?: string;
+
+  /** Extension asset name for token icon (optional) */
+  icon?: string;
   
   /** CoinGecko ID for pricing (optional) */
   coingeckoId?: string;

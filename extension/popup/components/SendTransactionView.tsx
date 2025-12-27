@@ -1,15 +1,19 @@
 /**
- * SendTransactionView Component
- * 
- * Enhanced send transaction experience with:
- * - Confirmation step before sending
- * - Transaction progress indicator
- * - Confirmation tracking with block number
- * - Explorer link integration
- * - Hash display on confirmation
+ * @fileoverview Send transaction confirmation and status flow.
+ *
+ * Provides the review/confirm step and tracks pending/confirmed states with
+ * explorer link integration.
+ *
+ * @responsibilities
+ * - Render transaction review and confirmation UI
+ * - Track pending/confirmed/failed states via background messaging
+ *
+ * @security
+ * - Uses background messaging to broadcast transactions
+ * - No secrets handled in UI
  */
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import type { Token } from '../../../src/types';
+import type { Token } from '../../../src/types/token.js';
 import { calculateTransactionCosts, formatUSDValue } from '../../../src/price-service';
 import { findTonTransaction } from '../../../src/ton/index.js';
 
@@ -54,6 +58,12 @@ interface PriceData {
   nativePrice?: number | null;
 }
 
+/**
+ * Send transaction review and status component.
+ *
+ * @param props - Component props
+ * @returns Send transaction view
+ */
 export function SendTransactionView({
   token,
   recipient,
@@ -65,6 +75,7 @@ export function SendTransactionView({
 }: SendTransactionViewProps) {
   // Start with confirmation step
   const [txState, setTxState] = useState<TxState>({ status: 'confirm' });
+  const [displayMode, setDisplayMode] = useState<'token' | 'usd'>('token');
   const [networkConfig, setNetworkConfig] = useState<NetworkConfig | null>(null);
   const [copied, setCopied] = useState(false);
   const [gasEstimate, setGasEstimate] = useState<GasEstimate | null>(null);
@@ -279,12 +290,38 @@ export function SendTransactionView({
           </div>
 
           <div className="tx-details-card">
+            <div className="tx-amount-toggle">
+              <button
+                type="button"
+                className={`tx-toggle-btn ${displayMode === 'token' ? 'active' : ''}`}
+                onClick={() => setDisplayMode('token')}
+              >
+                {token.symbol}
+              </button>
+              <button
+                type="button"
+                className={`tx-toggle-btn ${displayMode === 'usd' ? 'active' : ''}`}
+                onClick={() => setDisplayMode('usd')}
+                disabled={!getAmountUsd()}
+              >
+                USD
+              </button>
+            </div>
             <div className="tx-detail-rows">
               <div className="tx-detail-row">
                 <span className="tx-detail-label">Amount</span>
                 <div className="tx-detail-value-group">
-                  <span className="tx-detail-value tx-amount-highlight">{amount} {token.symbol}</span>
-                  {getAmountUsd() && <span className="tx-detail-usd">{getAmountUsd()}</span>}
+                  {displayMode === 'token' ? (
+                    <>
+                      <span className="tx-detail-value tx-amount-highlight">{amount} {token.symbol}</span>
+                      {getAmountUsd() && <span className="tx-detail-usd">{getAmountUsd()}</span>}
+                    </>
+                  ) : (
+                    <>
+                      <span className="tx-detail-value tx-amount-highlight">{getAmountUsd() || '--'}</span>
+                      <span className="tx-detail-usd">{amount} {token.symbol}</span>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -317,18 +354,35 @@ export function SendTransactionView({
               <div className="tx-detail-row">
                 <span className="tx-detail-label">Estimated Network Fee</span>
                 <div className="tx-detail-value-group">
-                  <span className="tx-detail-value">
-                    {gasEstimateStatus === 'loading'
-                      ? 'Estimating...'
-                      : gasEstimate
-                        ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(
-                          networkConfig?.isBitcoin
-                            ? 8
-                            : (networkConfig?.isTon || networkConfig?.isSolana ? 9 : 6)
-                        )} ${gasEstimate.nativeSymbol}`
-                        : '--'}
-                  </span>
-                  {getGasUsd() && <span className="tx-detail-usd">{getGasUsd()}</span>}
+                  {displayMode === 'token' ? (
+                    <>
+                      <span className="tx-detail-value">
+                        {gasEstimateStatus === 'loading'
+                          ? 'Estimating...'
+                          : gasEstimate
+                            ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(
+                              networkConfig?.isBitcoin
+                                ? 8
+                                : (networkConfig?.isTon || networkConfig?.isSolana ? 9 : 6)
+                            )} ${gasEstimate.nativeSymbol}`
+                            : '--'}
+                      </span>
+                      {getGasUsd() && <span className="tx-detail-usd">{getGasUsd()}</span>}
+                    </>
+                  ) : (
+                    <>
+                      <span className="tx-detail-value">{getGasUsd() || '--'}</span>
+                      {gasEstimate && (
+                        <span className="tx-detail-usd">
+                          {parseFloat(gasEstimate.estimatedCostNative).toFixed(
+                            networkConfig?.isBitcoin
+                              ? 8
+                              : (networkConfig?.isTon || networkConfig?.isSolana ? 9 : 6)
+                          )} {gasEstimate.nativeSymbol}
+                        </span>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
 
