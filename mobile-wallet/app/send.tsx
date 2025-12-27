@@ -753,6 +753,7 @@ export default function SendScreen() {
                   placeholderTextColor="#6b7280"
                   autoCapitalize="none"
                   autoCorrect={false}
+                  multiline={true}
                   className="flex-1 px-4 py-5 text-white font-mono text-base"
                 />
                 <TouchableOpacity

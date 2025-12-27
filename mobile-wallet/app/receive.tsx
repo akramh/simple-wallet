@@ -87,7 +87,7 @@ export default function ReceiveScreen() {
           className="bg-gray-900 rounded-xl p-4 w-full mb-6"
         >
           <Text className="text-gray-400 text-xs mb-1">Your Address</Text>
-          <Text className="text-white font-mono text-sm" numberOfLines={1}>
+          <Text className="text-white font-mono text-sm text-center">
             {resolvedAddress}
           </Text>
         </TouchableOpacity>
