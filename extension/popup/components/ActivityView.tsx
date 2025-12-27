@@ -1,7 +1,20 @@
+/**
+ * @fileoverview Activity list view for the extension popup.
+ *
+ * Displays recent transactions for the active network with explorer fallback,
+ * and allows users to open transaction details.
+ *
+ * @responsibilities
+ * - Fetch and render transaction activity for the active account
+ * - Provide refresh and detail modal interactions
+ *
+ * @security
+ * - Uses explorer APIs via background messaging; no secrets handled in UI
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
-import { TransactionHistoryManager } from '../../../src/transaction-history.js';
 import TransactionDetailsModal from './TransactionDetailsModal';
-import { useToast } from '../context/ToastContext';
+import { formatAddress, formatDate, formatTransactionValue } from '../utils/transactionFormat';
 
 interface Transaction {
   hash: string;
@@ -29,8 +42,13 @@ interface Props {
   networks: Record<string, any>;
 }
 
+/**
+ * Activity list screen for the current network.
+ *
+ * @param props - Component props
+ * @returns Activity view component
+ */
 function ActivityView({ currentAddress, network, networks }: Props) {
-  const { showToast } = useToast();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,43 +96,10 @@ function ActivityView({ currentAddress, network, networks }: Props) {
     loadTransactions();
   }, [loadTransactions]);
 
-  const formatAddress = (addr: string | undefined | null) => {
-    if (!addr) return 'Unknown';
-    return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
-  };
-
-  const formatDate = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-
-    if (diff < 60000) return 'Just now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
-    return date.toLocaleDateString();
-  };
-
   const getTransactionType = (tx: Transaction) => {
     if (tx.type === 'send') return 'Sent';
     if (tx.type === 'receive') return 'Received';
     return 'Contract';
-  };
-
-  const formatValue = (value: string, tokenSymbol?: string) => {
-    // Explorer API returns value in wei for EVM native tokens. Other networks already return native units.
-    if (!tokenSymbol || tokenSymbol === 'ETH' || tokenSymbol === 'tETH') {
-      // Convert wei to ETH
-      const ethValue = parseFloat(value) / 1e18;
-      if (ethValue === 0) return '0 ETH';
-      if (ethValue < 0.0001) return '<0.0001 ETH';
-      return `${ethValue.toFixed(4)} ETH`;
-    }
-    // For tokens, the value might already be formatted or need decimal adjustment
-    const numValue = parseFloat(value);
-    if (numValue === 0) return `0 ${tokenSymbol}`;
-    if (numValue < 0.0001) return `<0.0001 ${tokenSymbol}`;
-    return `${numValue.toFixed(4)} ${tokenSymbol}`;
   };
 
   const handleTransactionClick = (tx: Transaction) => {
@@ -190,7 +175,7 @@ function ActivityView({ currentAddress, network, networks }: Props) {
                   <div className="tx-row-primary">
                     <span className="tx-type">{getTransactionType(tx)}</span>
                     <span className="tx-amount-value">
-                      {tx.type === 'send' ? '-' : '+'}{formatValue(tx.value, tx.tokenSymbol)}
+                      {tx.type === 'send' ? '-' : '+'}{formatTransactionValue(tx.value, tx.tokenSymbol)}
                     </span>
                   </div>
                   <div className="tx-row-secondary">

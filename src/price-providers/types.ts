@@ -66,10 +66,16 @@ export interface TokenMetadataResult {
   description: string;
   /** Market capitalization in USD, null if unavailable */
   marketCap: number | null;
+  /** 24h trading volume in USD, null if unavailable */
+  volume24h?: number | null;
   /** Total token supply, null if unavailable */
   totalSupply: number | null;
   /** Circulating supply, null if unavailable */
   circulatingSupply: number | null;
+  /** All-time high price in USD, null if unavailable */
+  allTimeHigh?: number | null;
+  /** All-time low price in USD, null if unavailable */
+  allTimeLow?: number | null;
   /** Official website URL, null if unavailable */
   websiteUrl: string | null;
 }
@@ -169,4 +175,3 @@ export interface CacheEntry<T> {
   data: T;
   fetchedAt: number;
 }
-

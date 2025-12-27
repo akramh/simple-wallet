@@ -19,6 +19,7 @@ import ReceiveView from './ReceiveView';
 import ActivityView from './ActivityView';
 import AddTokenModal from './AddTokenModal';
 import SendTransactionView from './SendTransactionView';
+import TokenDetailsScreen from './TokenDetailsScreen';
 import Identicon from './ui/Identicon';
 import NetworkSelector from './ui/NetworkSelector';
 import Skeleton from './ui/Skeleton';
@@ -45,6 +46,8 @@ import { isValidBitcoinAddress } from '../../../src/bitcoin/index.js';
 import { isValidTonAddress } from '../../../src/ton/index.js';
 import { isValidXRPAddress, isXAddress, isValidDestinationTag } from '../../../src/xrp/index.js';
 import { getVisibleNetworkEntries } from '../../../src/network-visibility.js';
+import type { Token } from '../../../src/types/token.js';
+import { formatBalance, getTokenPriceKey } from '../utils/tokenFormat';
 
 const ICON_ASSETS: Record<string, string> = {
   'eth_logo.svg': ethIcon,
@@ -173,15 +176,6 @@ interface Props {
   onStateChange?: () => void;
 }
 
-interface Token {
-  symbol: string;
-  name: string;
-  type: 'native' | 'erc20';
-  address?: string;
-  decimals: number;
-   icon?: string;
-}
-
 interface TokenBalance {
   token: Token;
   balance: string;
@@ -192,7 +186,7 @@ interface TokenBalance {
   isActivated?: boolean;
 }
 
-type View = 'tokens' | 'activity' | 'receive' | 'send' | 'settings';
+type View = 'tokens' | 'activity' | 'receive' | 'send' | 'settings' | 'tokenDetails';
 
 interface TokenWithBalance {
   token: Token;
@@ -201,6 +195,12 @@ interface TokenWithBalance {
   isLoading: boolean;
 }
 
+/**
+ * Main wallet container for the extension popup.
+ *
+ * @param props - Component props
+ * @returns Main wallet UI
+ */
 function MainWallet({ address, network, importType, privateKeyType, onLock, onStateChange }: Props) {
   const { showToast } = useToast();
   const notifyStateChange = () => {
@@ -227,8 +227,11 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
 
   // Send form state
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
+  const [selectedTokenDetails, setSelectedTokenDetails] = useState<{ token: Token; icon: string | null } | null>(null);
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
+  const [amountInput, setAmountInput] = useState('');
+  const [amountMode, setAmountMode] = useState<'token' | 'usd'>('token');
   const [sendError, setSendError] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [gasEstimate, setGasEstimate] = useState<{ estimatedCostNative: string; nativeSymbol: string } | null>(null);
@@ -453,6 +456,79 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
     }
   };
 
+  const getSelectedTokenPrice = () => {
+    if (!selectedToken) return null;
+    const priceKey = getTokenPriceKey(selectedToken);
+    if (!priceKey) return null;
+    const price = tokenPrices[priceKey];
+    return price ?? null;
+  };
+
+  const setAmountWithMode = (tokenAmount: string) => {
+    setAmount(tokenAmount);
+    if (amountMode === 'usd') {
+      const price = getSelectedTokenPrice();
+      if (!price || !Number.isFinite(price)) {
+        setAmountInput('');
+        return;
+      }
+      const usdValue = parseFloat(tokenAmount) * price;
+      setAmountInput(Number.isFinite(usdValue) ? usdValue.toFixed(2) : '');
+      return;
+    }
+    setAmountInput(tokenAmount);
+  };
+
+  const handleAmountInputChange = (value: string) => {
+    const sanitized = value.replace(/[^0-9.]/g, '');
+    setAmountInput(sanitized);
+
+    if (!selectedToken) {
+      setAmount('');
+      return;
+    }
+
+    if (amountMode === 'token') {
+      setAmount(sanitized);
+      return;
+    }
+
+    const price = getSelectedTokenPrice();
+    if (!price || !Number.isFinite(price)) {
+      setAmount('');
+      return;
+    }
+
+    const usdAmount = parseFloat(sanitized);
+    if (!Number.isFinite(usdAmount) || usdAmount <= 0) {
+      setAmount('');
+      return;
+    }
+
+    const tokenAmount = usdAmount / price;
+    const decimals = selectedToken.decimals ?? 6;
+    setAmount(tokenAmount.toFixed(Math.min(6, decimals)));
+  };
+
+  const handleToggleAmountMode = (mode: 'token' | 'usd') => {
+    if (amountMode === mode) return;
+    setAmountMode(mode);
+    if (!selectedToken) return;
+
+    const price = getSelectedTokenPrice();
+    if (mode === 'usd') {
+      if (!price || !Number.isFinite(price) || !amount) {
+        setAmountInput('');
+        return;
+      }
+      const usdValue = parseFloat(amount) * price;
+      setAmountInput(Number.isFinite(usdValue) ? usdValue.toFixed(2) : '');
+      return;
+    }
+
+    setAmountInput(amount);
+  };
+
   const handleMaxClick = async () => {
     if (!selectedToken) return;
     
@@ -462,7 +538,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
 
     // If it's an ERC20/SPL token, just set the full balance (gas is paid in native)
     if (selectedToken.type !== 'native') {
-      setAmount(tokenData.balance);
+      setAmountWithMode(tokenData.balance);
       return;
     }
 
@@ -503,17 +579,17 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
           const factor = Math.pow(10, decimals);
           const safeMax = Math.floor(maxAmount * factor) / factor;
           
-          setAmount(safeMax.toString());
+          setAmountWithMode(safeMax.toString());
         } else {
-          setAmount('0');
+          setAmountWithMode('0');
         }
       } else {
         // Fallback if estimation fails, just set full balance
-        setAmount(tokenData.balance);
+        setAmountWithMode(tokenData.balance);
       }
     } catch (err) {
       console.error('Failed to calculate max amount:', err);
-      setAmount(tokenData.balance);
+      setAmountWithMode(tokenData.balance);
     } finally {
       setCalculatingMax(false);
     }
@@ -524,12 +600,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) return null;
     
-    const priceKey =
-      selectedToken.type === 'native'
-        ? 'native'
-        : selectedToken.type === 'spl'
-          ? selectedToken.address
-          : selectedToken.address?.toLowerCase();
+    const priceKey = getTokenPriceKey(selectedToken);
     if (!priceKey) return null;
     
     const price = tokenPrices[priceKey];
@@ -538,6 +609,14 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
     const value = amountNum * price;
     if (value < 0.01) return '<$0.01';
     return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const getTokenEquivalentValue = (): string | null => {
+    if (!selectedToken || !amount) return null;
+    if (amountMode !== 'usd') return null;
+    const tokenAmount = parseFloat(amount);
+    if (!Number.isFinite(tokenAmount) || tokenAmount <= 0) return null;
+    return `${formatBalance(tokenAmount)} ${selectedToken.symbol}`;
   };
 
   const getGasUsdValue = (): string | null => {
@@ -559,6 +638,11 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
 
     if (!selectedToken || !recipient || !amount) {
       setSendError('Please fill in all fields');
+      return;
+    }
+
+    if (amountMode === 'usd' && !getSelectedTokenPrice()) {
+      setSendError('USD amount requires a price feed');
       return;
     }
 
@@ -601,6 +685,8 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
     setIsSending(false);
     setRecipient('');
     setAmount('');
+    setAmountInput('');
+    setAmountMode('token');
     setDestinationTag('');
     setComment('');
     setSelectedToken(null);
@@ -613,21 +699,8 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
     setIsSending(false);
   };
 
-  const formatBalance = (balance: string | number) => {
-    const num = typeof balance === 'string' ? parseFloat(balance) : balance;
-    if (num === 0) return '0';
-    if (num < 0.0001) return num.toFixed(8).replace(/\.?0+$/, '');
-    if (num < 1) return num.toFixed(6).replace(/\.?0+$/, '');
-    return num.toFixed(4).replace(/\.?0+$/, '');
-  };
-
   const getTokenUsdValue = (token: Token, balance: string): string | null => {
-    const priceKey =
-      token.type === 'native'
-        ? 'native'
-        : token.type === 'spl'
-          ? token.address
-          : token.address?.toLowerCase();
+    const priceKey = getTokenPriceKey(token);
     if (!priceKey) return null;
     
     const price = tokenPrices[priceKey];
@@ -681,7 +754,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
       )}
 
       {/* Account selector and (for main tabs) balance + navigation */}
-      {view !== 'settings' && view !== 'send' && view !== 'receive' && (
+      {view !== 'settings' && view !== 'send' && view !== 'receive' && view !== 'tokenDetails' && (
         <>
           <div className="account-row">
             <div
@@ -858,7 +931,14 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
                   const iconSrc = getTokenIcon(item.token);
                   const usdValue = getTokenUsdValue(item.token, item.balance);
                   return (
-                    <div key={index} className="token-item">
+                    <div
+                      key={index}
+                      className="token-item token-item-clickable"
+                      onClick={() => {
+                        setSelectedTokenDetails({ token: item.token, icon: iconSrc });
+                        setView('tokenDetails');
+                      }}
+                    >
                       <div className="token-info">
                         {iconSrc ? (
                           <img src={iconSrc} alt={item.token.symbol} className="token-icon-img" />
@@ -953,6 +1033,9 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
                       onChange={(e) => {
                         const token = portfolio.find(p => p.token.symbol === e.target.value);
                         setSelectedToken(token?.token || null);
+                        setAmount('');
+                        setAmountInput('');
+                        setAmountMode('token');
                       }}
                     >
                       <option value="">Select a token</option>
@@ -966,29 +1049,45 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
 
                   <div className="form-group">
                     <label>Recipient Address</label>
-                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                      <input
-                        type="text"
-                        value={recipient}
-                        onChange={(e) => setRecipient(e.target.value)}
-                        placeholder={
-                          isBitcoinNetwork(network)
-                            ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
-                            : isSolanaNetwork(network)
-                              ? 'Base58 address...'
-                              : isXrpNetwork(network)
-                                ? 'r...'
-                                : isTonNetwork(network)
-                                  ? 'EQ... or UQ...'
-                                  : '0x...'
-                        }
-                        style={{ paddingRight: '40px', width: '100%' }}
-                      />
-                      {recipient && (
-                        <div style={{ position: 'absolute', right: '10px', pointerEvents: 'none', display: 'flex' }}>
-                          <Identicon address={recipient} size={24} />
-                        </div>
-                      )}
+                    <div className="recipient-row">
+                      <div className="recipient-input">
+                        <input
+                          type="text"
+                          value={recipient}
+                          onChange={(e) => setRecipient(e.target.value)}
+                          placeholder={
+                            isBitcoinNetwork(network)
+                              ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
+                              : isSolanaNetwork(network)
+                                ? 'Base58 address...'
+                                : isXrpNetwork(network)
+                                  ? 'r...'
+                                  : isTonNetwork(network)
+                                    ? 'EQ... or UQ...'
+                                    : '0x...'
+                          }
+                          style={{ paddingRight: '40px', width: '100%' }}
+                        />
+                        {recipient && (
+                          <div className="recipient-identicon">
+                            <Identicon address={recipient} size={24} />
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="recipient-action"
+                        onClick={async () => {
+                          try {
+                            const clip = await navigator.clipboard.readText();
+                            if (clip) setRecipient(clip.trim());
+                          } catch {
+                            showToast('Clipboard access denied');
+                          }
+                        }}
+                      >
+                        Paste
+                      </button>
                     </div>
                   </div>
 
@@ -1027,25 +1126,59 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
                   <div className="form-group">
                     <div className="amount-label-row">
                       <label>Amount</label>
-                      {selectedToken && (
-                        <button
-                          type="button"
-                          className="max-btn"
-                          onClick={handleMaxClick}
-                          disabled={calculatingMax}
-                        >
-                          {calculatingMax ? '...' : 'Max'}
-                        </button>
-                      )}
+                      <div className="amount-actions">
+                        {selectedToken && (
+                          <>
+                            <button
+                              type="button"
+                              className="max-btn"
+                              onClick={handleMaxClick}
+                              disabled={calculatingMax}
+                            >
+                              {calculatingMax ? '...' : 'Max'}
+                            </button>
+                            <button
+                              type="button"
+                              className="max-btn"
+                              onClick={() => {
+                                setAmount('');
+                                setAmountInput('');
+                              }}
+                            >
+                              Clear
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="amount-toggle">
+                      <button
+                        type="button"
+                        className={`amount-toggle-btn ${amountMode === 'token' ? 'active' : ''}`}
+                        onClick={() => handleToggleAmountMode('token')}
+                      >
+                        {selectedToken ? selectedToken.symbol : 'Token'}
+                      </button>
+                      <button
+                        type="button"
+                        className={`amount-toggle-btn ${amountMode === 'usd' ? 'active' : ''}`}
+                        onClick={() => handleToggleAmountMode('usd')}
+                        disabled={!getSelectedTokenPrice()}
+                      >
+                        USD
+                      </button>
                     </div>
                     <input
                       type="text"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      placeholder="0.0"
+                      value={amountInput}
+                      onChange={(e) => handleAmountInputChange(e.target.value)}
+                      placeholder={amountMode === 'usd' ? '$0.00' : '0.0'}
                     />
-                    {getAmountUsdValue() && (
+                    {amountMode === 'token' && getAmountUsdValue() && (
                       <div className="amount-usd-value">≈ {getAmountUsdValue()}</div>
+                    )}
+                    {amountMode === 'usd' && getTokenEquivalentValue() && (
+                      <div className="amount-usd-value">≈ {getTokenEquivalentValue()}</div>
                     )}
                   </div>
 
@@ -1116,12 +1249,22 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
                   {sendError && <div className="error">{sendError}</div>}
 
                   <button type="submit" className="btn btn-primary">
-                    Send
+                    Review
                   </button>
                 </form>
               </>
             )}
           </div>
+        ) : view === 'tokenDetails' && selectedTokenDetails ? (
+          <TokenDetailsScreen
+            token={selectedTokenDetails.token}
+            tokenIcon={selectedTokenDetails.icon}
+            network={network}
+            address={address}
+            networks={networks}
+            tokenPrices={tokenPrices}
+            onBack={() => setView('tokens')}
+          />
         ) : null}
       </div>
     </div>

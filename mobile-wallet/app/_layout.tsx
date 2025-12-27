@@ -27,7 +27,7 @@ import '../global.css';
 // Configure notifications to show even when app is in foreground
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowAlert: true, // Deprecated but often still needed for compat, keeping 'true' or removing if fully replaced by banner
     shouldPlaySound: true,
     shouldSetBadge: false,
     shouldShowBanner: true,
@@ -62,9 +62,13 @@ export default function RootLayout() {
   useEffect(() => {
     // Setup notifications
     const setupNotifications = async () => {
-      const hasPermission = await BackgroundNotificationService.requestPermissions();
-      if (hasPermission) {
-        await BackgroundNotificationService.register();
+      try {
+        const hasPermission = await BackgroundNotificationService.requestPermissions();
+        if (hasPermission) {
+          await BackgroundNotificationService.register();
+        }
+      } catch (e) {
+        console.error('[RootLayout] Error setting up notifications:', e);
       }
     };
     setupNotifications();

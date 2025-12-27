@@ -24,6 +24,9 @@ export const ALLOWED_DOMAINS = [
   "rpc.sepolia.org",
   "sepolia.gateway.tenderly.co",
 
+  // localhost for testing
+  "localhost",
+
   // Base
   "mainnet.base.org",
 

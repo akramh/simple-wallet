@@ -194,7 +194,8 @@ describe('BackgroundNotificationService', () => {
     });
 
     it('should return NewData and schedule notification if new transaction found', async () => {
-      const mockTx = { hash: '0xnew', from: '0xothers', value: '0.5', tokenSymbol: 'ETH' };
+      // Mock Wei value: 0.5 ETH = 500000000000000000 Wei
+      const mockTx = { hash: '0xnew', from: '0xothers', value: '500000000000000000', tokenSymbol: 'ETH' };
       
       (mobileStorage.readJSON as jest.Mock).mockImplementation((key, def) => {
         if (key === 'wallets.json') return { 'Wallet 1': { address: '0x123' } };
@@ -211,10 +212,7 @@ describe('BackgroundNotificationService', () => {
       // Verify result
       expect(result).toBe(BackgroundFetch.BackgroundFetchResult.NewData);
       
-      // Verify storage update
-      expect(mobileStorage.writeJSON).toHaveBeenCalledWith('last_notification_tx_hash', '0xnew');
-      
-      // Verify notification
+      // Verify notification (should be formatted to 0.5)
       expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
         content: expect.objectContaining({
           title: 'Transaction Received',
@@ -222,11 +220,17 @@ describe('BackgroundNotificationService', () => {
           data: { hash: '0xnew', network: 'sepolia' }
         })
       }));
+
+      // Verify storage update happens AFTER notification
+      // Note: In a real unit test with mocked async functions, strict ordering check 
+      // is hard without spy execution order, but we can checks call counts.
+      expect(mobileStorage.writeJSON).toHaveBeenCalledWith('last_notification_tx_hash', '0xnew');
     });
 
     it('should handle "Sent" notifications correctly', async () => {
       const myAddress = '0x123';
-      const mockTx = { hash: '0xnew', from: myAddress, value: '0.1', tokenSymbol: 'ETH' };
+      // Mock Wei value: 0.1 ETH
+      const mockTx = { hash: '0xnew', from: myAddress, value: '100000000000000000', tokenSymbol: 'ETH' };
       
       (mobileStorage.readJSON as jest.Mock).mockImplementation((key, def) => {
         if (key === 'wallets.json') return { 'Wallet 1': { address: myAddress } };
@@ -246,6 +250,37 @@ describe('BackgroundNotificationService', () => {
           body: 'You sent 0.1 ETH',
         })
       }));
+    });
+
+    it('should support custom networks from config.json', async () => {
+      // Custom network setup
+      const customNetwork = 'my-custom-chain';
+      (mobileStorage.readJSON as jest.Mock).mockImplementation((key, def) => {
+        if (key === 'wallets.json') return { 'Wallet 1': { address: '0x123' } };
+        if (key === 'config.json') return { 
+          network: customNetwork,
+          networks: {
+             [customNetwork]: {
+               chainId: 12345,
+               explorerApiUrl: 'https://custom-explorer.com'
+             }
+          }
+        };
+        return def;
+      });
+
+      const { explorerAPI } = require('@wallet/explorer-api');
+      explorerAPI.isSupported.mockReturnValue(false); 
+
+      await taskCallback();
+
+      // Should register the custom network
+      expect(explorerAPI.registerNetwork).toHaveBeenCalledWith(
+        customNetwork,
+        'https://custom-explorer.com',
+        12345,
+        undefined
+      );
     });
   });
 

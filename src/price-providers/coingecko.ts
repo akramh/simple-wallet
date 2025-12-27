@@ -255,6 +255,9 @@ interface CoinGeckoCoinResponse {
   description?: { en?: string };
   market_data?: {
     market_cap?: { usd?: number };
+    total_volume?: { usd?: number };
+    ath?: { usd?: number };
+    atl?: { usd?: number };
     total_supply?: number;
     circulating_supply?: number;
   };
@@ -442,6 +445,9 @@ export class CoinGeckoProvider implements PriceProvider {
     return {
       description: rawData.description?.en || '',
       marketCap: rawData.market_data?.market_cap?.usd || null,
+      volume24h: rawData.market_data?.total_volume?.usd || null,
+      allTimeHigh: rawData.market_data?.ath?.usd || null,
+      allTimeLow: rawData.market_data?.atl?.usd || null,
       totalSupply: rawData.market_data?.total_supply || null,
       circulatingSupply: rawData.market_data?.circulating_supply || null,
       websiteUrl: rawData.links?.homepage?.[0] || null,
