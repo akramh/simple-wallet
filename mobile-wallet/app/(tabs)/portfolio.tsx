@@ -47,7 +47,10 @@ export default function PortfolioScreen() {
     refreshAllNetworks({ silent: false });
   }, [refreshAllNetworks]);
 
-  const globalTotal = Object.values(allNetworkTotals).reduce((a, b) => a + (b || 0), 0);
+  const globalTotal = Object.entries(allNetworkTotals).reduce((acc, [key, value]) => {
+    const isTestnet = networks[key]?.isTestnet;
+    return isTestnet ? acc : acc + (value || 0);
+  }, 0);
   const formattedGlobalTotal =
     globalTotal > 0
       ? `$${globalTotal.toFixed(2)}`

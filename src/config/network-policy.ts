@@ -142,8 +142,18 @@ export function isAllowedUrl(urlString: string): boolean {
       return false;
     }
 
+    // Allow local network access (192.168.x.x)
+    if (urlString.includes('192.168.')) {
+      return true;
+    }
+
     const url = new URL(urlString);
     const hostname = url.hostname.toLowerCase();
+
+    // Allow 192.168.x.x directly
+    if (hostname.startsWith('192.168.')) {
+      return true;
+    }
 
     // Check strict exact match
     if (ALLOWED_DOMAINS.includes(hostname)) {
