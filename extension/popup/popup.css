@@ -2584,6 +2584,19 @@
   box-shadow: var(--shadow-sm);
 }
 
+.token-details-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.token-details-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 .token-details-row {
   display: flex;
   justify-content: space-between;
@@ -2678,7 +2691,7 @@
 
 .price-chart-line {
   stroke: var(--primary);
-  stroke-width: 2;
+  stroke-width: 0.6;
   fill: none;
 }
 
@@ -2704,6 +2717,32 @@
   box-shadow: var(--shadow-sm);
   pointer-events: none;
   z-index: 5;
+}
+
+.price-chart-axis-y,
+.price-chart-axis-x {
+  position: absolute;
+  font-size: 11px;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.price-chart-axis-y {
+  top: 4px;
+  bottom: 24px;
+  left: 8px;
+  width: 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.price-chart-axis-x {
+  left: 8px;
+  right: 8px;
+  bottom: 0px;
+  display: flex;
+  justify-content: space-between;
 }
 
 .price-chart-tooltip-time {

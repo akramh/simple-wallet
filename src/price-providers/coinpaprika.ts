@@ -380,8 +380,11 @@ export class CoinPaprikaProvider implements PriceProvider {
     return {
       description,
       marketCap: tickerData.quotes.USD.market_cap || null,
+      volume24h: tickerData.quotes.USD.volume_24h || null,
       totalSupply: tickerData.total_supply,
       circulatingSupply: tickerData.circulating_supply,
+      allTimeHigh: null,
+      allTimeLow: null,
       websiteUrl,
     };
   }

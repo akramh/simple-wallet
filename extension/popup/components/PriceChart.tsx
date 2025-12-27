@@ -45,6 +45,12 @@ export default function PriceChart({ data }: PriceChartProps) {
     });
   }, [data]);
 
+  const { minPrice, maxPrice } = useMemo(() => {
+    if (!data.length) return { minPrice: null, maxPrice: null };
+    const prices = data.map((point) => point.price);
+    return { minPrice: Math.min(...prices), maxPrice: Math.max(...prices) };
+  }, [data]);
+
   const pathD = useMemo(() => {
     if (chartPoints.length === 0) return '';
     const line = chartPoints
@@ -67,6 +73,9 @@ export default function PriceChart({ data }: PriceChartProps) {
 
   const hovered = hoverIndex !== null ? chartPoints[hoverIndex] : null;
 
+  const startLabel = data.length ? new Date(data[0].timestamp).toLocaleDateString() : '';
+  const endLabel = data.length ? new Date(data[data.length - 1].timestamp).toLocaleDateString() : '';
+
   return (
     <div
       className="price-chart"
@@ -74,6 +83,14 @@ export default function PriceChart({ data }: PriceChartProps) {
       onMouseMove={handleMove}
       onMouseLeave={handleLeave}
     >
+      <div className="price-chart-axis-y">
+        <span>{typeof maxPrice === 'number' ? formatUSDValue(maxPrice) : ''}</span>
+        <span>{typeof minPrice === 'number' ? formatUSDValue(minPrice) : ''}</span>
+      </div>
+      <div className="price-chart-axis-x">
+        <span>{startLabel}</span>
+        <span>{endLabel}</span>
+      </div>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="price-chart-svg">
         {pathD && (
           <>

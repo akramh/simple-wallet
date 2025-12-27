@@ -54,7 +54,7 @@ import { setCryptoAdapter } from '../../src/crypto-utils.js';
 import { createWebCryptoAdapter } from '../../src/crypto-adapter.js';
 import { TransactionHistoryManager, TransactionStatus, TransactionType } from '../../src/transaction-history.js';
 import { explorerAPI } from '../../src/explorer-api.js';
-import { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, getPriceHistory, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
+import { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, getPriceHistory, getTokenMetadata, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
 import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
 import type { Config } from '../../src/types/index.js';
@@ -1644,6 +1644,27 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       } catch (error) {
         console.warn('[GET_TOKEN_PRICE_HISTORY] Error:', error);
         return { error: 'Failed to fetch price history' };
+      }
+    }
+
+    case 'GET_TOKEN_MARKET_DETAILS': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+
+      const symbol = payload?.symbol;
+      if (!symbol) {
+        return { error: 'Missing symbol' };
+      }
+
+      try {
+        const metadata = await getTokenMetadata(symbol);
+        if (!metadata) {
+          return { error: 'Market data unavailable' };
+        }
+        return { metadata };
+      } catch (error) {
+        console.warn('[GET_TOKEN_MARKET_DETAILS] Error:', error);
+        return { error: 'Failed to fetch market details' };
       }
     }
 

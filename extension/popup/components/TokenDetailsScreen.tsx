@@ -15,7 +15,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import type { Token } from '../../../src/types/token.js';
-import type { PriceHistoryResult, TimeRange } from '../../../src/price-providers/types.js';
+import type { PriceHistoryResult, TimeRange, TokenMetadataResult } from '../../../src/price-providers/types.js';
 import { useToast } from '../context/ToastContext';
 import PriceChart from './PriceChart';
 import TokenMetaCard from './TokenMetaCard';
@@ -79,6 +79,9 @@ export default function TokenDetailsScreen({
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityError, setActivityError] = useState<string | null>(null);
   const [activityRefreshing, setActivityRefreshing] = useState(false);
+  const [marketDetails, setMarketDetails] = useState<TokenMetadataResult | null>(null);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketError, setMarketError] = useState<string | null>(null);
 
   const networkConfig = networks[network] || {};
   const priceKey = getTokenPriceKey(token);
@@ -151,6 +154,30 @@ export default function TokenDetailsScreen({
     }
   };
 
+  const fetchMarketDetails = async () => {
+    setMarketLoading(true);
+    setMarketError(null);
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_TOKEN_MARKET_DETAILS',
+        payload: { symbol: token.symbol }
+      });
+      if (response?.metadata) {
+        setMarketDetails(response.metadata);
+      } else {
+        setMarketDetails(null);
+        if (response?.error) {
+          setMarketError(response.error);
+        }
+      }
+    } catch (error: any) {
+      setMarketDetails(null);
+      setMarketError(error?.message || 'Failed to load market details');
+    } finally {
+      setMarketLoading(false);
+    }
+  };
+
   const filterTokenTransactions = (txs: Transaction[]) => {
     const tokenAddress = token.address?.toLowerCase();
     if (token.type === 'native' || token.address === 'native') {
@@ -205,12 +232,26 @@ export default function TokenDetailsScreen({
     loadActivity();
   }, [token.symbol, network, address]);
 
+  useEffect(() => {
+    fetchMarketDetails();
+  }, [token.symbol]);
+
   const tooltipPrice = useMemo(() => {
     if (typeof latestHistoryPrice === 'number') {
       return formatUSDValue(latestHistoryPrice);
     }
     return formattedPrice;
   }, [latestHistoryPrice, formattedPrice]);
+
+  const formatCompactNumber = (value: number | null | undefined): string => {
+    if (value == null || !Number.isFinite(value)) return '--';
+    return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
+  };
+
+  const formatUsdValue = (value: number | null | undefined): string => {
+    if (value == null || !Number.isFinite(value)) return '--';
+    return formatUSDValue(value);
+  };
 
   return (
     <div className="takeover token-details-view">
@@ -277,6 +318,40 @@ export default function TokenDetailsScreen({
         explorerBaseUrl={networkConfig.blockExplorer || null}
         onCopy={handleCopy}
       />
+
+      <div className="token-details-card">
+        <div className="token-details-section-title">Market details</div>
+        {marketLoading && (
+          <div className="loading">Loading market data...</div>
+        )}
+        {!marketLoading && marketError && (
+          <div className="token-details-error">{marketError}</div>
+        )}
+        {!marketLoading && !marketError && (
+          <div className="token-details-rows">
+            <div className="token-details-row">
+              <span className="token-details-label">Market cap</span>
+              <span className="token-details-value">{formatUsdValue(marketDetails?.marketCap)}</span>
+            </div>
+            <div className="token-details-row">
+              <span className="token-details-label">Total volume</span>
+              <span className="token-details-value">{formatUsdValue(marketDetails?.volume24h ?? null)}</span>
+            </div>
+            <div className="token-details-row">
+              <span className="token-details-label">Circulating supply</span>
+              <span className="token-details-value">{formatCompactNumber(marketDetails?.circulatingSupply)}</span>
+            </div>
+            <div className="token-details-row">
+              <span className="token-details-label">All-time high</span>
+              <span className="token-details-value">{formatUsdValue(marketDetails?.allTimeHigh ?? null)}</span>
+            </div>
+            <div className="token-details-row">
+              <span className="token-details-label">All-time low</span>
+              <span className="token-details-value">{formatUsdValue(marketDetails?.allTimeLow ?? null)}</span>
+            </div>
+          </div>
+        )}
+      </div>
 
       <TokenActivityList
         transactions={activity}
