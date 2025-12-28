@@ -63,7 +63,6 @@ Adapters abstract platform differences (storage, crypto) per `ARCHITECTURE.md`.
 2. `README.md` (high-level capabilities)
 3. `ARCHITECTURE.md` (shared-core + adapters)
 4. Mobile focus:
-   - `plans/HANDOFF_2025-12-16.md`
    - `mobile-wallet/index.js`
    - skim `mobile-wallet/app/**`, `mobile-wallet/services/**`, `mobile-wallet/store/**`
 

@@ -19,4 +19,12 @@ This repo keeps **project plans, design notes, and implementation checklists** i
   - Example: `plans/mobile-wallet-tests.md`
   - Example: `plans/chrome-extension.md`
 
+## Current index
+
+- `plans/PROJECT_OVERVIEW.md`
+- `plans/CORE_SDK_DOCUMENTATION.md`
+- `plans/CLI_DOCUMENTATION.md`
+- `plans/EXTENSION_DOCUMENTATION.md`
+- `plans/MOBILE_APP_DOCUMENTATION.md`
+- `plans/chrome-extension.md`
 
