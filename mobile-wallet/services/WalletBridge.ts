@@ -26,10 +26,10 @@
  * - Imports from `@wallet/*` are resolved by `mobile-wallet/metro.config.js` (including `.js` → `.ts`).
  */
 
-import { mobileStorage, MobileStorageAdapter } from './MobileStorageAdapter';
-import { mobileCrypto, MobileCryptoAdapter } from './MobileCryptoAdapter';
-import { cacheService } from './CacheService';
-import type { Token } from '@wallet/types/token';
+import { mobileStorage, MobileStorageAdapter } from "./MobileStorageAdapter";
+import { mobileCrypto, MobileCryptoAdapter } from "./MobileCryptoAdapter";
+import { cacheService } from "./CacheService";
+import type { Token } from "@wallet/types/token";
 
 // Types (these match the extension's service-worker types)
 export interface WalletState {
@@ -38,8 +38,8 @@ export interface WalletState {
   network: string;
   address: string | null;
   currentWalletName: string | null;
-  importType?: 'mnemonic' | 'privateKey';
-  privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
+  importType?: "mnemonic" | "privateKey";
+  privateKeyType?: "evm" | "bitcoin" | "solana" | "xrp" | "ton";
 }
 
 export interface CreateWalletResult {
@@ -73,8 +73,8 @@ export interface Transaction {
   to: string | null;
   value: string;
   network: string;
-  status: 'pending' | 'confirmed' | 'failed';
-  type: 'send' | 'receive' | 'contract_interaction';
+  status: "pending" | "confirmed" | "failed";
+  type: "send" | "receive" | "contract_interaction";
   timestamp: number;
   blockNumber?: number;
   tokenSymbol?: string;
@@ -99,7 +99,7 @@ export interface GasEstimate {
 
 export interface SendTransactionResult {
   hash: string;
-  status: 'pending' | 'confirmed';
+  status: "pending" | "confirmed";
   blockNumber?: number;
 }
 
@@ -113,11 +113,11 @@ export interface NetworkConfig {
   blockExplorer?: string;
   explorerApiUrl?: string;
   explorerApiKey?: string;
-  type?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
-  bitcoinNetwork?: 'mainnet' | 'testnet';
-  solanaCluster?: 'mainnet-beta' | 'devnet' | 'testnet';
-  xrpNetwork?: 'mainnet' | 'testnet' | 'devnet';
-  tonNetwork?: 'mainnet' | 'testnet';
+  type?: "evm" | "bitcoin" | "solana" | "xrp" | "ton";
+  bitcoinNetwork?: "mainnet" | "testnet";
+  solanaCluster?: "mainnet-beta" | "devnet" | "testnet";
+  xrpNetwork?: "mainnet" | "testnet" | "devnet";
+  tonNetwork?: "mainnet" | "testnet";
   rpcApiKey?: string;
   isTestnet?: boolean;
 }
@@ -140,7 +140,7 @@ class WalletBridge {
   private autoLockTimer: ReturnType<typeof setTimeout> | null = null;
   private autoLockTimeoutMs = 15 * 60 * 1000; // 15 minutes default
   private isInitialized = false;
-  private currentWalletName = 'default';
+  private currentWalletName = "default";
   private _isUnlocked = false;
   private lockListeners: Set<() => void> = new Set();
   private hiddenTokens: Set<string> = new Set(); // format: `${networkKey}:${address}`
@@ -148,10 +148,21 @@ class WalletBridge {
   private hideSmallBalances: boolean = false; // Toggle small balances
 
   // Per-network balance cache: key -> { fetchedAt, height?, portfolio[] }
-  private balanceCache: Map<string, { fetchedAt: number; height?: number; portfolio: any[] }> = new Map();
+  private balanceCache: Map<
+    string,
+    { fetchedAt: number; height?: number; portfolio: any[] }
+  > = new Map();
 
   // Aggregated all-network cache
-  private aggregateCache: Map<string, { fetchedAt: number; holdings: any[]; totalsByNetwork: Record<string, number>; grandTotal: number }> = new Map();
+  private aggregateCache: Map<
+    string,
+    {
+      fetchedAt: number;
+      holdings: any[];
+      totalsByNetwork: Record<string, number>;
+      grandTotal: number;
+    }
+  > = new Map();
   // In-flight dedupe maps
   private inflightBalances: Map<string, Promise<any>> = new Map();
   private inflightAggregate: Map<string, Promise<any>> = new Map();
@@ -167,7 +178,7 @@ class WalletBridge {
     return {
       symbol: token.symbol,
       name: token.name,
-      type: token.type || 'erc20', // Default to erc20 if missing/undefined
+      type: token.type || "erc20", // Default to erc20 if missing/undefined
       address: token.address,
       decimals: token.decimals,
       logoURI: token.logoURI || token.icon, // Map icon -> logoURI
@@ -194,16 +205,19 @@ class WalletBridge {
       this.config = await this.loadConfig();
 
       // Load hidden tokens
-      const hidden = mobileStorage.readJSON<string[]>('hidden_tokens.json', []);
+      const hidden = mobileStorage.readJSON<string[]>("hidden_tokens.json", []);
       this.hiddenTokens = new Set(hidden);
 
       // We'll lazily import wallet modules to avoid bundling issues
       // For now, mark as initialized - actual wallet creation happens on unlock/create
       this.isInitialized = true;
 
-      console.log('[WalletBridge] Initialized with networks:', Object.keys(this.config.networks));
+      console.log(
+        "[WalletBridge] Initialized with networks:",
+        Object.keys(this.config.networks),
+      );
     } catch (error) {
-      console.error('[WalletBridge] Initialization failed:', error);
+      console.error("[WalletBridge] Initialization failed:", error);
       throw error;
     }
   }
@@ -213,8 +227,10 @@ class WalletBridge {
    */
   private async loadConfig(): Promise<Config> {
     // Try to load from storage first (user overrides like selected network)
-    const storedConfig = mobileStorage.readJSON<Partial<Config> & { hideSmallBalances?: boolean; showTestnets?: boolean }>('config.json', {});
-    
+    const storedConfig = mobileStorage.readJSON<
+      Partial<Config> & { hideSmallBalances?: boolean; showTestnets?: boolean }
+    >("config.json", {});
+
     if (storedConfig.hideSmallBalances !== undefined) {
       this.hideSmallBalances = storedConfig.hideSmallBalances;
     }
@@ -225,20 +241,23 @@ class WalletBridge {
     // Load bundled config from parent directory
     // Use require() for Metro/Jest compatibility (avoids Node dynamic import edge cases in tests)
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getBundledConfig, getCoingeckoApiKey } = require('../config/bundled-config');
+    const {
+      getBundledConfig,
+      getCoingeckoApiKey,
+    } = require("../config/bundled-config");
     const bundledConfig = getBundledConfig();
 
     // Configure CoinGecko API key for price provider
     const coingeckoApiKey = getCoingeckoApiKey();
     if (coingeckoApiKey) {
-      const { setCoingeckoApiKey } = require('@wallet/price-providers');
+      const { setCoingeckoApiKey } = require("@wallet/price-providers");
       setCoingeckoApiKey(coingeckoApiKey);
     }
 
     // Merge stored config with bundled (user preferences override defaults)
     return {
       ...bundledConfig,
-      network: storedConfig.network || bundledConfig.network || 'sepolia',
+      network: storedConfig.network || bundledConfig.network || "sepolia",
     };
   }
 
@@ -250,17 +269,25 @@ class WalletBridge {
   async getState(): Promise<WalletState> {
     await this.ensureInitialized();
 
-    const wallets = mobileStorage.readJSON<Record<string, any>>('wallets.json', {});
+    const wallets = mobileStorage.readJSON<Record<string, any>>(
+      "wallets.json",
+      {},
+    );
     const hasWallet = Object.keys(wallets).length > 0;
 
     return {
       isUnlocked: this._isUnlocked,
       hasWallet,
-      network: this.config?.network || 'sepolia',
-      address: this._isUnlocked && this.service ? this.service.getAddress() : null,
+      network: this.config?.network || "sepolia",
+      address:
+        this._isUnlocked && this.service ? this.service.getAddress() : null,
       currentWalletName: this._isUnlocked ? this.currentWalletName : null,
-      importType: this._isUnlocked && this.wallet ? this.wallet.importType : undefined,
-      privateKeyType: this._isUnlocked && this.wallet ? this.wallet.privateKeyType : undefined,
+      importType:
+        this._isUnlocked && this.wallet ? this.wallet.importType : undefined,
+      privateKeyType:
+        this._isUnlocked && this.wallet
+          ? this.wallet.privateKeyType
+          : undefined,
     };
   }
 
@@ -279,24 +306,31 @@ class WalletBridge {
 
     try {
       switch (networkConfig.type) {
-        case 'bitcoin': {
+        case "bitcoin": {
           const bitcoinNetwork =
             networkConfig.bitcoinNetwork ||
-            (networkConfig.isTestnet || networkKey.includes('test') ? 'testnet' : 'mainnet');
-          return this.wallet.getBitcoinAddress(bitcoinNetwork, accountIndex).address;
+            (networkConfig.isTestnet || networkKey.includes("test")
+              ? "testnet"
+              : "mainnet");
+          return this.wallet.getBitcoinAddress(bitcoinNetwork, accountIndex)
+            .address;
         }
-        case 'solana':
+        case "solana":
           return this.wallet.getSolanaAddress(accountIndex).address;
-        case 'xrp':
+        case "xrp":
           return this.wallet.getXRPAddress(accountIndex).address;
-        case 'ton':
+        case "ton":
           return this.wallet.getTonAddress(accountIndex).address;
-        case 'evm':
+        case "evm":
         default:
           return this.wallet.getAccountAddress(accountIndex);
       }
     } catch (error) {
-      console.warn('[WalletBridge] Failed to derive address for network:', networkKey, error);
+      console.warn(
+        "[WalletBridge] Failed to derive address for network:",
+        networkKey,
+        error,
+      );
       return null;
     }
   }
@@ -322,19 +356,22 @@ class WalletBridge {
    */
   async createWallet(
     password: string,
-    name: string = 'default',
-    showMnemonic: boolean = true
+    name: string = "default",
+    showMnemonic: boolean = true,
   ): Promise<CreateWalletResult> {
     await this.ensureInitialized();
 
     if (!this.validateWalletName(name)) {
-      throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+      throw new Error(
+        "Wallet name must be 1-12 characters and contain only letters and numbers",
+      );
     }
 
     // Import wallet modules dynamically
-    const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
+    const { Wallet, WalletAppService, setCryptoAdapter } =
+      await this.importWalletModules();
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getBundledTokens } = require('../config/bundled-config');
+    const { getBundledTokens } = require("../config/bundled-config");
 
     // Set up crypto adapter
     setCryptoAdapter(mobileCrypto);
@@ -380,17 +417,20 @@ class WalletBridge {
   async importWallet(
     mnemonic: string,
     password: string,
-    name: string = 'default'
+    name: string = "default",
   ): Promise<ImportWalletResult> {
     await this.ensureInitialized();
 
     if (!this.validateWalletName(name)) {
-      throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+      throw new Error(
+        "Wallet name must be 1-12 characters and contain only letters and numbers",
+      );
     }
 
-    const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
+    const { Wallet, WalletAppService, setCryptoAdapter } =
+      await this.importWalletModules();
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getBundledTokens } = require('../config/bundled-config');
+    const { getBundledTokens } = require("../config/bundled-config");
 
     setCryptoAdapter(mobileCrypto);
 
@@ -428,19 +468,22 @@ class WalletBridge {
    */
   async importFromPrivateKey(
     key: string,
-    chainType: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton',
+    chainType: "evm" | "bitcoin" | "solana" | "xrp" | "ton",
     password: string,
-    name: string = 'default'
+    name: string = "default",
   ): Promise<ImportWalletResult> {
     await this.ensureInitialized();
 
     if (!this.validateWalletName(name)) {
-        throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+      throw new Error(
+        "Wallet name must be 1-12 characters and contain only letters and numbers",
+      );
     }
 
-    const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
+    const { Wallet, WalletAppService, setCryptoAdapter } =
+      await this.importWalletModules();
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getBundledTokens } = require('../config/bundled-config');
+    const { getBundledTokens } = require("../config/bundled-config");
 
     setCryptoAdapter(mobileCrypto);
 
@@ -449,18 +492,18 @@ class WalletBridge {
     const result = this.wallet.importFromPrivateKey(key, chainType, password);
 
     this.service = new WalletAppService(this.wallet, this.config!, {
-        storage: mobileStorage,
-        builtInTokens: getBundledTokens(),
+      storage: mobileStorage,
+      builtInTokens: getBundledTokens(),
     });
     await this.service.initialize();
 
     // Auto-switch to appropriate network for the imported chain type
     const chainToNetwork: Record<string, string> = {
-      evm: 'mainnet',
-      bitcoin: 'bitcoin-mainnet',
-      solana: 'solana-mainnet',
-      xrp: 'xrp-mainnet',
-      ton: 'ton-mainnet'
+      evm: "mainnet",
+      bitcoin: "bitcoin-mainnet",
+      solana: "solana-mainnet",
+      xrp: "xrp-mainnet",
+      ton: "ton-mainnet",
     };
     const targetNetwork = chainToNetwork[chainType];
     if (targetNetwork && this.config!.network !== targetNetwork) {
@@ -478,8 +521,8 @@ class WalletBridge {
     const address = this.service.getAddress();
 
     return {
-        success: true,
-        address
+      success: true,
+      address,
     };
   }
 
@@ -493,12 +536,16 @@ class WalletBridge {
    * @returns Unlocked wallet address for the active network and wallet name.
    * @throws If password is invalid or wallet is not found.
    */
-  async unlockWallet(password: string, name: string = 'default'): Promise<UnlockWalletResult> {
+  async unlockWallet(
+    password: string,
+    name: string = "default",
+  ): Promise<UnlockWalletResult> {
     await this.ensureInitialized();
 
-    const { Wallet, WalletAppService, setCryptoAdapter } = await this.importWalletModules();
+    const { Wallet, WalletAppService, setCryptoAdapter } =
+      await this.importWalletModules();
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getBundledTokens } = require('../config/bundled-config');
+    const { getBundledTokens } = require("../config/bundled-config");
 
     setCryptoAdapter(mobileCrypto);
 
@@ -511,7 +558,7 @@ class WalletBridge {
     // Use async loadWallet for native-speed PBKDF2 via react-native-quick-crypto
     const loaded = await this.service.loadWalletAsync(name, password);
     if (!loaded) {
-      throw new Error('Invalid password or wallet not found');
+      throw new Error("Invalid password or wallet not found");
     }
 
     await this.service.initialize();
@@ -553,7 +600,7 @@ class WalletBridge {
       try {
         listener();
       } catch (error) {
-        console.error('[WalletBridge] Lock listener failed:', error);
+        console.error("[WalletBridge] Lock listener failed:", error);
       }
     });
   }
@@ -564,12 +611,12 @@ class WalletBridge {
    * @security This irreversibly deletes wallet data stored on-device.
    */
   async clearAllData(): Promise<void> {
-    console.log('[WalletBridge] Clearing all data...');
+    console.log("[WalletBridge] Clearing all data...");
     await this.lockWallet();
     await mobileStorage.clear();
     this.config = null;
     this.isInitialized = false;
-    console.log('[WalletBridge] All data cleared');
+    console.log("[WalletBridge] All data cleared");
   }
 
   /**
@@ -582,11 +629,12 @@ class WalletBridge {
 
     const networkKey = this.config!.network;
     const tokens = this.service.getTokensForNetwork(networkKey);
-    
+
     return tokens.map((t: any) => {
       const token = this.mapToSharedToken(t);
       const address = token.address?.toLowerCase();
-      const key = address && token.type !== 'native' ? `${networkKey}:${address}` : null;
+      const key =
+        address && token.type !== "native" ? `${networkKey}:${address}` : null;
       const isHidden = key ? this.hiddenTokens.has(key) : false;
 
       return {
@@ -605,10 +653,15 @@ class WalletBridge {
    * @param networkKey - Network key to read for (defaults to current network).
    * @returns Cached balances + timestamp, or null if missing/incompatible.
    */
-  getCachedBalances(networkKey: string = this.config?.network || 'sepolia'): { balances: TokenBalance[]; fetchedAt: number } | null {
+  getCachedBalances(
+    networkKey: string = this.config?.network || "sepolia",
+  ): { balances: TokenBalance[]; fetchedAt: number } | null {
     this.requireUnlocked();
     const cacheKey = this.makeBalanceCacheKey(networkKey);
-    const env = cacheService.getStale<{ balances: TokenBalance[] }>('balances', cacheKey);
+    const env = cacheService.getStale<{ balances: TokenBalance[] }>(
+      "balances",
+      cacheKey,
+    );
     if (!env) return null;
     return { balances: env.value.balances, fetchedAt: env.cachedAt };
   }
@@ -620,15 +673,20 @@ class WalletBridge {
    * @returns Cached price result + timestamp, or null if missing/incompatible.
    */
   getCachedPrices(
-    networkKey: string = this.config?.network || 'sepolia'
-  ): { prices: Record<string, number | null>; totalValue: number; formattedTotal: string; pricedAt: number } | null {
+    networkKey: string = this.config?.network || "sepolia",
+  ): {
+    prices: Record<string, number | null>;
+    totalValue: number;
+    formattedTotal: string;
+    pricedAt: number;
+  } | null {
     this.requireUnlocked();
     const cacheKey = this.makeBalanceCacheKey(networkKey);
     const env = cacheService.getStale<{
       prices: Record<string, number | null>;
       totalValue: number;
       formattedTotal: string;
-    }>('prices', cacheKey);
+    }>("prices", cacheKey);
     if (!env) return null;
     return { ...env.value, pricedAt: env.cachedAt };
   }
@@ -641,18 +699,27 @@ class WalletBridge {
    */
   getCachedAllNetworkHoldings(options?: {
     enabledNetworks?: string[];
-  }): { holdings: any[]; totalsByNetwork: Record<string, number>; grandTotal: number; fetchedAt: number } | null {
+  }): {
+    holdings: any[];
+    totalsByNetwork: Record<string, number>;
+    grandTotal: number;
+    fetchedAt: number;
+  } | null {
     this.requireUnlocked();
-    const enabledNetworks = (options?.enabledNetworks && options.enabledNetworks.length
-      ? options.enabledNetworks
-      : Object.keys(this.config!.networks)).slice().sort();
+    const enabledNetworks = (
+      options?.enabledNetworks && options.enabledNetworks.length
+        ? options.enabledNetworks
+        : Object.keys(this.config!.networks)
+    )
+      .slice()
+      .sort();
 
     const aggregateKey = this.makeAggregateCacheKey(enabledNetworks);
     const env = cacheService.getStale<{
       holdings: any[];
       totalsByNetwork: Record<string, number>;
       grandTotal: number;
-    }>('allNetworks', aggregateKey);
+    }>("allNetworks", aggregateKey);
     if (!env) return null;
     return { ...env.value, fetchedAt: env.cachedAt };
   }
@@ -663,29 +730,47 @@ class WalletBridge {
    * @returns Token balances for the active network.
    * @throws If portfolio fetch fails.
    */
-  async refreshBalances(options?: { force?: boolean }): Promise<TokenBalance[]> {
+  async refreshBalances(options?: {
+    force?: boolean;
+  }): Promise<TokenBalance[]> {
     this.requireUnlocked();
     const force = options?.force ?? true;
 
     const networkKey = this.config!.network;
-    console.log('[WalletBridge] refreshBalances() - network:', networkKey, 'force:', force);
+    console.log(
+      "[WalletBridge] refreshBalances() - network:",
+      networkKey,
+      "force:",
+      force,
+    );
 
     try {
-      const { fetchedAt, portfolio } = await this.getNetworkPortfolioWithCache(networkKey, {
-        ttlMs: this.BALANCES_CACHE_TTL_MS,
-        force,
-      });
+      const { fetchedAt, portfolio } = await this.getNetworkPortfolioWithCache(
+        networkKey,
+        {
+          ttlMs: this.BALANCES_CACHE_TTL_MS,
+          force,
+        },
+      );
 
       const balances: TokenBalance[] = portfolio.map((item: any) => {
         const token = this.mapToSharedToken(item.token);
         const address = token.address?.toLowerCase();
-        const key = address && token.type !== 'native' ? `${networkKey}:${address}` : null;
+        const key =
+          address && token.type !== "native"
+            ? `${networkKey}:${address}`
+            : null;
         const isHidden = key ? this.hiddenTokens.has(key) : false;
-        
+
         // Ensure balance is always a string (API may return number for some networks)
         const rawBalance = item.balance;
-        const balance = rawBalance == null ? '0' : typeof rawBalance === 'string' ? rawBalance : String(rawBalance);
-        
+        const balance =
+          rawBalance == null
+            ? "0"
+            : typeof rawBalance === "string"
+              ? rawBalance
+              : String(rawBalance);
+
         return {
           token,
           balance,
@@ -701,12 +786,17 @@ class WalletBridge {
       // But we are returning TokenBalance[] which is derived.
       // CacheService 'balances' stores TokenBalance[] (derived).
       // balanceCache stores raw portfolio.
-      
+
       // We should update the 'balances' cache (derived UI state) because visibility changed!
-      cacheService.set('balances', this.makeBalanceCacheKey(networkKey), { balances }, this.BALANCES_CACHE_TTL_MS);
+      cacheService.set(
+        "balances",
+        this.makeBalanceCacheKey(networkKey),
+        { balances },
+        this.BALANCES_CACHE_TTL_MS,
+      );
       return balances;
     } catch (error) {
-      console.error('[WalletBridge] refreshBalances() - error:', error);
+      console.error("[WalletBridge] refreshBalances() - error:", error);
       throw error;
     }
   }
@@ -726,32 +816,42 @@ class WalletBridge {
 
     const network = this.config!.network;
     const networkConfig = this.config!.networks[network];
-    const { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, getPriceByNetworkType } =
-      await import('./price-service');
+
+    const {
+      getTokenPrices,
+      getTokenPriceBySymbol,
+      calculateTotalValue,
+      getPriceByNetworkType,
+    } = await import("./price-service");
 
     const cacheKey = this.makeBalanceCacheKey(network);
     const cached = cacheService.get<{
       prices: Record<string, number | null>;
       totalValue: number;
       formattedTotal: string;
-    }>('prices', cacheKey);
+    }>("prices", cacheKey);
     if (cached) return cached.value;
 
     // Prefer caller-provided balances. If missing, fall back to stale cached balances, then fetch.
     const cachedBalances = this.getCachedBalances(network);
     const balancesSnapshot =
       balancesOverride ||
-      (cachedBalances?.balances?.length ? cachedBalances.balances : undefined) ||
+      (cachedBalances?.balances?.length
+        ? cachedBalances.balances
+        : undefined) ||
       (await this.refreshBalances({ force: false })); // Use soft refresh if needed
 
     const nonZeroBalances = balancesSnapshot.filter((b) => {
-      const val = parseFloat(b.balance || '0');
+      const val = parseFloat(b.balance || "0");
       return Number.isFinite(val) && val > 0;
     });
 
-    const pricingBalances = networkConfig?.type === 'solana' ? balancesSnapshot : nonZeroBalances;
+    const pricingBalances =
+      networkConfig?.type === "solana" ? balancesSnapshot : nonZeroBalances;
     const tokensForPricing = pricingBalances.map((b) => ({
-      type: (b.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
+      type: (b.token.type === "native" ? "native" : "erc20") as
+        | "native"
+        | "erc20",
       symbol: b.token.symbol,
       address: b.token.address,
       decimals: b.token.decimals,
@@ -765,12 +865,15 @@ class WalletBridge {
       for (const [k, v] of map.entries()) priceMap.set(k, v);
     } else {
       // Non-EVM networks: price native + supported tokens by symbol (e.g., SPL).
-      const nativePrice = await getPriceByNetworkType(networkConfig?.type, network);
-      priceMap.set('native', nativePrice);
+      const nativePrice = await getPriceByNetworkType(
+        networkConfig?.type,
+        network,
+      );
+      priceMap.set("native", nativePrice);
 
-      if (networkConfig?.type === 'solana') {
+      if (networkConfig?.type === "solana") {
         for (const token of tokensForPricing) {
-          if (token.type === 'native') continue;
+          if (token.type === "native") continue;
           const tokenPrice = await getTokenPriceBySymbol(token.symbol);
           if (token.address) {
             priceMap.set(token.address, tokenPrice);
@@ -781,25 +884,28 @@ class WalletBridge {
 
     const prices: Record<string, number | null> = {};
     for (const b of pricingBalances) {
-      const key = b.token.type === 'native'
-        ? 'native'
-        : b.token.type === 'spl'
-          ? b.token.address
-          : b.token.address?.toLowerCase();
-      prices[b.token.symbol] = key ? priceMap.get(key) ?? null : null;
+      const key =
+        b.token.type === "native"
+          ? "native"
+          : b.token.type === "spl"
+            ? b.token.address
+            : b.token.address?.toLowerCase();
+      prices[b.token.symbol] = key ? (priceMap.get(key) ?? null) : null;
     }
 
     const totalValue = calculateTotalValue(
       pricingBalances.map((b) => ({
         token: {
-          type: (b.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
+          type: (b.token.type === "native" ? "native" : "erc20") as
+            | "native"
+            | "erc20",
           symbol: b.token.symbol,
           address: b.token.address,
           decimals: b.token.decimals,
         },
-        balance: b.balance || '0',
+        balance: b.balance || "0",
       })),
-      priceMap
+      priceMap,
     );
 
     const result = {
@@ -808,7 +914,7 @@ class WalletBridge {
       formattedTotal: `$${totalValue.toFixed(2)}`,
     };
 
-    cacheService.set('prices', cacheKey, result, this.PRICES_CACHE_TTL_MS);
+    cacheService.set("prices", cacheKey, result, this.PRICES_CACHE_TTL_MS);
     return result;
   }
 
@@ -823,7 +929,7 @@ class WalletBridge {
   async getGasEstimate(
     token: Token,
     toAddress: string,
-    amount: string
+    amount: string,
   ): Promise<GasEstimate> {
     this.requireUnlocked();
 
@@ -848,63 +954,68 @@ class WalletBridge {
     toAddress: string,
     amount: string,
     destinationTag?: number,
-    comment?: string
+    comment?: string,
   ): Promise<SendTransactionResult> {
     this.requireUnlocked();
     this.resetAutoLockTimer();
 
     const networkConfig = this.config!.networks[this.config!.network];
 
-    if (networkConfig.type === 'bitcoin') {
+    if (networkConfig.type === "bitcoin") {
       const result = await this.service.sendBitcoinTransaction(
         toAddress,
         amount,
-        this.sessionPassword!
+        this.sessionPassword!,
       );
-      return { hash: result.hash, status: 'pending' };
+      return { hash: result.hash, status: "pending" };
     }
 
-    if (networkConfig.type === 'solana') {
-      const result = token.type === 'spl'
-        ? await this.service.sendSolanaTokenTransaction(
-            token as any,
-            toAddress,
-            amount,
-            this.sessionPassword!
-          )
-        : await this.service.sendSolanaTransaction(
-            toAddress,
-            amount,
-            this.sessionPassword!
-          );
-      return { hash: result.signature, status: 'pending' };
+    if (networkConfig.type === "solana") {
+      const result =
+        token.type === "spl"
+          ? await this.service.sendSolanaTokenTransaction(
+              token as any,
+              toAddress,
+              amount,
+              this.sessionPassword!,
+            )
+          : await this.service.sendSolanaTransaction(
+              toAddress,
+              amount,
+              this.sessionPassword!,
+            );
+      return { hash: result.signature, status: "pending" };
     }
 
-    if (networkConfig.type === 'xrp') {
+    if (networkConfig.type === "xrp") {
       const result = await this.service.sendXRPTransaction(
         toAddress,
         amount,
         this.sessionPassword!,
-        destinationTag
+        destinationTag,
       );
-      return { hash: result.hash, status: 'pending' };
+      return { hash: result.hash, status: "pending" };
     }
 
-    if (networkConfig.type === 'ton') {
+    if (networkConfig.type === "ton") {
       const result = await this.service.sendTonTransaction(
         toAddress,
         amount,
         this.sessionPassword!,
-        comment
+        comment,
       );
-      return { hash: result.hash, status: 'pending' };
+      return { hash: result.hash, status: "pending" };
     }
 
     // EVM transaction
-    const result = await this.service.sendToken(token as any, toAddress, amount);
+    const result = await this.service.sendToken(
+      token as any,
+      toAddress,
+      amount,
+    );
     return {
       hash: result.hash,
-      status: 'confirmed',
+      status: "confirmed",
       blockNumber: result.blockNumber,
     };
   }
@@ -919,20 +1030,26 @@ class WalletBridge {
     // Ensure address is lowercase for consistency
     const normalizedToken = {
       ...token,
-      address: token.address?.toLowerCase()
+      address: token.address?.toLowerCase(),
     };
-    await this.service.addCustomToken(this.config!.network, normalizedToken as any);
+    await this.service.addCustomToken(
+      this.config!.network,
+      normalizedToken as any,
+    );
   }
 
   /**
    * Toggle token visibility.
-   * 
+   *
    * @param tokenAddress - Address of token to toggle.
    * @param isVisible - Desired visibility state.
    */
-  async toggleTokenVisibility(tokenAddress: string, isVisible: boolean): Promise<void> {
+  async toggleTokenVisibility(
+    tokenAddress: string,
+    isVisible: boolean,
+  ): Promise<void> {
     this.requireUnlocked();
-    
+
     const networkKey = this.config!.network;
     // Format: network:address (address lowercased for consistency)
     const key = `${networkKey}:${tokenAddress.toLowerCase()}`;
@@ -944,8 +1061,11 @@ class WalletBridge {
     }
 
     // Persist changes
-    mobileStorage.writeJSON('hidden_tokens.json', Array.from(this.hiddenTokens));
-    
+    mobileStorage.writeJSON(
+      "hidden_tokens.json",
+      Array.from(this.hiddenTokens),
+    );
+
     // Do NOT invalidate raw balance cache - we just want to re-map visibility.
     // Calling refreshBalances({ force: false }) will re-use raw cache and re-apply hidden logic.
   }
@@ -955,8 +1075,11 @@ class WalletBridge {
    */
   async setShowTestnets(enabled: boolean): Promise<void> {
     this.showTestnets = enabled;
-    const currentConfig = mobileStorage.readJSON<any>('config.json', {});
-    mobileStorage.writeJSON('config.json', { ...currentConfig, showTestnets: enabled });
+    const currentConfig = mobileStorage.readJSON<any>("config.json", {});
+    mobileStorage.writeJSON("config.json", {
+      ...currentConfig,
+      showTestnets: enabled,
+    });
   }
 
   /**
@@ -969,7 +1092,7 @@ class WalletBridge {
   /**
    * Get transaction history for the current network and address.
    * Routes to the appropriate explorer API based on network type.
-   * 
+   *
    * @param limit - Maximum number of transactions to return (default: 25)
    * @returns Array of normalized transactions
    *
@@ -990,26 +1113,26 @@ class WalletBridge {
 
     try {
       // Route based on network type
-      if (networkConfig.type === 'bitcoin') {
+      if (networkConfig.type === "bitcoin") {
         return await this.getBitcoinTransactions(address, network, limit);
       }
 
-      if (networkConfig.type === 'solana') {
+      if (networkConfig.type === "solana") {
         return await this.getSolanaTransactions(address, network, limit);
       }
 
-      if (networkConfig.type === 'xrp') {
+      if (networkConfig.type === "xrp") {
         return await this.getXRPTransactions(address, network, limit);
       }
 
-      if (networkConfig.type === 'ton') {
+      if (networkConfig.type === "ton") {
         return await this.getTonTransactions(address, network, limit);
       }
 
       // Default: EVM networks
       return await this.getEVMTransactions(address, network, limit);
     } catch (error) {
-      console.error('[WalletBridge] Failed to fetch transactions:', error);
+      console.error("[WalletBridge] Failed to fetch transactions:", error);
       return [];
     }
   }
@@ -1020,13 +1143,13 @@ class WalletBridge {
   private async getBitcoinTransactions(
     address: string,
     network: string,
-    limit: number
+    limit: number,
   ): Promise<Transaction[]> {
     const networkConfig = this.config!.networks[network];
-    const nativeSymbol = networkConfig.nativeSymbol || 'BTC';
+    const nativeSymbol = networkConfig.nativeSymbol || "BTC";
 
     const txs = await this.service.getBitcoinTransactionHistory(limit);
-    
+
     return txs.map((tx: any) => ({
       hash: tx.hash,
       from: tx.from,
@@ -1034,12 +1157,13 @@ class WalletBridge {
       // Convert satoshis to BTC string for display
       value: tx.valueBtc || String(Number(tx.value) / 100000000),
       network,
-      status: tx.status as 'pending' | 'confirmed' | 'failed',
-      type: tx.type as 'send' | 'receive' | 'contract_interaction',
+      status: tx.status as "pending" | "confirmed" | "failed",
+      type: tx.type as "send" | "receive" | "contract_interaction",
       timestamp: tx.timestamp,
       blockNumber: tx.blockNumber,
       tokenSymbol: nativeSymbol,
-      fee: tx.feeBtc || (tx.fee ? String(Number(tx.fee) / 100000000) : undefined),
+      fee:
+        tx.feeBtc || (tx.fee ? String(Number(tx.fee) / 100000000) : undefined),
     }));
   }
 
@@ -1049,21 +1173,21 @@ class WalletBridge {
   private async getSolanaTransactions(
     address: string,
     network: string,
-    limit: number
+    limit: number,
   ): Promise<Transaction[]> {
     const networkConfig = this.config!.networks[network];
-    const nativeSymbol = networkConfig.nativeSymbol || 'SOL';
+    const nativeSymbol = networkConfig.nativeSymbol || "SOL";
 
     const txs = await this.service.getSolanaTransactionHistory(limit);
-    
+
     return txs.map((tx: any) => ({
       hash: tx.signature,
       from: tx.from,
       to: tx.to || null,
       value: tx.valueToken ?? tx.valueSol,
       network,
-      status: tx.status as 'pending' | 'confirmed' | 'failed',
-      type: tx.type as 'send' | 'receive' | 'contract_interaction',
+      status: tx.status as "pending" | "confirmed" | "failed",
+      type: tx.type as "send" | "receive" | "contract_interaction",
       timestamp: tx.timestamp,
       blockNumber: tx.slot,
       tokenSymbol: tx.tokenSymbol || nativeSymbol,
@@ -1078,10 +1202,10 @@ class WalletBridge {
   private async getXRPTransactions(
     address: string,
     network: string,
-    limit: number
+    limit: number,
   ): Promise<Transaction[]> {
     const networkConfig = this.config!.networks[network];
-    const nativeSymbol = networkConfig.nativeSymbol || 'XRP';
+    const nativeSymbol = networkConfig.nativeSymbol || "XRP";
 
     const txs = await this.service.getXRPTransactionHistory(limit);
 
@@ -1091,8 +1215,8 @@ class WalletBridge {
       to: tx.to || null,
       value: tx.valueXrp,
       network,
-      status: tx.status as 'pending' | 'confirmed' | 'failed',
-      type: tx.type === 'other' ? 'contract_interaction' : tx.type,
+      status: tx.status as "pending" | "confirmed" | "failed",
+      type: tx.type === "other" ? "contract_interaction" : tx.type,
       timestamp: tx.timestamp,
       tokenSymbol: nativeSymbol,
       fee: tx.feeXrp,
@@ -1105,10 +1229,10 @@ class WalletBridge {
   private async getTonTransactions(
     address: string,
     network: string,
-    limit: number
+    limit: number,
   ): Promise<Transaction[]> {
     const networkConfig = this.config!.networks[network];
-    const nativeSymbol = networkConfig.nativeSymbol || 'TON';
+    const nativeSymbol = networkConfig.nativeSymbol || "TON";
 
     const txs = await this.service.getTonTransactionHistory(limit);
 
@@ -1118,8 +1242,8 @@ class WalletBridge {
       to: tx.to || null,
       value: tx.valueTon,
       network,
-      status: tx.status as 'pending' | 'confirmed' | 'failed',
-      type: tx.type === 'other' ? 'contract_interaction' : tx.type,
+      status: tx.status as "pending" | "confirmed" | "failed",
+      type: tx.type === "other" ? "contract_interaction" : tx.type,
       timestamp: tx.timestamp,
       tokenSymbol: nativeSymbol,
       fee: tx.feeTon,
@@ -1132,13 +1256,13 @@ class WalletBridge {
   private async getEVMTransactions(
     address: string,
     network: string,
-    limit: number
+    limit: number,
   ): Promise<Transaction[]> {
     const networkConfig = this.config!.networks[network];
-    const nativeSymbol = networkConfig.nativeSymbol || 'ETH';
+    const nativeSymbol = networkConfig.nativeSymbol || "ETH";
 
     // Import explorer API
-    const { explorerAPI } = require('@wallet/explorer-api');
+    const { explorerAPI } = require("@wallet/explorer-api");
 
     // Check if network is supported
     if (!explorerAPI.isSupported(network)) {
@@ -1148,16 +1272,23 @@ class WalletBridge {
           network,
           networkConfig.explorerApiUrl,
           networkConfig.chainId,
-          networkConfig.explorerApiKey
+          networkConfig.explorerApiKey,
         );
       } else {
-        console.warn(`[WalletBridge] Network ${network} not supported for transaction history`);
+        console.warn(
+          `[WalletBridge] Network ${network} not supported for transaction history`,
+        );
         return [];
       }
     }
 
-    const txs = await explorerAPI.getAllTransactions(address, network, 1, limit);
-    
+    const txs = await explorerAPI.getAllTransactions(
+      address,
+      network,
+      1,
+      limit,
+    );
+
     return txs.map((tx: any) => ({
       hash: tx.hash,
       from: tx.from,
@@ -1165,14 +1296,17 @@ class WalletBridge {
       // EVM explorer returns value in wei - convert to ETH for display
       value: this.formatWeiToEth(tx.value),
       network,
-      status: tx.status as 'pending' | 'confirmed' | 'failed',
-      type: tx.type as 'send' | 'receive' | 'contract_interaction',
+      status: tx.status as "pending" | "confirmed" | "failed",
+      type: tx.type as "send" | "receive" | "contract_interaction",
       timestamp: tx.timestamp,
       blockNumber: tx.blockNumber,
       tokenSymbol: tx.tokenSymbol || nativeSymbol,
-      fee: tx.gasUsed && tx.gasPrice 
-        ? this.formatWeiToEth(String(BigInt(tx.gasUsed) * BigInt(tx.gasPrice)))
-        : undefined,
+      fee:
+        tx.gasUsed && tx.gasPrice
+          ? this.formatWeiToEth(
+              String(BigInt(tx.gasUsed) * BigInt(tx.gasPrice)),
+            )
+          : undefined,
     }));
   }
 
@@ -1200,14 +1334,14 @@ class WalletBridge {
     this.requireUnlocked();
 
     if (!this.config!.networks[networkKey]) {
-      throw new Error('Network not found');
+      throw new Error("Network not found");
     }
 
     await this.service.setNetwork(networkKey);
     this.config!.network = networkKey;
 
     // Persist network preference
-    mobileStorage.writeJSON('config.json', { network: networkKey });
+    mobileStorage.writeJSON("config.json", { network: networkKey });
 
     // Return the address for the new network
     const address = this.service.getAddress();
@@ -1231,7 +1365,7 @@ class WalletBridge {
    */
   async getAllWallets(): Promise<Record<string, any>> {
     await this.ensureInitialized();
-    return mobileStorage.readJSON('wallets.json', {});
+    return mobileStorage.readJSON("wallets.json", {});
   }
 
   /**
@@ -1243,26 +1377,36 @@ class WalletBridge {
     ttlMs?: number;
     force?: boolean;
     enabledNetworks?: string[];
-  }): Promise<{ holdings: any[]; totalsByNetwork: Record<string, number>; grandTotal: number; fetchedAt: number }> {
+  }): Promise<{
+    holdings: any[];
+    totalsByNetwork: Record<string, number>;
+    grandTotal: number;
+    fetchedAt: number;
+  }> {
     this.requireUnlocked();
     const includeZero = options?.includeZero ?? false;
     const networkConcurrency = options?.networkConcurrency ?? 2;
     const ttlMs = options?.ttlMs ?? 30_000;
     const force = options?.force ?? false;
 
-    const enabledNetworks = options?.enabledNetworks && options.enabledNetworks.length
-      ? options.enabledNetworks
-      : Object.keys(this.config!.networks);
+    const allNetworks =
+      options?.enabledNetworks && options.enabledNetworks.length
+        ? options.enabledNetworks
+        : Object.keys(this.config!.networks);
 
+    const enabledNetworks = allNetworks;
+    
     const now = Date.now();
-    const aggregateKey = this.makeAggregateCacheKey(enabledNetworks.slice().sort());
+    const aggregateKey = this.makeAggregateCacheKey(
+      enabledNetworks.slice().sort(),
+    );
 
     // Persistent cache (survives restarts)
     const persistent = cacheService.getStale<{
       holdings: any[];
       totalsByNetwork: Record<string, number>;
       grandTotal: number;
-    }>('allNetworks', aggregateKey);
+    }>("allNetworks", aggregateKey);
     if (!force && persistent && now - persistent.cachedAt < ttlMs) {
       const result = { ...persistent.value, fetchedAt: persistent.cachedAt };
       // Keep in-memory cache warm for follow-up reads within this session.
@@ -1287,54 +1431,82 @@ class WalletBridge {
 
       const workers: Array<Promise<void>> = [];
       for (let i = 0; i < networkConcurrency; i++) {
-        workers.push((async () => {
-          while (queue.length) {
-            const networkKey = queue.shift();
-            if (!networkKey) break;
-            try {
-              const perNetwork = await this.getNetworkPortfolioWithCache(networkKey, { ttlMs, force });
-              holdings.push(...perNetwork.portfolio.map((item: any) => {
-                // Ensure balance is always a string
-                const rawBalance = item.balance;
-                const balance = rawBalance == null ? '0' : typeof rawBalance === 'string' ? rawBalance : String(rawBalance);
-                return {
-                  ...item,
-                  balance,
-                  token: this.mapToSharedToken(item.token),
+        workers.push(
+          (async () => {
+            while (queue.length) {
+              const networkKey = queue.shift();
+              if (!networkKey) break;
+              try {
+                const perNetwork = await this.getNetworkPortfolioWithCache(
                   networkKey,
-                  height: perNetwork.height ?? null,
-                  fetchedAt: perNetwork.fetchedAt
-                };
-              }));
-            } catch (err: any) {
-              errors[networkKey] = err?.message || 'Failed to fetch';
+                  { ttlMs, force },
+                );
+                holdings.push(
+                  ...perNetwork.portfolio.map((item: any) => {
+                    // Ensure balance is always a string
+                    const rawBalance = item.balance;
+                    const balance =
+                      rawBalance == null
+                        ? "0"
+                        : typeof rawBalance === "string"
+                          ? rawBalance
+                          : String(rawBalance);
+                    return {
+                      ...item,
+                      balance,
+                      token: this.mapToSharedToken(item.token),
+                      networkKey,
+                      height: perNetwork.height ?? null,
+                      fetchedAt: perNetwork.fetchedAt,
+                    };
+                  }),
+                );
+              } catch (err: any) {
+                errors[networkKey] = err?.message || "Failed to fetch";
+              }
             }
-          }
-        })());
+          })(),
+        );
       }
       await Promise.all(workers);
 
-      const filtered = includeZero ? holdings : holdings.filter(h => {
-        const val = parseFloat(h.balance || '0');
-        // Filter hidden tokens
-        const address = h.token.address?.toLowerCase();
-        if (address && h.token.type !== 'native') {
-          const key = `${h.networkKey}:${address}`;
-          if (this.hiddenTokens.has(key)) return false;
-        }
-        return Number.isFinite(val) && val > 0 && h.balance !== 'Error';
-      });
+      const filtered = includeZero
+        ? holdings
+        : holdings.filter((h) => {
+            const val = parseFloat(h.balance || "0");
+
+            // Filter out "test tokens" by name or symbol (e.g., tokens with "Test" in name)
+            const tokenName = (h.token.name || "").toLowerCase();
+            const tokenSymbol = (h.token.symbol || "").toLowerCase();
+            
+            const isTest = tokenName.includes("test") ||
+              tokenSymbol.includes("test") ||
+              tokenName.includes("dummy") ||
+              tokenSymbol.includes("faucet");
+
+            if (isTest) {
+               return false;
+            }
+
+            // Filter hidden tokens
+            const address = h.token.address?.toLowerCase();
+            if (address && h.token.type !== "native") {
+              const key = `${h.networkKey}:${address}`;
+              if (this.hiddenTokens.has(key)) return false;
+            }
+            return Number.isFinite(val) && val > 0 && h.balance !== "Error";
+          });
 
       // Totals by network (USD) using price-service
       const totalsByNetwork: Record<string, number> = {};
       const enrichedHoldings: any[] = [];
       const { getTokenPrices, getTokenPriceBySymbol, getPriceByNetworkType } =
-        await import('./price-service');
+        await import("./price-service");
 
       for (const networkKey of enabledNetworks) {
         const netConfig = this.config!.networks[networkKey];
-        const assets = filtered.filter(h => h.networkKey === networkKey);
-        
+        const assets = filtered.filter((h) => h.networkKey === networkKey);
+
         if (!assets.length) {
           totalsByNetwork[networkKey] = 0;
           continue;
@@ -1343,19 +1515,24 @@ class WalletBridge {
         let priceMap = new Map<string, number | null>();
 
         // Non-EVM networks: use unified price fetcher
-        if (netConfig.type && ['bitcoin', 'solana', 'xrp', 'ton'].includes(netConfig.type)) {
+        if (
+          netConfig.type &&
+          ["bitcoin", "solana", "xrp", "ton"].includes(netConfig.type)
+        ) {
           const price = await getPriceByNetworkType(netConfig.type, networkKey);
-          priceMap.set('native', price);
+          priceMap.set("native", price);
 
-          if (netConfig.type === 'solana') {
-            const splTokenInfos = assets.map(a => ({
-              type: (a.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
+          if (netConfig.type === "solana") {
+            const splTokenInfos = assets.map((a) => ({
+              type: (a.token.type === "native" ? "native" : "erc20") as
+                | "native"
+                | "erc20",
               symbol: a.token.symbol,
               address: a.token.address,
-              decimals: a.token.decimals
+              decimals: a.token.decimals,
             }));
             for (const token of splTokenInfos) {
-              if (token.type === 'native') continue;
+              if (token.type === "native") continue;
               const tokenPrice = await getTokenPriceBySymbol(token.symbol);
               if (token.address) {
                 priceMap.set(token.address, tokenPrice);
@@ -1364,49 +1541,69 @@ class WalletBridge {
           }
         } else if (netConfig.chainId) {
           // EVM: batch prices per chain
-          const tokenInfos = assets.map(a => ({
-            type: (a.token.type === 'native' ? 'native' : 'erc20') as 'native' | 'erc20',
+          const tokenInfos = assets.map((a) => ({
+            type: (a.token.type === "native" ? "native" : "erc20") as
+              | "native"
+              | "erc20",
             symbol: a.token.symbol,
             address: a.token.address,
-            decimals: a.token.decimals
+            decimals: a.token.decimals,
           }));
-          priceMap = await getTokenPrices(netConfig.chainId, tokenInfos.map(t => t));
+          priceMap = await getTokenPrices(
+            netConfig.chainId,
+            tokenInfos.map((t) => t),
+          );
         }
 
         let networkTotal = 0;
-        
+
         for (const asset of assets) {
-          const isNative = asset.token.type === 'native' || !asset.token.address || asset.token.address === 'native';
+          const isNative =
+            asset.token.type === "native" ||
+            !asset.token.address ||
+            asset.token.address === "native";
           // Price map keys: 'native' for native tokens, lowercase address for ERC-20
           const key = isNative
-            ? 'native'
-            : asset.token.type === 'spl'
-              ? asset.token.address || ''
-              : asset.token.address?.toLowerCase() || '';
+            ? "native"
+            : asset.token.type === "spl"
+              ? asset.token.address || ""
+              : asset.token.address?.toLowerCase() || "";
           const price = priceMap.get(key) || 0;
-          const balance = parseFloat(asset.balance || '0');
+          const balance = parseFloat(asset.balance || "0");
           const value = Number.isFinite(balance) ? balance * price : 0;
-          
+
           networkTotal += value;
-          
+
           enrichedHoldings.push({
             ...asset,
             price,
-            value
+            value,
           });
         }
-        
+
         totalsByNetwork[networkKey] = networkTotal;
       }
 
-      const grandTotal = Object.values(totalsByNetwork).reduce((a, b) => a + b, 0);
-      const aggregate = { holdings: enrichedHoldings, totalsByNetwork, grandTotal, fetchedAt: Date.now() };
+      const grandTotal = Object.values(totalsByNetwork).reduce(
+        (a, b) => a + b,
+        0,
+      );
+      const aggregate = {
+        holdings: enrichedHoldings,
+        totalsByNetwork,
+        grandTotal,
+        fetchedAt: Date.now(),
+      };
       this.aggregateCache.set(aggregateKey, aggregate);
       cacheService.set(
-        'allNetworks',
+        "allNetworks",
         aggregateKey,
-        { holdings: aggregate.holdings, totalsByNetwork: aggregate.totalsByNetwork, grandTotal: aggregate.grandTotal },
-        this.ALL_NETWORKS_CACHE_TTL_MS
+        {
+          holdings: aggregate.holdings,
+          totalsByNetwork: aggregate.totalsByNetwork,
+          grandTotal: aggregate.grandTotal,
+        },
+        this.ALL_NETWORKS_CACHE_TTL_MS,
       );
       this.inflightAggregate.delete(aggregateKey);
       return aggregate;
@@ -1419,41 +1616,62 @@ class WalletBridge {
   /**
    * Per-network portfolio with cache + in-flight dedupe.
    */
-  private async getNetworkPortfolioWithCache(networkKey: string, opts: { ttlMs: number; force: boolean }): Promise<{ fetchedAt: number; height?: number; portfolio: any[] }> {
+  private async getNetworkPortfolioWithCache(
+    networkKey: string,
+    opts: { ttlMs: number; force: boolean },
+  ): Promise<{ fetchedAt: number; height?: number; portfolio: any[] }> {
     const cacheKey = this.makeBalanceCacheKey(networkKey);
     const now = Date.now();
 
     // 1. Check in-memory cache
     const memoryCached = this.balanceCache.get(cacheKey);
-    if (!opts.force && memoryCached && now - memoryCached.fetchedAt < opts.ttlMs) return memoryCached;
+    if (
+      !opts.force &&
+      memoryCached &&
+      now - memoryCached.fetchedAt < opts.ttlMs
+    )
+      return memoryCached;
 
     // 2. Check persistent cache (if allowed)
     if (!opts.force) {
-      const persistent = cacheService.getStale<{ balances: TokenBalance[] }>('balances', cacheKey);
+      const persistent = cacheService.getStale<{ balances: TokenBalance[] }>(
+        "balances",
+        cacheKey,
+      );
       if (persistent && now - persistent.cachedAt < opts.ttlMs) {
         // Convert TokenBalance[] back to raw portfolio format if needed, or just use it
         // Note: The raw portfolio format from service has 'token' and 'balance'.
         // TokenBalance has 'token', 'balance', 'lastUpdated', 'isLoading', 'isVisible'.
         // We can map it back.
-        const portfolio = persistent.value.balances.map(b => ({
+        const portfolio = persistent.value.balances.map((b) => ({
           token: b.token,
-          balance: b.balance
+          balance: b.balance,
         }));
-        const result = { fetchedAt: persistent.cachedAt, height: undefined, portfolio };
+        const result = {
+          fetchedAt: persistent.cachedAt,
+          height: undefined,
+          portfolio,
+        };
         this.balanceCache.set(cacheKey, result);
         return result;
       }
     }
 
-    if (this.inflightBalances.has(cacheKey)) return this.inflightBalances.get(cacheKey)!;
+    if (this.inflightBalances.has(cacheKey))
+      return this.inflightBalances.get(cacheKey)!;
 
     const run = (async () => {
       const maxRetries = 2;
       let lastErr: any;
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-          const portfolio = await this.service.getPortfolioForNetwork(networkKey);
-          const result = { fetchedAt: Date.now(), height: undefined, portfolio };
+          const portfolio =
+            await this.service.getPortfolioForNetwork(networkKey);
+          const result = {
+            fetchedAt: Date.now(),
+            height: undefined,
+            portfolio,
+          };
           this.balanceCache.set(cacheKey, result);
           this.inflightBalances.delete(cacheKey);
           return result;
@@ -1461,7 +1679,7 @@ class WalletBridge {
           lastErr = err;
           if (attempt === maxRetries) break;
           const jitter = 300 + Math.floor(Math.random() * 500);
-          await new Promise(res => setTimeout(res, jitter));
+          await new Promise((res) => setTimeout(res, jitter));
         }
       }
       this.inflightBalances.delete(cacheKey);
@@ -1477,10 +1695,16 @@ class WalletBridge {
    *
    * @returns Current wallet accounts and the persisted selected account index.
    */
-  async getAccounts(): Promise<{ accounts: Record<number, any>; currentIndex: number }> {
+  async getAccounts(): Promise<{
+    accounts: Record<number, any>;
+    currentIndex: number;
+  }> {
     this.requireUnlocked();
 
-    const wallets = mobileStorage.readJSON<Record<string, any>>('wallets.json', {});
+    const wallets = mobileStorage.readJSON<Record<string, any>>(
+      "wallets.json",
+      {},
+    );
     const currentWallet = wallets[this.currentWalletName];
 
     return {
@@ -1499,17 +1723,23 @@ class WalletBridge {
     this.requireUnlocked();
 
     // Get current accounts to find the next available index
-    const wallets = mobileStorage.readJSON<Record<string, any>>('wallets.json', {});
+    const wallets = mobileStorage.readJSON<Record<string, any>>(
+      "wallets.json",
+      {},
+    );
     const currentWallet = wallets[this.currentWalletName];
     const existingAccounts = currentWallet?.accounts || {};
-    
+
     // Find the next account index
-    const existingIndices = Object.keys(existingAccounts).map(k => parseInt(k));
-    const nextIndex = existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 1;
+    const existingIndices = Object.keys(existingAccounts).map((k) =>
+      parseInt(k),
+    );
+    const nextIndex =
+      existingIndices.length > 0 ? Math.max(...existingIndices) + 1 : 1;
 
     // Switch to the new account (this creates it)
     const result = this.service.switchAccount(nextIndex);
-    
+
     // Save the wallet to persist the new account
     this.service.saveWallet(this.currentWalletName);
 
@@ -1533,10 +1763,10 @@ class WalletBridge {
     this.requireUnlocked();
 
     this.service.switchAccount(index);
-    
+
     // Persist the current account selection
     this.service.saveWallet(this.currentWalletName);
-    
+
     return { address: this.service.getAddress() };
   }
 
@@ -1546,14 +1776,21 @@ class WalletBridge {
    * @param currentPassword - Current master password
    * @param newPassword - New master password
    */
-  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  async changePassword(
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
     this.requireUnlocked();
 
     if (currentPassword !== this.sessionPassword) {
-      throw new Error('Invalid password');
+      throw new Error("Invalid password");
     }
 
-    this.service.changePassword(this.currentWalletName, currentPassword, newPassword);
+    this.service.changePassword(
+      this.currentWalletName,
+      currentPassword,
+      newPassword,
+    );
     this.sessionPassword = newPassword;
     this.resetAutoLockTimer();
   }
@@ -1571,7 +1808,7 @@ class WalletBridge {
     this.requireUnlocked();
 
     if (password !== this.sessionPassword) {
-      throw new Error('Invalid password');
+      throw new Error("Invalid password");
     }
 
     return this.wallet.mnemonic;
@@ -1590,7 +1827,7 @@ class WalletBridge {
     this.requireUnlocked();
 
     if (password !== this.sessionPassword) {
-      throw new Error('Invalid password');
+      throw new Error("Invalid password");
     }
 
     return this.wallet.wallet.privateKey;
@@ -1630,7 +1867,7 @@ class WalletBridge {
 
   private requireUnlocked(): void {
     if (!this._isUnlocked || !this.service) {
-      throw new Error('Wallet is locked');
+      throw new Error("Wallet is locked");
     }
     this.resetAutoLockTimer();
   }
@@ -1641,24 +1878,32 @@ class WalletBridge {
   private getTokensRevision(networkKey: string): string {
     try {
       const tokens = this.service?.getTokensForNetwork(networkKey) || [];
-      return JSON.stringify(tokens.map((t: any) => `${t.symbol}:${t.address || 'native'}`));
+      return JSON.stringify(
+        tokens.map((t: any) => `${t.symbol}:${t.address || "native"}`),
+      );
     } catch {
-      return 'default';
+      return "default";
     }
   }
 
   private makeBalanceCacheKey(networkKey: string): string {
-    const walletName = this.currentWalletName || 'default';
-    const accountIndex = this.service?.getCurrentAccountIndex ? this.service.getCurrentAccountIndex() : 0;
+    const walletName = this.currentWalletName || "default";
+    const accountIndex = this.service?.getCurrentAccountIndex
+      ? this.service.getCurrentAccountIndex()
+      : 0;
     const tokensRevision = this.getTokensRevision(networkKey);
     return `${walletName}|${accountIndex}|${networkKey}|${tokensRevision}`;
   }
 
   private makeAggregateCacheKey(networks: string[]): string {
-    const walletName = this.currentWalletName || 'default';
-    const accountIndex = this.service?.getCurrentAccountIndex ? this.service.getCurrentAccountIndex() : 0;
-    const tokensRevisionAll = networks.map(n => `${n}:${this.getTokensRevision(n)}`).join('|');
-    const enabledHash = networks.join(',');
+    const walletName = this.currentWalletName || "default";
+    const accountIndex = this.service?.getCurrentAccountIndex
+      ? this.service.getCurrentAccountIndex()
+      : 0;
+    const tokensRevisionAll = networks
+      .map((n) => `${n}:${this.getTokensRevision(n)}`)
+      .join("|");
+    const enabledHash = networks.join(",");
     return `${walletName}|${accountIndex}|${enabledHash}|${tokensRevisionAll}`;
   }
 
@@ -1697,22 +1942,25 @@ class WalletBridge {
       // Use require for Metro bundler compatibility
       // These paths resolve via the @wallet alias in metro.config.js
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const walletModule = require('@wallet/wallet');
+      const walletModule = require("@wallet/wallet");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const appServiceModule = require('@wallet/app-service');
+      const appServiceModule = require("@wallet/app-service");
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const cryptoModule = require('@wallet/crypto-utils');
+      const cryptoModule = require("@wallet/crypto-utils");
 
-      const Wallet = resolveExport(walletModule, 'Wallet');
-      const WalletAppService = resolveExport(appServiceModule, 'WalletAppService');
-      const setCryptoAdapter = resolveExport(cryptoModule, 'setCryptoAdapter');
+      const Wallet = resolveExport(walletModule, "Wallet");
+      const WalletAppService = resolveExport(
+        appServiceModule,
+        "WalletAppService",
+      );
+      const setCryptoAdapter = resolveExport(cryptoModule, "setCryptoAdapter");
 
       return { Wallet, WalletAppService, setCryptoAdapter };
     } catch (error) {
-      console.error('[WalletBridge] Failed to import wallet modules:', error);
+      console.error("[WalletBridge] Failed to import wallet modules:", error);
       throw new Error(
-        'Failed to load wallet SDK. Ensure Metro is configured to resolve @wallet/* paths. ' +
-        `Error: ${error instanceof Error ? error.message : String(error)}`
+        "Failed to load wallet SDK. Ensure Metro is configured to resolve @wallet/* paths. " +
+          `Error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

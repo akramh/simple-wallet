@@ -18,9 +18,9 @@
 
 Simple Wallet is a multi-chain crypto wallet with a **shared-core SDK** in `/src` used by three UIs:
 
-1) **Mobile app (highest priority)** — Expo + React Native in `mobile-wallet/`  
-2) **Chrome extension** — React + MV3 in `extension/`  
-3) **CLI** — Node.js entry in `src/index.ts`
+1. **Mobile app** — Expo + React Native in `mobile-wallet/`
+2. **Chrome extension** — React + MV3 in `extension/`
+3. **CLI** — Node.js entry in `src/index.ts`
 
 Core orchestration is via **`WalletAppService`** (`/src/app-service.ts`, referenced in docs).  
 Adapters abstract platform differences (storage, crypto) per `ARCHITECTURE.md`.
@@ -29,7 +29,8 @@ Adapters abstract platform differences (storage, crypto) per `ARCHITECTURE.md`.
 
 ## 2) Entrypoints & commands (start here)
 
-### Mobile (priority #1)
+### Mobile
+
 - **Entrypoint:** `mobile-wallet/index.js`
   - Loads crypto polyfills **before** `expo-router/entry` (important invariant)
 - **Routes:** `mobile-wallet/app/**` (expo-router file-based routing)
@@ -38,7 +39,8 @@ Adapters abstract platform differences (storage, crypto) per `ARCHITECTURE.md`.
   - Tests: `npm test` (run from `mobile-wallet/`)
   - Typecheck: `npm run typecheck` (run from `mobile-wallet/`)
 
-### Extension (priority #2)
+### Extension
+
 - **UI entry:** `extension/popup/popup.tsx`
 - **Build inputs:** see `vite.config.extension.ts` (sidepanel, service worker, content scripts)
 - **Commands:** (from root `package.json`)
@@ -46,7 +48,8 @@ Adapters abstract platform differences (storage, crypto) per `ARCHITECTURE.md`.
   - Watch: `npm run watch:extension`
   - Typecheck: `npm run type-check`
 
-### CLI (priority #3)
+### CLI
+
 - **Entry:** `src/index.ts`
 - **Commands:** (from root `package.json`)
   - Dev: `npm run dev`
@@ -58,7 +61,8 @@ Adapters abstract platform differences (storage, crypto) per `ARCHITECTURE.md`.
 
 ## 3) Required reading (timeboxed)
 
-### Must read (in this order)
+### Must read
+
 1. `.cursor/rules.md` (repo rules for docs/tests)
 2. `README.md` (high-level capabilities)
 3. `ARCHITECTURE.md` (shared-core + adapters)
@@ -66,7 +70,6 @@ Adapters abstract platform differences (storage, crypto) per `ARCHITECTURE.md`.
    - `mobile-wallet/index.js`
    - skim `mobile-wallet/app/**`, `mobile-wallet/services/**`, `mobile-wallet/store/**`
 
-### Then (if time)
 - Extension: `extension/README.md`, `EXTENSION_SETUP.md`, `vite.config.extension.ts`
 - CLI: `plans/CLI_DOCUMENTATION.md`
 
@@ -96,6 +99,7 @@ If any of these are unclear, stop and ask questions.
 When you are explicitly instructed to start making changes, adopt this loop:
 
 ### After every change (small batch)
+
 1. **Build** the relevant package (if applicable)
 2. **Typecheck** the touched area
 3. **Run tests** for the touched area
@@ -126,18 +130,23 @@ Minimum commands by area:
 Respond with:
 
 ### A) “Start Here” File Map (mobile-first)
+
 - list **10–20 key files/dirs** (paths) and what each is responsible for
 - include mobile routes + services bridge + store
 
 ### B) Top 5 Critical Invariants (security + correctness)
+
 Examples of the type of invariants expected:
+
 - crypto polyfill must load before expo-router modules evaluate
 - no plaintext secret persistence
 - lock/unlock clears sensitive state
-(Use repo-specific details you find.)
+  (Use repo-specific details you find.)
 
 ### C) Flow Map (mobile only, first pass)
+
 For each flow, give a “start reading here” pointer:
+
 - create/import/unlock
 - portfolio/balances/prices
 - send
@@ -146,6 +155,7 @@ For each flow, give a “start reading here” pointer:
 - receive/QR
 
 ### D) Testing quick guide (only what’s needed to not mess up later)
+
 - which runner to use for mobile
 - what must be mocked
 - where tests likely live (if discoverable)
@@ -155,7 +165,9 @@ For each flow, give a “start reading here” pointer:
 ---
 
 ## 7) Definition of done (for bootstrap)
+
 You are done when a new agent could:
+
 - open the repo and quickly find the mobile entrypoints and flows,
 - know the major “do not break” security invariants,
 - know what to build/typecheck/test after edits,
