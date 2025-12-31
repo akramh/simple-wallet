@@ -61,6 +61,13 @@ import type { Config } from '../../src/types/index.js';
 import { getBitcoinExplorer, getBitcoinProvider, satoshisToBtc } from '../../src/bitcoin/index.js';
 import { ethers } from 'ethers';
 
+type PrivateKeyChain = 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
+type PrivateKeyFormat = 'hex' | 'wif' | 'base58' | 'seed' | 'secretKey';
+
+function isPrivateKeyChain(value: any): value is PrivateKeyChain {
+  return value === 'evm' || value === 'bitcoin' || value === 'solana' || value === 'xrp' || value === 'ton';
+}
+
 // ============================================================================
 // Crypto Environment Setup
 // ============================================================================
@@ -482,6 +489,51 @@ async function refreshBalancesForCurrentNetwork(): Promise<void> {
 
   await saveBalanceCache();
   broadcastBalanceUpdate(network, balances);
+}
+
+function isChainMatch(chainType: PrivateKeyChain, config: Config['networks'][string]): boolean {
+  switch (chainType) {
+    case 'bitcoin':
+      return isBitcoinNetworkConfig(config);
+    case 'solana':
+      return isSolanaNetworkConfig(config);
+    case 'xrp':
+      return isXRPNetworkConfig(config);
+    case 'ton':
+      return isTonNetworkConfig(config);
+    case 'evm':
+    default:
+      return isEVMNetworkConfig(config);
+  }
+}
+
+function getChainTypeForNetwork(networkKey: string, networks: Config['networks']): PrivateKeyChain {
+  const config = networks[networkKey];
+  if (!config) return 'evm';
+  if (isBitcoinNetworkConfig(config)) return 'bitcoin';
+  if (isSolanaNetworkConfig(config)) return 'solana';
+  if (isXRPNetworkConfig(config)) return 'xrp';
+  if (isTonNetworkConfig(config)) return 'ton';
+  return 'evm';
+}
+
+function pickNetworkForChain(
+  chainType: PrivateKeyChain,
+  networks: Config['networks'],
+  currentNetwork: string
+): string {
+  const currentConfig = networks[currentNetwork];
+  if (currentConfig && isChainMatch(chainType, currentConfig)) {
+    return currentNetwork;
+  }
+
+  const candidates = Object.entries(networks).filter(([, config]) => isChainMatch(chainType, config));
+  if (!candidates.length) {
+    return currentNetwork;
+  }
+
+  const mainnet = candidates.find(([, config]) => !config.isTestnet);
+  return (mainnet ?? candidates[0])[0];
 }
 
 // ============================================================================
@@ -2131,8 +2183,13 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       if (!payload.password) throw new Error('Password required');
       try {
-        const privateKey = walletService!.getPrivateKey(payload.password);
-        return { privateKey };
+        const chainType = isPrivateKeyChain(payload.chainType)
+          ? payload.chainType
+          : getChainTypeForNetwork(walletService!.config.network, walletService!.config.networks);
+        const networkKey = pickNetworkForChain(chainType, walletService!.config.networks, walletService!.config.network);
+        const format = payload.format as PrivateKeyFormat | undefined;
+        const result = walletService!.getPrivateKeyForChain(chainType, payload.password, { networkKey, format });
+        return { privateKey: result.privateKey, format: result.format, chainType, network: networkKey };
       } catch (err: any) {
         return { error: err.message || 'Failed to retrieve private key' };
       }
