@@ -26,6 +26,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { sendMessageWithRetry } from './utils/messaging';
 import WelcomeScreen from './components/WelcomeScreen';
 import UnlockScreen from './components/UnlockScreen';
 import MainWallet from './components/MainWallet';
@@ -74,10 +75,10 @@ type PendingRequest =
 function App() {
   /** Current wallet state from background */
   const [state, setState] = useState<WalletState | null>(null);
-  
+
   /** Loading state during initial state fetch */
   const [loading, setLoading] = useState(true);
-  
+
   /** Queue of pending dApp approval requests */
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
 
@@ -94,7 +95,7 @@ function App() {
    */
   const loadState = useCallback(async () => {
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
+      const response = await sendMessageWithRetry({ type: 'GET_STATE' });
       setState(response);
     } catch (error) {
       console.error('Failed to load state:', error);
@@ -108,7 +109,7 @@ function App() {
    */
   const loadPending = useCallback(async () => {
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_PENDING_REQUESTS' });
+      const response = await sendMessageWithRetry({ type: 'GET_PENDING_REQUESTS' });
       setPendingRequests(response?.pending || []);
     } catch (error) {
       console.error('Failed to load pending requests:', error);
@@ -123,7 +124,7 @@ function App() {
    */
   useEffect(() => {
     // Apply persisted UI theme (light/dark) as early as possible.
-    getStoredTheme().then(applyTheme).catch(() => {});
+    getStoredTheme().then(applyTheme).catch(() => { });
 
     loadState();
     loadPending();
@@ -295,7 +296,7 @@ function App() {
   }
 
   // State machine: route to appropriate screen based on wallet state
-  
+
   // No wallet exists -> show welcome/create screen
   if (!state.hasWallet) {
     return <WelcomeScreen onWalletCreated={handleWalletCreated} />;
