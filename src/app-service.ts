@@ -48,6 +48,7 @@ import {
 import { PublicKey, Keypair } from '@solana/web3.js';
 // @ts-ignore
 import bs58 from 'bs58';
+import nacl from 'tweetnacl';
 import {
   BitcoinProvider,
   getBitcoinProvider,
@@ -71,9 +72,11 @@ import {
   getTonProvider,
   isTonNetwork,
   isValidTonAddress,
+  deriveTonKeypair,
   type TonAddressInfo,
   type NormalizedTonTransaction,
 } from './ton/index.js';
+import { deriveKeypair as deriveXrpKeypair } from 'xrpl';
 
 /**
  * Gas estimation result for transaction cost display.
@@ -99,6 +102,49 @@ export interface GasEstimate {
   network: string;
   /** Error message if estimation failed */
   error?: string;
+}
+
+type PrivateKeyChain = 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
+type PrivateKeyFormat = 'hex' | 'wif' | 'base58' | 'seed' | 'secretKey';
+
+interface PrivateKeyExport {
+  privateKey: string;
+  format: PrivateKeyFormat;
+}
+
+function ensureHexPrefix(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('0x')) {
+    return trimmed;
+  }
+  if (/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+    return `0x${trimmed}`;
+  }
+  return trimmed;
+}
+
+function isHexString(value: string): boolean {
+  return /^[0-9a-fA-F]+$/.test(value);
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('hex');
+}
+
+function normalizeSolanaPrivateKey(value: string): string {
+  const trimmed = value.trim();
+  if (isHexString(trimmed) && (trimmed.length === 64 || trimmed.length === 128)) {
+    const bytes = Buffer.from(trimmed, 'hex');
+    if (bytes.length === 32) {
+      const keypair = Keypair.fromSeed(bytes);
+      return bs58.encode(keypair.secretKey);
+    }
+    if (bytes.length === 64) {
+      return bs58.encode(bytes);
+    }
+    throw new Error('Invalid Solana private key length');
+  }
+  return trimmed;
 }
 
 /**
@@ -1133,6 +1179,120 @@ export class WalletAppService {
   }
 
   /**
+   * Get a chain-specific private key for the current account.
+   * Requires password verification.
+   */
+  getPrivateKeyForChain(
+    chainType: PrivateKeyChain,
+    password: string,
+    options: { networkKey?: string; format?: PrivateKeyFormat } = {}
+  ): PrivateKeyExport {
+    if (this.wallet.importType === 'privateKey' && this.wallet.privateKeyType && this.wallet.privateKeyType !== chainType) {
+      throw new Error('This wallet does not support the selected chain');
+    }
+
+    switch (chainType) {
+      case 'evm': {
+        if (options.format && options.format !== 'hex') {
+          throw new Error('Unsupported EVM private key format');
+        }
+        const privateKey = ensureHexPrefix(this.wallet.getPrivateKey(password));
+        return { privateKey, format: 'hex' };
+      }
+      case 'bitcoin': {
+        if (options.format && options.format !== 'wif') {
+          throw new Error('Unsupported Bitcoin private key format');
+        }
+        const networkKey = options.networkKey ?? this.config.network;
+        const privateKey = this.getBitcoinPrivateKey(password, networkKey);
+        return { privateKey, format: 'wif' };
+      }
+      case 'solana': {
+        if (options.format && options.format !== 'base58') {
+          throw new Error('Unsupported Solana private key format');
+        }
+        if (this.wallet.importType === 'privateKey') {
+          const rawKey = this.wallet.getPrivateKey(password);
+          return { privateKey: normalizeSolanaPrivateKey(rawKey), format: 'base58' };
+        }
+        const mnemonic = this.wallet.getMnemonic(password);
+        const accountIndex = this.wallet.getCurrentAccountIndex();
+        const keypair = deriveSolanaKeypair(mnemonic, accountIndex);
+        return { privateKey: bs58.encode(keypair.secretKey), format: 'base58' };
+      }
+      case 'xrp': {
+        if (options.format && options.format !== 'hex' && options.format !== 'seed') {
+          throw new Error('Unsupported XRP private key format');
+        }
+        if (this.wallet.importType === 'privateKey') {
+          const rawKey = this.wallet.getPrivateKey(password).trim();
+          const isSeed = rawKey.startsWith('s');
+          const requestedFormat = options.format ?? (isSeed ? 'seed' : 'hex');
+          if (requestedFormat === 'seed') {
+            if (!isSeed) {
+              throw new Error('XRP seed not available for this wallet');
+            }
+            return { privateKey: rawKey, format: 'seed' };
+          }
+          if (isSeed) {
+            const keypair = deriveXrpKeypair(rawKey);
+            return { privateKey: keypair.privateKey.toUpperCase(), format: 'hex' };
+          }
+          return { privateKey: rawKey.toUpperCase(), format: 'hex' };
+        }
+        if (options.format === 'seed') {
+          throw new Error('XRP seed not available for this wallet');
+        }
+        const privateKey = this.wallet.getXRPPrivateKey(password);
+        return { privateKey, format: 'hex' };
+      }
+      case 'ton': {
+        const requestedFormat = options.format;
+        if (requestedFormat && requestedFormat !== 'seed' && requestedFormat !== 'secretKey') {
+          throw new Error('Unsupported TON private key format');
+        }
+        if (this.wallet.importType === 'privateKey') {
+          const rawKey = this.wallet.getPrivateKey(password).trim();
+          if (!isHexString(rawKey)) {
+            throw new Error('Invalid TON private key format');
+          }
+          if (rawKey.length !== 64 && rawKey.length !== 128) {
+            throw new Error('Invalid TON private key length');
+          }
+          if (requestedFormat === 'secretKey') {
+            if (rawKey.length === 128) {
+              return { privateKey: rawKey, format: 'secretKey' };
+            }
+            const seedBytes = Buffer.from(rawKey, 'hex');
+            const keypair = nacl.sign.keyPair.fromSeed(seedBytes);
+            return { privateKey: bytesToHex(keypair.secretKey), format: 'secretKey' };
+          }
+          if (requestedFormat === 'seed') {
+            if (rawKey.length === 64) {
+              return { privateKey: rawKey, format: 'seed' };
+            }
+            return { privateKey: rawKey.slice(0, 64), format: 'seed' };
+          }
+          const format = rawKey.length === 64 ? 'seed' : 'secretKey';
+          return { privateKey: rawKey, format };
+        }
+        const mnemonic = this.wallet.getMnemonic(password);
+        const accountIndex = this.wallet.getCurrentAccountIndex();
+        const keypair = deriveTonKeypair(mnemonic, accountIndex);
+        const secretKeyHex = bytesToHex(keypair.secretKey);
+        const seedHex = bytesToHex(keypair.secretKey.slice(0, 32));
+        const format = requestedFormat ?? 'seed';
+        return {
+          privateKey: format === 'secretKey' ? secretKeyHex : seedHex,
+          format
+        };
+      }
+      default:
+        throw new Error('Unsupported chain type');
+    }
+  }
+
+  /**
    * Get the mnemonic (secret recovery phrase) for the wallet.
    * Requires password verification.
    */
@@ -1615,8 +1775,12 @@ export class WalletAppService {
    * @param password - Master password
    * @returns Private key in WIF format
    */
-  getBitcoinPrivateKey(password: string): string {
-    const btcNetwork = this.config.network === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
+  getBitcoinPrivateKey(password: string, networkKey?: string): string {
+    const requestedNetwork = networkKey ?? this.config.network;
+    const resolvedNetwork = isBitcoinNetwork(requestedNetwork)
+      ? requestedNetwork
+      : (isBitcoinNetwork(this.config.network) ? this.config.network : 'bitcoin-mainnet');
+    const btcNetwork = resolvedNetwork === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
     return this.wallet.getBitcoinPrivateKey(password, btcNetwork);
   }
 
