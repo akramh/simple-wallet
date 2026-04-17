@@ -30,7 +30,7 @@ import { sendMessageWithRetry } from './utils/messaging';
 import WelcomeScreen from './components/WelcomeScreen';
 import UnlockScreen from './components/UnlockScreen';
 import MainWallet from './components/MainWallet';
-import { applyTheme, getStoredTheme } from './theme';
+import { applyTheme, getStoredTheme, subscribeSystemTheme } from './theme';
 
 // ============================================================================
 // Type Definitions
@@ -123,8 +123,32 @@ function App() {
    * - Listens for visibility changes, wallet lock, and pending request updates
    */
   useEffect(() => {
-    // Apply persisted UI theme (light/dark) as early as possible.
-    getStoredTheme().then(applyTheme).catch(() => { });
+    // Apply persisted UI theme preference (light/dark/auto) as early as possible.
+    // When preference is 'auto', subscribe to OS-level color-scheme changes so
+    // the UI flips live without requiring a popup reload.
+    let unsubscribeSystemTheme: (() => void) | null = null;
+    getStoredTheme()
+      .then((pref) => {
+        applyTheme(pref);
+        if (pref === 'auto') {
+          unsubscribeSystemTheme = subscribeSystemTheme(() => applyTheme('auto'));
+        }
+      })
+      .catch(() => { });
+
+    // React to preference changes persisted from other popup instances
+    // (e.g. user toggles theme in Settings while side panel is open).
+    const themeStorageListener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (!changes.uiTheme) return;
+      const pref = changes.uiTheme.newValue as 'light' | 'dark' | 'auto' | undefined;
+      if (!pref) return;
+      applyTheme(pref);
+      if (unsubscribeSystemTheme) { unsubscribeSystemTheme(); unsubscribeSystemTheme = null; }
+      if (pref === 'auto') {
+        unsubscribeSystemTheme = subscribeSystemTheme(() => applyTheme('auto'));
+      }
+    };
+    chrome.storage.local?.onChanged.addListener(themeStorageListener);
 
     loadState();
     loadPending();
@@ -169,6 +193,8 @@ function App() {
       document.removeEventListener('visibilitychange', visibilityHandler);
       chrome.runtime.onMessage.removeListener(messageListener);
       chrome.storage.session?.onChanged.removeListener(storageListener);
+      chrome.storage.local?.onChanged.removeListener(themeStorageListener);
+      if (unsubscribeSystemTheme) unsubscribeSystemTheme();
     };
   }, [loadState, handleLockEvent, loadPending]);
 

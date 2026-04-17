@@ -1,84 +1,203 @@
 @import "tailwindcss";
 
-/* Theme customization using CSS custom properties */
-/* Light theme aligned with main branch palette */
+/**
+ * Design tokens for the Chrome extension UI.
+ *
+ * Single source of truth for color, typography, spacing, radius, shadow,
+ * motion, and z-index. Dark-mode and chain-accent overrides live in
+ * ui-shared.css (cascaded via `.theme-dark`) so legacy CSS keeps working.
+ *
+ * Brand: Aurora — violet primary (#6D4AFF) with electric cyan accent
+ * (#00D4FF). Unified hue across light/dark themes; only neutrals shift.
+ */
 @theme {
-  /* Primary brand colors */
-  --color-primary: #6366f1;
-  --color-primary-dark: #4f46e5;
-  --color-primary-light: #818cf8;
-  --color-primary-50: #eef2ff;
-  --color-primary-100: #e0e7ff;
-  --color-primary-500: #6366f1;
-  --color-primary-600: #4f46e5;
-  --color-primary-700: #4338ca;
-  
-  /* Accent (kept close to primary) */
-  --color-accent: #6366f1;
-  --color-accent-light: #818cf8;
-  --color-accent-dark: #4f46e5;
-  
-  /* Semantic colors */
-  --color-success: #10b981;
-  --color-success-light: #d1fae5;
-  --color-success-softer: #bbf7d0;
-  --color-success-softbg: #ecfdf3;
-  --color-success-dark: #065f46;
-  
-  --color-danger: #ef4444;
-  --color-danger-light: #fee2e2;
-  --color-danger-softer: #fecdd3;
-  --color-danger-softbg: #fef2f2;
-  --color-danger-dark: #991b1b;
-  
-  --color-warning: #f59e0b;
-  --color-warning-light: #fef3c7;
-  --color-warning-mid: #fbbf24;
-  --color-warning-dark: #92400e;
-  --color-warning-faint: #fafafa;
-  
-  /* Surface/background colors */
-  --color-surface-primary: #ffffff;
-  --color-surface-secondary: #f9fafb;
-  --color-surface-tertiary: #f3f4f6;
-  --color-surface-muted: #f5f5f5;
-  --color-surface-inverse: #111827;
-  
-  /* Border colors */
-  --color-border: #e5e7eb;
-  --color-border-light: #f3f4f6;
-  --color-border-dark: #d1d5db;
-  
-  /* Text colors */
-  --color-text-primary: #111827;
-  --color-text-secondary: #6b7280;
-  --color-text-tertiary: #9ca3af;
-  --color-text-on-inverse: #ffffff;
+  /* ------------------------------------------------------------------
+   * Brand primary (Aurora Violet) — same hue across light & dark
+   * ---------------------------------------------------------------- */
+  --color-primary: #6D4AFF;
+  --color-primary-dark: #5438E0;
+  --color-primary-light: #9D8BFF;
+  --color-primary-50: #F1EEFF;
+  --color-primary-100: #E3DCFF;
+  --color-primary-500: #6D4AFF;
+  --color-primary-600: #5438E0;
+  --color-primary-700: #4328B8;
 
-  /* Accent gradients */
-  --color-gradient-accent-from: #667eea;
-  --color-gradient-accent-to: #764ba2;
-  --color-gradient-soft-from: #fafafa;
-  --color-gradient-soft-to: #ffffff;
-  
-  /* Border radius */
+  /* Accent — electric cyan, used for gradients, highlights, "on-violet" ticks */
+  --color-accent: #00D4FF;
+  --color-accent-light: #66E6FF;
+  --color-accent-dark: #00A8CC;
+
+  /* ------------------------------------------------------------------
+   * Semantic
+   * ---------------------------------------------------------------- */
+  --color-success: #10B981;
+  --color-success-light: #D1FAE5;
+  --color-success-softer: #BBF7D0;
+  --color-success-softbg: #ECFDF3;
+  --color-success-dark: #065F46;
+
+  --color-danger: #EF4444;
+  --color-danger-light: #FEE2E2;
+  --color-danger-softer: #FECDD3;
+  --color-danger-softbg: #FEF2F2;
+  --color-danger-dark: #991B1B;
+
+  --color-warning: #F59E0B;
+  --color-warning-light: #FEF3C7;
+  --color-warning-mid: #FBBF24;
+  --color-warning-dark: #92400E;
+  --color-warning-faint: #FFFBEB;
+
+  --color-info: #3B82F6;
+  --color-info-light: #DBEAFE;
+
+  /* ------------------------------------------------------------------
+   * Surfaces (light theme defaults; .theme-dark overrides in ui-shared.css)
+   * ---------------------------------------------------------------- */
+  --color-surface-primary: #FFFFFF;    /* card/base surface */
+  --color-surface-secondary: #FAFAFC;  /* app background */
+  --color-surface-tertiary: #F5F5FA;   /* raised row bg */
+  --color-surface-muted: #EDEDF3;      /* chips, hover */
+  --color-surface-inverse: #0F0F17;
+
+  /* Borders */
+  --color-border: #E6E6EE;
+  --color-border-light: #F0F0F6;
+  --color-border-dark: #D4D4DF;
+
+  /* Text */
+  --color-text-primary: #0F0F17;
+  --color-text-secondary: #5A5A6B;
+  --color-text-tertiary: #9292A5;
+  --color-text-on-inverse: #FFFFFF;
+
+  /* Gradients */
+  --color-gradient-accent-from: #6D4AFF;
+  --color-gradient-accent-to: #00D4FF;
+  --color-gradient-soft-from: #FAFAFC;
+  --color-gradient-soft-to: #FFFFFF;
+
+  /* Overlay / scrim */
+  --color-overlay-scrim: rgba(8, 8, 15, 0.55);
+
+  /* ------------------------------------------------------------------
+   * Chain accents (shared across themes; dark-mode tweaks in ui-shared.css)
+   * ---------------------------------------------------------------- */
+  --color-chain-eth: #627EEA;
+  --color-chain-sol: #9945FF;
+  --color-chain-btc: #F7931A;
+  --color-chain-xrp: #23292F;
+  --color-chain-ton: #0098EA;
+
+  /* ------------------------------------------------------------------
+   * Radius
+   * ---------------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* Back-compat aliases (retire as refactor progresses) */
   --radius-wallet: 12px;
   --radius-wallet-lg: 16px;
   --radius-wallet-sm: 8px;
-  
-  /* Shadows */
-  --shadow-wallet: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --shadow-wallet-lg: 0 6px 20px rgba(0, 0, 0, 0.12);
-  --shadow-wallet-hover: 0 6px 20px rgba(99, 102, 241, 0.15);
-  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.3);
-  
-  /* Font size */
+
+  /* ------------------------------------------------------------------
+   * Shadows (light-theme tuned; dark overrides in ui-shared.css)
+   * ---------------------------------------------------------------- */
+  --shadow-xs: 0 1px 2px rgba(15, 15, 23, 0.04);
+  --shadow-sm: 0 2px 6px rgba(15, 15, 23, 0.06);
+  --shadow-md: 0 6px 16px rgba(15, 15, 23, 0.08);
+  --shadow-lg: 0 12px 28px rgba(15, 15, 23, 0.10);
+  --shadow-xl: 0 20px 48px rgba(15, 15, 23, 0.14);
+  --shadow-modal: 0 24px 60px rgba(15, 15, 23, 0.22);
+  --shadow-hover: 0 8px 24px rgba(109, 74, 255, 0.18);
+
+  /* Back-compat aliases */
+  --shadow-wallet: var(--shadow-sm);
+  --shadow-wallet-lg: var(--shadow-md);
+  --shadow-wallet-hover: var(--shadow-hover);
+
+  /* ------------------------------------------------------------------
+   * Typography
+   * ---------------------------------------------------------------- */
+  --font-family-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+    Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
   --font-size-xxs: 10px;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 14px;
+  --font-size-md: 15px;
+  --font-size-lg: 17px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 24px;
+  --font-size-3xl: 32px;
+
   --line-height-xxs: 14px;
-  
+  --line-height-xs: 16px;
+  --line-height-sm: 18px;
+  --line-height-base: 20px;
+  --line-height-md: 22px;
+  --line-height-lg: 24px;
+  --line-height-xl: 28px;
+  --line-height-2xl: 32px;
+  --line-height-3xl: 40px;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ------------------------------------------------------------------
+   * Spacing (4-px grid)
+   * ---------------------------------------------------------------- */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 24px;
+  --space-9: 32px;
+  --space-10: 40px;
+  --space-11: 48px;
+  --space-12: 64px;
+
+  /* ------------------------------------------------------------------
+   * Motion
+   * ---------------------------------------------------------------- */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-emphasis: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
   /* Animations */
-  --animate-fade-in: fadeIn 0.15s ease-out;
-  --animate-slide-up: slideUp 0.2s ease-out;
+  --animate-fade-in: fadeIn var(--duration-base) var(--ease-standard);
+  --animate-slide-up: slideUp var(--duration-slow) var(--ease-emphasis);
+  --animate-scale-in: scaleIn var(--duration-base) var(--ease-emphasis);
+
+  /* ------------------------------------------------------------------
+   * Z-index
+   * ---------------------------------------------------------------- */
+  --z-base: 1;
+  --z-header: 10;
+  --z-dropdown: 20;
+  --z-sticky: 30;
+  --z-modal: 50;
+  --z-toast: 60;
+  --z-tooltip: 70;
 }
 
 /* Keyframes */
@@ -88,14 +207,19 @@
 }
 
 @keyframes slideUp {
-  0% { opacity: 0; transform: translateY(20px); }
+  0% { opacity: 0; transform: translateY(12px); }
   100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  0% { opacity: 0; transform: scale(0.96); }
+  100% { opacity: 1; transform: scale(1); }
 }
 
 /* Base layer customizations */
 @layer base {
   html {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--font-family-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }

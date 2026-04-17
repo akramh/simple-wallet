@@ -15,6 +15,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import TransactionDetailsModal from './TransactionDetailsModal';
 import { formatAddress, formatDate, formatTransactionValue } from '../utils/transactionFormat';
+import { EmptyState, Icon } from './ui';
 
 interface Transaction {
   hash: string;
@@ -142,27 +143,33 @@ function ActivityView({ currentAddress, network, networks }: Props) {
 
       {/* Error Banner */}
       {error && (
-        <div style={{
-          padding: '8px 12px',
-          background: 'var(--warning-light)',
-          border: '1px solid var(--warning)',
-          borderRadius: '6px',
-          fontSize: '12px',
-          color: 'var(--warning-dark)',
-          marginBottom: '12px'
-        }}>
-          ⚠️ {error}. Showing local transactions.
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 8,
+            padding: '8px 12px',
+            background: 'var(--warning-light)',
+            border: '1px solid var(--warning-mid)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: 'var(--font-size-sm)',
+            color: 'var(--warning-dark)',
+            marginBottom: 12,
+          }}
+        >
+          <Icon name="alert-triangle" size={14} decorative style={{ flex: '0 0 auto', marginTop: 2 }} />
+          <span>{error}. Showing local transactions.</span>
         </div>
       )}
 
       {/* Transaction List */}
       <div className="transaction-list">
         {transactions.length === 0 ? (
-          <div className="loading" style={{ flexDirection: 'column', textAlign: 'center' }}>
-            <div style={{ fontSize: '48px', marginBottom: '16px' }}>📋</div>
-            <p style={{ fontWeight: 600, marginBottom: '8px' }}>No transactions yet</p>
-            <span>Your transaction history will appear here</span>
-          </div>
+          <EmptyState
+            icon="clipboard"
+            title="No transactions yet"
+            subtitle="Your transaction history will appear here."
+          />
         ) : (
           <div>
             {transactions.map((tx) => (

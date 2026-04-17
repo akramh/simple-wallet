@@ -13,8 +13,9 @@ import settingIcon from '../../assets/icons/setting.svg';
 import moonIcon from '../../assets/icons/moon.svg';
 import sunIcon from '../../assets/icons/sun.svg';
 import logoIcon from '../../assets/img/logo.svg';
-import { applyTheme, getStoredTheme, setStoredTheme, type UiTheme } from '../theme';
+import { applyTheme, getStoredTheme, resolveTheme, setStoredTheme, type UiTheme } from '../theme';
 import { useToast } from '../context/ToastContext';
+import { Icon } from './ui/Icon';
 
 interface Props {
   network: string;
@@ -37,17 +38,30 @@ function Header({
   onLock,
   showAccountButton = true
 }: Props) {
-  const [uiTheme, setUiTheme] = useState<UiTheme>('light');
+  const [uiTheme, setUiTheme] = useState<UiTheme>('auto');
   const { showToast } = useToast();
 
   useEffect(() => {
     getStoredTheme()
       .then((theme) => setUiTheme(theme))
       .catch(() => {});
+
+    // Stay in sync when the preference changes from Settings (or another popup).
+    const listener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes.uiTheme?.newValue) {
+        setUiTheme(changes.uiTheme.newValue as UiTheme);
+      }
+    };
+    chrome.storage.local?.onChanged.addListener(listener);
+    return () => chrome.storage.local?.onChanged.removeListener(listener);
   }, []);
 
+  // Quick toggle cycles auto → dark → light → auto.
+  // The full 3-way picker lives in Settings.
+  const nextTheme: UiTheme =
+    uiTheme === 'auto' ? 'dark' : uiTheme === 'dark' ? 'light' : 'auto';
+
   const handleToggleTheme = async () => {
-    const nextTheme: UiTheme = uiTheme === 'dark' ? 'light' : 'dark';
     setUiTheme(nextTheme);
     applyTheme(nextTheme);
     try {
@@ -61,8 +75,15 @@ function Header({
     return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
   };
 
-  const themeIcon = uiTheme === 'dark' ? sunIcon : moonIcon;
-  const themeTitle = uiTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+  // Icon reflects the *currently applied* appearance (resolved if auto).
+  const resolved = resolveTheme(uiTheme);
+  const themeIcon = resolved === 'dark' ? sunIcon : moonIcon;
+  const themeLabel =
+    uiTheme === 'auto' ? `Auto (${resolved})` :
+    uiTheme === 'dark' ? 'Dark' : 'Light';
+  const themeTitle = `Theme: ${themeLabel} — click for ${
+    nextTheme === 'auto' ? 'Auto' : nextTheme === 'dark' ? 'Dark' : 'Light'
+  }`;
 
   return (
     <div className="header-new">
@@ -173,7 +194,7 @@ function Header({
               aria-label="Open account menu"
               title="Open account menu"
             >
-              <span className="dropdown-arrow">▼</span>
+              <Icon name="chevron-down" size={14} decorative className="dropdown-arrow" />
             </button>
           </div>
         </div>

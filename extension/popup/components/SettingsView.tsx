@@ -10,6 +10,7 @@ import mnemonicIcon from '../../assets/icons/mnemonic.svg';
 import keyIcon from '../../assets/icons/key.svg';
 import lockIcon from '../../assets/icons/lock.svg';
 import { applyTheme, getStoredTheme, setStoredTheme, type UiTheme } from '../theme';
+import { Icon } from './ui';
 
 interface Props {
   currentAddress?: string;
@@ -23,20 +24,30 @@ function SettingsView({ onClose }: Props) {
   const [showSecretModal, setShowSecretModal] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [secretType, setSecretType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
-  const [uiTheme, setUiTheme] = useState<UiTheme>('light');
+  const [uiTheme, setUiTheme] = useState<UiTheme>('auto');
   const [importType, setImportType] = useState<'mnemonic' | 'privateKey' | null>(null);
 
   useEffect(() => {
     getStoredTheme()
       .then((theme) => setUiTheme(theme))
       .catch(() => {});
-      
+
+    // Stay in sync with changes made from Header or other popup instances.
+    const listener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes.uiTheme?.newValue) {
+        setUiTheme(changes.uiTheme.newValue as UiTheme);
+      }
+    };
+    chrome.storage.local?.onChanged.addListener(listener);
+
     // Fetch wallet state to check import type
     chrome.runtime.sendMessage({ type: 'GET_STATE' }).then(state => {
         if (state.importType) {
             setImportType(state.importType);
         }
     }).catch(err => console.warn('Failed to get wallet state', err));
+
+    return () => chrome.storage.local?.onChanged.removeListener(listener);
   }, []);
 
   const handleRevealSecret = (type: 'mnemonic' | 'privateKey') => {
@@ -44,12 +55,12 @@ function SettingsView({ onClose }: Props) {
     setShowSecretModal(true);
   };
 
-  const handleToggleTheme = async () => {
-    const nextTheme: UiTheme = uiTheme === 'dark' ? 'light' : 'dark';
-    setUiTheme(nextTheme);
-    applyTheme(nextTheme);
+  const handleSelectTheme = async (next: UiTheme) => {
+    if (next === uiTheme) return;
+    setUiTheme(next);
+    applyTheme(next);
     try {
-      await setStoredTheme(nextTheme);
+      await setStoredTheme(next);
     } catch {
       // If persistence fails, keep the current session's theme applied.
     }
@@ -60,8 +71,12 @@ function SettingsView({ onClose }: Props) {
       {/* Header */}
       <div className="settings-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
         {onClose && (
-          <button className="btn btn-secondary btn-inline settings-back-btn" onClick={onClose}>
-            ←
+          <button
+            className="btn btn-secondary btn-inline settings-back-btn"
+            onClick={onClose}
+            aria-label="Back"
+          >
+            <Icon name="arrow-left" size={16} decorative />
           </button>
         )}
         <h2 className="settings-title">Settings</h2>
@@ -79,18 +94,29 @@ function SettingsView({ onClose }: Props) {
             <div className="theme-toggle-row">
               <div>
                 <div className="theme-toggle-title">Theme</div>
-                <div className="theme-toggle-subtitle">{uiTheme === 'dark' ? 'Dark' : 'Light'}</div>
+                <div className="theme-toggle-subtitle">
+                  {uiTheme === 'auto' ? 'Follow system appearance' :
+                   uiTheme === 'dark' ? 'Dark' : 'Light'}
+                </div>
               </div>
-              <button
-                type="button"
-                className={`theme-toggle ${uiTheme === 'dark' ? 'on' : ''}`}
-                role="switch"
-                aria-checked={uiTheme === 'dark'}
-                aria-label="Toggle dark mode"
-                onClick={handleToggleTheme}
+              <div
+                className="theme-segmented"
+                role="radiogroup"
+                aria-label="Appearance"
               >
-                <span className="theme-toggle-thumb" />
-              </button>
+                {(['light', 'dark', 'auto'] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    role="radio"
+                    aria-checked={uiTheme === opt}
+                    className={`theme-segmented__btn${uiTheme === opt ? ' is-active' : ''}`}
+                    onClick={() => handleSelectTheme(opt)}
+                  >
+                    {opt === 'light' ? 'Light' : opt === 'dark' ? 'Dark' : 'Auto'}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -129,7 +155,7 @@ function SettingsView({ onClose }: Props) {
                     </div>
                     </div>
                 </div>
-                <span style={{ color: 'var(--text-tertiary)', fontSize: '18px' }}>›</span>
+                <Icon name="chevron-right" size={16} decorative style={{ color: 'var(--text-tertiary)' }} />
                 </button>
             )}
 
@@ -194,7 +220,21 @@ function SettingsView({ onClose }: Props) {
 
         {/* Info Section */}
         <div className="wallet-card" style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '32px', marginBottom: '16px' }}>⚙️</div>
+          <div
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: 'var(--radius-pill)',
+              background: 'var(--surface-muted)',
+              color: 'var(--text-tertiary)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 12px',
+            }}
+          >
+            <Icon name="settings" size={22} decorative />
+          </div>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '12px', lineHeight: 1.5 }}>
             Wallet and account management is available in the main menu.
           </p>

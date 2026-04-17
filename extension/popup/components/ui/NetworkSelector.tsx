@@ -3,6 +3,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import { Icon } from './Icon';
 
 interface NetworkOption {
   value: string;
@@ -67,7 +68,12 @@ export function NetworkSelector({
           <div className="network-dot" />
         )}
         <span style={{ flex: 1, textAlign: 'left' }}>{selectedOption?.label || 'Select Network'}</span>
-        <span className="dropdown-arrow">▼</span>
+        <Icon
+          name="chevron-down"
+          size={14}
+          decorative
+          className={`dropdown-arrow${isOpen ? ' is-open' : ''}`}
+        />
       </button>
 
       {isOpen && (
@@ -91,7 +97,12 @@ export function NetworkSelector({
               )}
               <span>{option.label}</span>
               {option.disabled && (
-                <span style={{ marginLeft: 'auto', fontSize: 12 }}>🔒</span>
+                <Icon
+                  name="lock"
+                  size={12}
+                  aria-label="Not available for this wallet"
+                  style={{ marginLeft: 'auto', color: 'var(--text-tertiary)' }}
+                />
               )}
             </div>
           ))}

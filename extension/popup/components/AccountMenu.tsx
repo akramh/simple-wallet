@@ -5,7 +5,7 @@
  * Features: view/switch wallets & accounts, create/import wallets
  */
 import React, { useState, useEffect } from 'react';
-import { MnemonicDisplay } from './ui';
+import { Icon, MnemonicDisplay } from './ui';
 import { useToast } from '../context/ToastContext';
 
 interface Account {
@@ -77,7 +77,7 @@ function AccountMenu({
     const chain = chainValidation[chainType];
     if (!chain) return { valid: false, message: 'Unknown chain type' };
     if (chain.pattern.test(trimmed)) {
-      return { valid: true, message: '✓ Valid format' };
+      return { valid: true, message: 'Valid format' };
     }
     return { valid: false, message: `Invalid format. Expected: ${chain.hint}` };
   };
@@ -475,7 +475,12 @@ function AccountMenu({
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     {wallet.name}
                     {wallet.importType === 'privateKey' && (
-                      <span title="Private Key Wallet" style={{ fontSize: '12px' }}>🔑</span>
+                      <Icon
+                        name="key"
+                        size={12}
+                        aria-label="Private key wallet"
+                        style={{ color: 'var(--text-secondary)' }}
+                      />
                     )}
                   </span>
                   {wallet.importType === 'privateKey' && (
@@ -504,7 +509,9 @@ function AccountMenu({
                         <div className="account-address">{formatAddress(account.address)}</div>
                       </div>
                       {isActive && (
-                        <span className="active-badge">✓</span>
+                        <span className="active-badge" aria-label="Active account">
+                          <Icon name="check" size={12} decorative />
+                        </span>
                       )}
                     </div>
                   );
@@ -569,7 +576,10 @@ function AccountMenu({
             {createStep === 'success' && createdMnemonic && (
               <>
                 <div className="mnemonic-warning">
-                  <strong>⚠️ Save your recovery phrase!</strong>
+                  <strong>
+                    <Icon name="alert-triangle" size={16} decorative className="inline-icon" />
+                    Save your recovery phrase!
+                  </strong>
                   <span>This is the only way to recover your wallet.</span>
                 </div>
 
@@ -584,13 +594,15 @@ function AccountMenu({
                           showToast('Copied!');
                         }}
                       >
-                        📋 Copy
+                        <Icon name="copy" size={14} decorative />
+                        Copy
                       </button>
                       <button
                         className="section-cta"
                         onClick={() => setShowCreatedMnemonic(v => !v)}
                       >
-                        {showCreatedMnemonic ? '👁️ Hide' : '👁️ Reveal'}
+                        <Icon name={showCreatedMnemonic ? 'eye-off' : 'eye'} size={14} decorative />
+                        {showCreatedMnemonic ? 'Hide' : 'Reveal'}
                       </button>
                     </div>
                   </div>
@@ -710,7 +722,8 @@ function AccountMenu({
                                   onClick={handlePastePrivateKey}
                                   style={{ fontSize: '11px', padding: '2px 6px' }}
                                 >
-                                  📋 Paste
+                                  <Icon name="clipboard" size={12} decorative />
+                                  Paste
                                 </button>
                                 <button
                                   type="button"
@@ -718,7 +731,8 @@ function AccountMenu({
                                   onClick={() => setShowPrivateKey(v => !v)}
                                   style={{ fontSize: '11px', padding: '2px 6px' }}
                                 >
-                                  {showPrivateKey ? '👁️ Hide' : '👁️ Show'}
+                                  <Icon name={showPrivateKey ? 'eye-off' : 'eye'} size={12} decorative />
+                                  {showPrivateKey ? 'Hide' : 'Show'}
                                 </button>
                               </div>
                             </label>
@@ -733,7 +747,7 @@ function AccountMenu({
                               <div style={{
                                 fontSize: '11px',
                                 marginTop: '4px',
-                                color: privateKeyValidation.valid ? '#4ade80' : '#f87171'
+                                color: privateKeyValidation.valid ? 'var(--success)' : 'var(--danger)'
                               }}>
                                 {privateKeyValidation.message}
                               </div>

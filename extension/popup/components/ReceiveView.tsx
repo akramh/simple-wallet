@@ -1,6 +1,7 @@
 import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useToast } from '../context/ToastContext';
+import { Icon } from './ui';
 
 interface Props {
   address: string;
@@ -80,15 +81,19 @@ function ReceiveView({ address, network, networks }: Props) {
 
       {/* Warning */}
       <div className="receive-warning">
-        <div className="warning-icon">⚠️</div>
+        <div className="warning-icon">
+          <Icon name="alert-triangle" size={16} decorative />
+        </div>
         <div className="warning-content">
           <strong>Important:</strong> Only send {nativeSymbol} and tokens on the <strong>{networkName}</strong> network to this address. Sending assets from other networks may result in permanent loss.
         </div>
       </div>
 
       {isXrp && (
-        <div className="receive-warning" style={{ marginTop: 12 }}>
-          <div className="warning-icon">ℹ️</div>
+        <div className="receive-warning receive-warning--info" style={{ marginTop: 12 }}>
+          <div className="warning-icon">
+            <Icon name="info" size={16} decorative />
+          </div>
           <div className="warning-content">
             <strong>XRP note:</strong> Some exchanges require a destination tag for deposits. Personal wallets typically do not.
           </div>

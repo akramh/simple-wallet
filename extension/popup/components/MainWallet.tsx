@@ -23,6 +23,7 @@ import TokenDetailsScreen from './TokenDetailsScreen';
 import Identicon from './ui/Identicon';
 import NetworkSelector from './ui/NetworkSelector';
 import Skeleton from './ui/Skeleton';
+import { Icon } from './ui';
 import ethIcon from '../../assets/img/eth_logo.svg';
 import { useToast } from '../context/ToastContext';
 import bnbIcon from '../../assets/img/bnb.svg';
@@ -832,7 +833,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
                 aria-label="Open account menu"
                 title="Open account menu"
               >
-                <span className="dropdown-arrow">▼</span>
+                <Icon name="chevron-down" size={14} decorative className="dropdown-arrow" />
               </button>
             </div>
           </div>

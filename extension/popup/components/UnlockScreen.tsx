@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import lockIcon from '../../assets/icons/lock.svg';
+import { PasswordField } from './ui';
 
 interface Props {
   onUnlocked: () => void;
@@ -94,11 +95,10 @@ function UnlockScreen({ onUnlocked }: Props) {
           )}
 
           <div className="form-group">
-            <label>Password</label>
-            <input
-              type="password"
+            <PasswordField
+              label="Password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={setPassword}
               placeholder="Enter your password"
               autoFocus
             />

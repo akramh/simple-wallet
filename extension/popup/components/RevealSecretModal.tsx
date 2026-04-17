@@ -5,7 +5,7 @@
  * Requires password confirmation before revealing.
  */
 import React, { useEffect, useState } from 'react';
-import { MnemonicDisplay } from './ui';
+import { Icon, MnemonicDisplay } from './ui';
 
 type SecretType = 'mnemonic' | 'privateKey';
 type ChainType = 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
@@ -265,9 +265,9 @@ function RevealSecretModal({ isOpen, onClose, secretType }: Props) {
                 marginBottom: '16px'
               }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                  <span style={{ fontSize: '18px' }}>⚠️</span>
+                  <Icon name="alert-triangle" size={18} decorative style={{ color: 'var(--warning-dark)', flex: '0 0 auto', marginTop: 1 }} />
                   <div style={{ fontSize: '13px', color: 'var(--warning-dark)', lineHeight: 1.5 }}>
-                    <strong>Warning:</strong> Never share your {secretType === 'mnemonic' ? 'secret recovery phrase' : 'private key'} with anyone. 
+                    <strong>Warning:</strong> Never share your {secretType === 'mnemonic' ? 'secret recovery phrase' : 'private key'} with anyone.
                     Anyone with access to it can steal your funds.
                   </div>
                 </div>
@@ -373,7 +373,7 @@ function RevealSecretModal({ isOpen, onClose, secretType }: Props) {
                 marginBottom: '16px'
               }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                  <span style={{ fontSize: '18px' }}>🔐</span>
+                  <Icon name="lock-keyhole" size={18} decorative style={{ color: 'var(--danger-dark)', flex: '0 0 auto', marginTop: 1 }} />
                   <div style={{ fontSize: '13px', color: 'var(--danger-dark)', lineHeight: 1.5 }}>
                     <strong>Keep this secret!</strong> Do not share or store in an insecure location.
                   </div>
@@ -420,20 +420,22 @@ function RevealSecretModal({ isOpen, onClose, secretType }: Props) {
 
               {/* Action Buttons */}
               <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-                <button 
+                <button
                   className="btn btn-secondary"
                   onClick={() => setIsRevealed(!isRevealed)}
-                  style={{ flex: 1 }}
+                  style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                 >
-                  {isRevealed ? '🙈 Hide' : '👁️ Reveal'}
+                  <Icon name={isRevealed ? 'eye-off' : 'eye'} size={16} decorative />
+                  {isRevealed ? 'Hide' : 'Reveal'}
                 </button>
-                <button 
+                <button
                   className="btn btn-secondary"
                   onClick={handleCopy}
                   disabled={!isRevealed}
-                  style={{ flex: 1 }}
+                  style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                 >
-                  {copied ? '✓ Copied!' : '📋 Copy'}
+                  <Icon name={copied ? 'check' : 'copy'} size={16} decorative />
+                  {copied ? 'Copied!' : 'Copy'}
                 </button>
               </div>
 
