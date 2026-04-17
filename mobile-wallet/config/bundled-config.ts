@@ -68,6 +68,7 @@ function getApiKeys() {
     explorerApiKey: extra.explorerApiKey as string | undefined,
     explorerApiKeySolanaMainnet: extra.explorerApiKeySolanaMainnet as string | undefined,
     explorerApiKeySolanaDevnet: extra.explorerApiKeySolanaDevnet as string | undefined,
+    alchemyApiKey: extra.alchemyApiKey as string | undefined,
     heliusApiKey: extra.heliusApiKey as string | undefined,
     tonCenterApiKeyMainnet: extra.tonCenterApiKeyMainnet as string | undefined,
     tonCenterApiKeyTestnet: extra.tonCenterApiKeyTestnet as string | undefined,
@@ -105,23 +106,31 @@ function applyApiKeysToNetworks(
       }
     }
 
-    // Apply Helius API key to Solana RPC URLs
-    if (network.type === 'solana' && keys.heliusApiKey && processedNetwork.rpcUrl) {
+    // Substitute ${ALCHEMY_API_KEY} and ${HELIUS_API_KEY} placeholders in RPC URLs.
+    // Applies to EVM and Solana (TON uses rpcApiKey, Bitcoin has no templated URLs).
+    if (processedNetwork.rpcUrl && network.type !== 'bitcoin' && network.type !== 'ton') {
       const rpcUrls = Array.isArray(processedNetwork.rpcUrl)
         ? processedNetwork.rpcUrl
         : [processedNetwork.rpcUrl];
 
       const processedUrls = rpcUrls
         .map((url) => {
+          if (url.includes('${ALCHEMY_API_KEY}')) {
+            if (!keys.alchemyApiKey) return null;
+            return url.split('${ALCHEMY_API_KEY}').join(keys.alchemyApiKey);
+          }
           if (url.includes('${HELIUS_API_KEY}')) {
-            return url.replace('${HELIUS_API_KEY}', keys.heliusApiKey!);
+            if (!keys.heliusApiKey) return null;
+            return url.split('${HELIUS_API_KEY}').join(keys.heliusApiKey);
           }
           return url;
         })
-        .filter((url) => !url.includes('${HELIUS_API_KEY}')); // Remove URLs with unresolved placeholders
+        .filter((url): url is string => url !== null);
 
-      processedNetwork.rpcUrl =
-        processedUrls.length === 1 ? processedUrls[0] : processedUrls;
+      if (processedUrls.length > 0) {
+        processedNetwork.rpcUrl =
+          processedUrls.length === 1 ? processedUrls[0] : processedUrls;
+      }
     }
 
     result[networkId] = processedNetwork;

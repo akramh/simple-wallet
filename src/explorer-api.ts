@@ -105,12 +105,19 @@ export interface NormalizedTransaction {
  * @internal
  */
 interface NetworkExplorerConfig {
-  /** Base URL for the explorer API */
+  /** Base URL for the explorer API (Etherscan V2 fallback path) */
   apiUrl: string;
   /** Chain ID for Etherscan V2 unified endpoint */
   chainId: number;
   /** Optional per-network API key (overrides global key) */
   apiKey?: string;
+  /**
+   * Alchemy RPC URL (with embedded key) for this network, if available.
+   * When set and the network is in {@link ALCHEMY_TRANSFERS_NETWORKS},
+   * `getAllTransactions` dispatches to `alchemy_getAssetTransfers` instead
+   * of hitting Etherscan.
+   */
+  alchemyRpcUrl?: string;
 }
 
 /**
@@ -134,19 +141,28 @@ interface NetworkExplorerConfig {
  * );
  * ```
  */
+import {
+  ALCHEMY_TRANSFERS_NETWORKS,
+  AlchemyTransfersClient,
+  extractAlchemyUrl,
+} from './ethereum/alchemy-transfers.js';
+
 export class ExplorerAPI {
   /** In-memory cache for transaction data with TTL */
   private cache: Map<string, { data: NormalizedTransaction[]; timestamp: number }> = new Map();
-  
+
   /** Cache time-to-live in milliseconds (30 seconds) */
   private cacheDuration = 30000;
-  
+
   /** Registered network configurations indexed by network name */
   private networkConfigs: Map<string, NetworkExplorerConfig> = new Map();
-  
+
+  /** Cached Alchemy client per network, created lazily on first use. */
+  private alchemyClients: Map<string, AlchemyTransfersClient> = new Map();
+
   /** Global API key applied to all networks unless overridden */
   private globalApiKey?: string;
-  
+
   /** Etherscan V2 unified endpoint base URL */
   private static V2_BASE_URL = 'https://api.etherscan.io/v2/api';
 
@@ -197,20 +213,40 @@ export class ExplorerAPI {
    * }, 'GLOBAL_API_KEY');
    * ```
    */
-  registerNetworks(networks: Record<string, { explorerApiUrl?: string; chainId?: number; explorerApiKey?: string; type?: string }>, globalApiKey?: string): void {
+  registerNetworks(
+    networks: Record<
+      string,
+      {
+        explorerApiUrl?: string;
+        chainId?: number;
+        explorerApiKey?: string;
+        type?: string;
+        rpcUrl?: string | string[];
+      }
+    >,
+    globalApiKey?: string,
+  ): void {
     if (globalApiKey) {
       this.globalApiKey = globalApiKey;
     }
     for (const [network, config] of Object.entries(networks)) {
-      // Only register EVM networks (those with chainId and explorerApiUrl)
-      // Bitcoin networks use Mempool.space API instead
-      if (config.explorerApiUrl && config.chainId !== undefined && config.type !== 'bitcoin') {
-        this.networkConfigs.set(network, {
-          apiUrl: config.explorerApiUrl,
-          chainId: config.chainId,
-          apiKey: config.explorerApiKey
-        });
+      // Skip non-EVM networks — Bitcoin/Solana/XRP/TON use dedicated explorers.
+      if (config.type === 'bitcoin' || config.type === 'solana' || config.type === 'xrp' || config.type === 'ton') {
+        continue;
       }
+      const alchemyRpcUrl = extractAlchemyUrl(config.rpcUrl);
+      const hasEtherscan = !!config.explorerApiUrl && config.chainId !== undefined;
+      const hasAlchemy = !!alchemyRpcUrl && ALCHEMY_TRANSFERS_NETWORKS.has(network);
+      // Register the network if ANY history source is available. Previously we
+      // required explorerApiUrl + chainId; now networks with only an Alchemy
+      // URL (e.g. base, arbitrum, optimism, polygon) are supported too.
+      if (!hasEtherscan && !hasAlchemy) continue;
+      this.networkConfigs.set(network, {
+        apiUrl: config.explorerApiUrl ?? '',
+        chainId: config.chainId ?? 0,
+        apiKey: config.explorerApiKey,
+        alchemyRpcUrl,
+      });
     }
   }
   
@@ -382,7 +418,22 @@ export class ExplorerAPI {
     page: number = 1,
     pageSize: number = 25
   ): Promise<NormalizedTransaction[]> {
-    // Fetch sequentially to avoid rate limiting (free tier is 5 req/sec)
+    // Prefer Alchemy Transfers API for supported networks (eth/sepolia/base/
+    // polygon/arbitrum/optimism). Covers native + ERC-20 (+ internal on
+    // eth/polygon) in two parallel calls — no per-category request + delay.
+    const config = this.networkConfigs.get(network);
+    if (config?.alchemyRpcUrl && ALCHEMY_TRANSFERS_NETWORKS.has(network)) {
+      let client = this.alchemyClients.get(network);
+      if (!client) {
+        client = new AlchemyTransfersClient(config.alchemyRpcUrl, network);
+        this.alchemyClients.set(network, client);
+      }
+      return client.getAllTransactions(address, network, page, pageSize);
+    }
+
+    // Etherscan V2 path (avalanche/bsc/linea, and any other EVM network
+    // without an Alchemy URL): fetch sequentially to respect 5 req/sec free
+    // tier limits.
     const ethTxs = await this.getTransactionHistory(address, network, page, pageSize);
     await this.sleep(300); // Small delay between requests
     const tokenTxs = await this.getTokenTransfers(address, network, page, pageSize);
@@ -595,6 +646,9 @@ export class ExplorerAPI {
    */
   clearCache(): void {
     this.cache.clear();
+    for (const client of this.alchemyClients.values()) {
+      client.clearCache();
+    }
   }
 
   /**

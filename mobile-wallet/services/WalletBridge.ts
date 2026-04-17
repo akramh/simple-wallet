@@ -1264,17 +1264,12 @@ class WalletBridge {
     // Import explorer API
     const { explorerAPI } = require("@wallet/explorer-api");
 
-    // Check if network is supported
+    // Check if network is supported. Use bulk registerNetworks so the Alchemy
+    // RPC URL (from networkConfig.rpcUrl) gets extracted and preferred over
+    // Etherscan V2 for the chains Alchemy covers.
     if (!explorerAPI.isSupported(network)) {
-      // Register the network if it has explorer config
-      if (networkConfig.explorerApiUrl && networkConfig.chainId) {
-        explorerAPI.registerNetwork(
-          network,
-          networkConfig.explorerApiUrl,
-          networkConfig.chainId,
-          networkConfig.explorerApiKey,
-        );
-      } else {
+      explorerAPI.registerNetworks({ [network]: networkConfig });
+      if (!explorerAPI.isSupported(network)) {
         console.warn(
           `[WalletBridge] Network ${network} not supported for transaction history`,
         );

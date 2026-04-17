@@ -76,19 +76,17 @@ TaskManager.defineTask(BACKGROUND_TX_TASK, async () => {
     const networkConfig =
       storageConfig.networks?.[network] || bundledConfig.networks[network];
 
-    // Register network if needed (critical fix for "No explorer configured")
-    if (networkConfig?.explorerApiUrl && networkConfig?.chainId) {
-      // Check if already supported to avoid duplicate registration warnings if explorerAPI state persists
-      if (!explorerAPI.isSupported(network)) {
-        explorerAPI.registerNetwork(
-          network,
-          networkConfig.explorerApiUrl,
-          networkConfig.chainId,
-          networkConfig.explorerApiKey,
-        );
-      }
-    } else {
+    // Register network if needed. Use bulk registerNetworks so the Alchemy
+    // RPC URL in networkConfig.rpcUrl is extracted and preferred over
+    // Etherscan for the chains Alchemy supports.
+    if (!networkConfig) {
       return BackgroundFetch.BackgroundFetchResult.NoData;
+    }
+    if (!explorerAPI.isSupported(network)) {
+      explorerAPI.registerNetworks({ [network]: networkConfig });
+      if (!explorerAPI.isSupported(network)) {
+        return BackgroundFetch.BackgroundFetchResult.NoData;
+      }
     }
 
     // 5. Fetch latest transactions

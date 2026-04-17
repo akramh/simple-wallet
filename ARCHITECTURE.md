@@ -493,22 +493,28 @@ refactor4/
 
 `.env` file:
 ```
+# Primary: Alchemy (one key covers EVM RPC + Solana RPC + Transfers API)
+ALCHEMY_API_KEY=your_key
+
+# Etherscan fallback — only needed for avalanche/bsc/linea tx history
+# (Alchemy Transfers doesn't support those chains)
 EXPLORER_API_KEY=your_key
-EXPLORER_API_KEY_MAINNET=specific_key
-HELIUS_API_KEY=solana_rpc_key
+EXPLORER_API_KEY_AVALANCHE=optional_specific_key
+EXPLORER_API_KEY_BSC=optional_specific_key
+EXPLORER_API_KEY_LINEA=optional_specific_key
 ```
 
 ### Extension
 
 `VITE_`-prefixed in `.env`:
 ```
-VITE_EXPLORER_API_KEY_MAINNET=your_key
-VITE_HELIUS_API_KEY=your_key
+VITE_ALCHEMY_API_KEY=your_key
+VITE_EXPLORER_API_KEY=your_etherscan_key  # for avalanche/bsc/linea only
 ```
 
 ### Mobile
 
-Expo managed via `app.config.js`
+Expo managed via `app.config.js`; reads `ALCHEMY_API_KEY` (or `EXPO_PUBLIC_ALCHEMY_API_KEY`) from root `.env` and ships it via `expo-constants`. Placeholders in `config.json` are substituted in `mobile-wallet/config/bundled-config.ts::applyApiKeysToNetworks`.
 
 ## Code Reuse Strategy
 

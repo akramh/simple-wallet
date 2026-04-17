@@ -111,4 +111,25 @@ describe('Network Egress Security', () => {
         }
     });
 
+    it('should ALLOW all Alchemy chain hostnames used by the wallet', async () => {
+        const alchemyHosts = [
+            'https://eth-mainnet.g.alchemy.com/v2/fake-key',
+            'https://eth-sepolia.g.alchemy.com/v2/fake-key',
+            'https://base-mainnet.g.alchemy.com/v2/fake-key',
+            'https://polygon-mainnet.g.alchemy.com/v2/fake-key',
+            'https://arb-mainnet.g.alchemy.com/v2/fake-key',
+            'https://opt-mainnet.g.alchemy.com/v2/fake-key',
+            'https://solana-mainnet.g.alchemy.com/v2/fake-key',
+        ];
+        for (const url of alchemyHosts) {
+            try {
+                await fetch(url);
+            } catch (err: any) {
+                if (err.message && err.message.includes('[Security] Blocked')) {
+                    assert.fail(`Alchemy host ${url} was blocked by security guard`);
+                }
+            }
+        }
+    });
+
 });

@@ -179,15 +179,22 @@ Edit `config.json` to change the default network or add custom RPC endpoints:
 
 ### Environment Variables
 
-Explorer and RPC API keys are provided through environment variables:
+RPC and explorer API keys are provided through environment variables:
 
 1. Copy `.env.example` to `.env`.
-2. Set a global fallback key via `EXPLORER_API_KEY` or network-specific keys like `EXPLORER_API_KEY_MAINNET` and `EXPLORER_API_KEY_SEPOLIA` (uppercase the network key from `config.json`, e.g., `BASE`, `ARBITRUM`, `OPTIMISM`, `POLYGON`, `AVALANCHE`, `BSC`, `LINEA`).
-3. For networks whose keys contain non-alphanumeric characters (e.g. `solana-mainnet`), use underscores: `EXPLORER_API_KEY_SOLANA_MAINNET` (same for `VITE_`).
-4. For Solana RPC access via Helius, set `HELIUS_API_KEY` (or `VITE_HELIUS_API_KEY` for the extension).
-5. For the Chrome extension build, Vite uses `VITE_`-prefixed variables (e.g., `VITE_EXPLORER_API_KEY_MAINNET` or `VITE_EXPLORER_API_KEY_BASE`).
+2. **Alchemy** — a single key covers EVM RPC (ethereum, base, polygon, arbitrum, optimism, bnb, avalanche, linea + testnets) and Solana RPC (mainnet, devnet). Set:
+   - `ALCHEMY_API_KEY` — CLI
+   - `VITE_ALCHEMY_API_KEY` — Chrome extension build (same value)
+   - `EXPO_PUBLIC_ALCHEMY_API_KEY` — mobile app build (same value; falls back to `ALCHEMY_API_KEY` in `mobile-wallet/app.config.js`)
 
-The CLI automatically loads `.env` via `dotenv`, and the extension build injects values from `import.meta.env`.
+   The placeholder `${ALCHEMY_API_KEY}` in `config.json` gets substituted at load time. If the key is unset, the wallet falls back to public RPC endpoints listed in each network's `rpcUrl` array.
+3. **Etherscan (optional)** — Alchemy's `alchemy_getAssetTransfers` covers transaction history for eth/sepolia/base/polygon/arbitrum/optimism. For **avalanche, bsc, and linea** (not supported by Alchemy Transfers), the wallet still uses Etherscan V2. Set `EXPLORER_API_KEY` (global) or per-network `EXPLORER_API_KEY_AVALANCHE` / `_BSC` / `_LINEA`. Same pattern with `VITE_` / `EXPO_PUBLIC_` prefixes for extension/mobile.
+4. **TON** — set `TONCENTER_API_KEY_TON_MAINNET` / `_TESTNET` for Toncenter RPC (optional but recommended).
+5. **Legacy `HELIUS_API_KEY`** — still read for backward compatibility if a `${HELIUS_API_KEY}` placeholder remains in a config fork, but Alchemy now handles Solana.
+
+The CLI loads `.env` via `dotenv`. The Chrome extension build inlines `VITE_*` vars via Vite. The mobile app reads env through `mobile-wallet/app.config.js` and `expo-constants`.
+
+**Security**: Alchemy keys embedded in the extension/mobile bundle are recoverable by anyone who inspects the shipped JS. Restrict each platform's key with dashboard allowlists (Referer for the extension ID, bundle id for mobile).
 
 ## Security Notes
 

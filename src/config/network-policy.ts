@@ -18,7 +18,22 @@
 
 export const ALLOWED_DOMAINS = [
   // === RPC Nodes ===
-  // Ethereum
+  // Alchemy (per-chain hostnames — no wildcard support in guard).
+  // One key (ALCHEMY_API_KEY) is used in the URL path; the hostname decides
+  // the chain. Transfers API on eth/base/polygon/arb/opt; RPC on all listed.
+  "eth-mainnet.g.alchemy.com",
+  "eth-sepolia.g.alchemy.com",
+  "base-mainnet.g.alchemy.com",
+  "arb-mainnet.g.alchemy.com",
+  "opt-mainnet.g.alchemy.com",
+  "polygon-mainnet.g.alchemy.com",
+  "avax-mainnet.g.alchemy.com",
+  "bnb-mainnet.g.alchemy.com",
+  "linea-mainnet.g.alchemy.com",
+  "solana-mainnet.g.alchemy.com",
+  "solana-devnet.g.alchemy.com",
+
+  // Ethereum (public fallback)
   "ethereum-rpc.publicnode.com",
   "ethereum-sepolia-rpc.publicnode.com",
   "rpc.sepolia.org",

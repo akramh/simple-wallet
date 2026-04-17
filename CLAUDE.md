@@ -27,7 +27,7 @@ All commands run from the repo root unless noted.
 ### Extension (root scripts, Vite config: `vite.config.extension.ts`)
 - `npm run build:extension` — production bundle into `dist-extension/`
 - `npm run watch:extension` — rebuild on change; reload via `chrome://extensions/`
-- After building, load `dist-extension/` as an unpacked extension. Build env vars must be `VITE_`-prefixed (e.g. `VITE_HELIUS_API_KEY`, `VITE_EXPLORER_API_KEY_<NETWORK>`).
+- After building, load `dist-extension/` as an unpacked extension. Build env vars must be `VITE_`-prefixed. Primary: `VITE_ALCHEMY_API_KEY` (covers EVM RPC for all 9 networks, Solana RPC, and Transfers API for eth/sepolia/base/polygon/arb/opt). `VITE_EXPLORER_API_KEY_<NETWORK>` is still used for Etherscan V2 tx history on avalanche/bsc/linea (not covered by Alchemy Transfers).
 
 ### Mobile (`mobile-wallet/`, run from that directory)
 - `npm start` / `expo start` — Metro dev server
@@ -91,7 +91,9 @@ When the diff touches secrets, storage, crypto, or signing, explicitly verify th
 - **Lock/unlock invariant:** locking must clear sensitive in-memory state. The extension service worker is the *only* place that holds decrypted state — popup/sidepanel re-fetch via messages.
 - **No live RPC/explorer in tests** — this is both a determinism rule and a security boundary (avoids leaking dev-time addresses/keys to public infra).
 - **Address quirks to respect:** Solana addresses are base58 and case-sensitive. Bitcoin supports multiple formats (Legacy, SegWit, Native SegWit). EVM addresses use EIP-55 mixed-case checksums.
-- **Env var naming for non-alphanumeric network keys** (e.g. `solana-mainnet`) becomes `EXPLORER_API_KEY_SOLANA_MAINNET` (and `VITE_EXPLORER_API_KEY_SOLANA_MAINNET` for the extension build).
+- **Env var naming for non-alphanumeric network keys** (e.g. `solana-mainnet`) becomes `EXPLORER_API_KEY_SOLANA_MAINNET` (and `VITE_EXPLORER_API_KEY_SOLANA_MAINNET` for the extension build). Alchemy does NOT use per-network keys — one `ALCHEMY_API_KEY` serves all chains; the hostname (`eth-mainnet.g.alchemy.com`, `solana-mainnet.g.alchemy.com`, etc.) selects the chain.
+- **Alchemy Transfers API chain coverage**: `alchemy_getAssetTransfers` supports eth, sepolia, base, polygon, arb, opt only. For avalanche/bsc/linea, the `ExplorerAPI` singleton falls back to Etherscan V2 via the same interface (dispatch lives in `src/explorer-api.ts` `getAllTransactions`).
+- **Leaked Helius key in git history**: commit `8dfe258` introduced `fdb9849d-88cf-4fe6-91f5-057a82d724b7` in `config.json`; present on `origin/main` and 20+ branches. The key has been revoked via the Helius dashboard; config now uses `${ALCHEMY_API_KEY}` substitution.
 
 ## Working from existing changes (PR / open branch)
 

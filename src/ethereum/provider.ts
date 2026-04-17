@@ -115,9 +115,15 @@ export class EthereumProvider {
         this.providers[networkKey] = candidate;
         this.rpcIndex[networkKey] = i;
         this.provider = candidate;
+        // Visibility for ALCHEMY_API_KEY substitution + failover. Strips the
+        // key from the log so it doesn't appear in console history.
+        const redacted = rpcUrl.replace(/\/v2\/[^/]+/, '/v2/<redacted>');
+        console.log(`[EVM RPC] ${networkKey} using ${redacted} (index ${i} of ${rpcList.length})`);
         return candidate;
       } catch (error) {
         lastError = error as Error;
+        const redacted = rpcUrl.replace(/\/v2\/[^/]+/, '/v2/<redacted>');
+        console.warn(`[EVM RPC] ${networkKey} URL ${i} failed (${redacted}):`, (error as Error).message);
       }
     }
 

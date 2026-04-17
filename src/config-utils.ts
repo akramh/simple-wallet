@@ -36,9 +36,23 @@ function withExplorerKey(network: NetworkConfig, apiKey?: string): NetworkConfig
   return { ...(rest as NetworkConfig), explorerApiKey: apiKey };
 }
 
+function substitutePlaceholder(
+  urls: string[],
+  placeholder: string,
+  value: string | undefined,
+): string[] {
+  return urls
+    .map((url) => {
+      if (!url.includes(placeholder)) return url;
+      if (!value) return null; // drop URLs whose required key isn't available
+      return url.split(placeholder).join(value);
+    })
+    .filter((url): url is string => url !== null);
+}
+
 function applyRpcApiKeys(network: NetworkConfig, env: EnvRecord): NetworkConfig {
-  // Replace ${HELIUS_API_KEY} placeholder in RPC URLs with actual key from env
-  // Applies to EVM/Solana; TON uses rpcApiKey and does not rely on URL templating.
+  // Replace ${ALCHEMY_API_KEY} and legacy ${HELIUS_API_KEY} placeholders in RPC URLs
+  // with values from env. Applies to EVM/Solana; TON uses rpcApiKey, not URL templating.
   if (network.type === 'bitcoin') return network;
 
   if (network.type === 'ton') {
@@ -50,34 +64,25 @@ function applyRpcApiKeys(network: NetworkConfig, env: EnvRecord): NetworkConfig 
     }
     return { ...(rest as TonNetworkConfig), rpcApiKey: apiKey };
   }
-  
-  const heliusKey = getEnvValue(env, 'HELIUS_API_KEY');
+
   const networkWithRpc = network as { rpcUrl: string | string[] };
-  
   if (!networkWithRpc.rpcUrl) return network;
-  
+
+  const alchemyKey = getEnvValue(env, 'ALCHEMY_API_KEY');
+  const heliusKey = getEnvValue(env, 'HELIUS_API_KEY');
+
   const rpcUrls = Array.isArray(networkWithRpc.rpcUrl) ? networkWithRpc.rpcUrl : [networkWithRpc.rpcUrl];
-  const processedUrls = rpcUrls
-    .map((url: string) => {
-      if (url.includes('${HELIUS_API_KEY}')) {
-        if (!heliusKey) {
-          // No Helius key available, skip this URL
-          return null;
-        }
-        return url.replace('${HELIUS_API_KEY}', heliusKey);
-      }
-      return url;
-    })
-    .filter((url): url is string => url !== null);
-  
+  let processedUrls = substitutePlaceholder(rpcUrls, '${ALCHEMY_API_KEY}', alchemyKey);
+  processedUrls = substitutePlaceholder(processedUrls, '${HELIUS_API_KEY}', heliusKey);
+
   if (processedUrls.length === 0) {
-    // Fallback if all URLs were filtered out
+    // All URLs required a missing key; surface original config so callers fail loudly.
     return network;
   }
-  
+
   return {
     ...network,
-    rpcUrl: processedUrls.length === 1 ? processedUrls[0] : processedUrls
+    rpcUrl: processedUrls.length === 1 ? processedUrls[0] : processedUrls,
   } as NetworkConfig;
 }
 
