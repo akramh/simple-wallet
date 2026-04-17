@@ -15,6 +15,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import TransactionDetailsModal from './TransactionDetailsModal';
 import { formatAddress, formatDate, formatTransactionValue } from '../utils/transactionFormat';
+import { EmptyState, Icon } from './ui';
 
 interface Transaction {
   hash: string;
@@ -140,29 +141,22 @@ function ActivityView({ currentAddress, network, networks }: Props) {
         </button>
       </div>
 
-      {/* Error Banner */}
+      {/* Fallback notice: explorer unreachable → local cache. Keep it calm & subtle. */}
       {error && (
-        <div style={{
-          padding: '8px 12px',
-          background: 'var(--warning-light)',
-          border: '1px solid var(--warning)',
-          borderRadius: '6px',
-          fontSize: '12px',
-          color: 'var(--warning-dark)',
-          marginBottom: '12px'
-        }}>
-          ⚠️ {error}. Showing local transactions.
+        <div className="activity-fallback-chip" title={error}>
+          <Icon name="info" size={12} decorative />
+          <span>Showing cached history</span>
         </div>
       )}
 
       {/* Transaction List */}
       <div className="transaction-list">
         {transactions.length === 0 ? (
-          <div className="loading" style={{ flexDirection: 'column', textAlign: 'center' }}>
-            <div style={{ fontSize: '48px', marginBottom: '16px' }}>📋</div>
-            <p style={{ fontWeight: 600, marginBottom: '8px' }}>No transactions yet</p>
-            <span>Your transaction history will appear here</span>
-          </div>
+          <EmptyState
+            icon="clipboard"
+            title="No transactions yet"
+            subtitle="Your transaction history will appear here."
+          />
         ) : (
           <div>
             {transactions.map((tx) => (

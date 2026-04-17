@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import * as bip39 from 'bip39';
-import { MnemonicDisplay } from './ui';
+import { Icon, MnemonicDisplay, PasswordField } from './ui';
 import logoIcon from '../../assets/img/logo.svg';
 
 interface Props {
@@ -284,7 +284,10 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     return (
       <div className="container">
         <div className="header">
-          <h1>🔒 Set Your Password</h1>
+          <h1>
+            <Icon name="lock" size={18} decorative className="inline-icon" />
+            Set Your Password
+          </h1>
         </div>
         <div className="content">
           <div className="info-box">
@@ -306,23 +309,34 @@ function WelcomeScreen({ onWalletCreated }: Props) {
               </div>
             </div>
             <div className="form-group">
-              <label>Password</label>
-              <input
-                type="password"
+              <PasswordField
+                label="Password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={setPassword}
                 placeholder="Enter password (min 8 characters)"
                 autoFocus
+                showStrength
               />
             </div>
 
             <div className="form-group">
-              <label>Confirm Password</label>
-              <input
-                type="password"
+              <PasswordField
+                label="Confirm Password"
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
+                onChange={setConfirmPassword}
                 placeholder="Re-enter password"
+                hint={
+                  confirmPassword.length > 0 && password !== confirmPassword
+                    ? undefined
+                    : confirmPassword.length > 0 && password === confirmPassword
+                    ? 'Passwords match'
+                    : undefined
+                }
+                error={
+                  confirmPassword.length > 0 && password !== confirmPassword
+                    ? 'Passwords do not match'
+                    : undefined
+                }
               />
             </div>
 
@@ -396,14 +410,18 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     return (
       <div className="container">
         <div className="header">
-          <button className="btn-back" onClick={() => setScreen('choice')}>
-            ← Back
+          <button className="btn-back" onClick={() => setScreen('choice')} aria-label="Back">
+            <Icon name="arrow-left" size={16} decorative />
+            <span>Back</span>
           </button>
           <h1>Create Wallet</h1>
         </div>
         <div className="content">
           <div className="mnemonic-warning">
-            <strong>⚠️ Save your recovery phrase!</strong>
+            <strong>
+              <Icon name="alert-triangle" size={16} decorative className="inline-icon" />
+              Save your recovery phrase!
+            </strong>
             <span>Save to a password manager, or write down and store in a secure place. Do not share with anyone.</span>
           </div>
 
@@ -416,13 +434,15 @@ function WelcomeScreen({ onWalletCreated }: Props) {
                   onClick={handleCopyMnemonic}
                   disabled={!generatedMnemonic}
                 >
-                  {copyState === 'copied' ? '✓ Copied' : '📋 Copy'}
+                  <Icon name={copyState === 'copied' ? 'check' : 'copy'} size={14} decorative />
+                  {copyState === 'copied' ? 'Copied' : 'Copy'}
                 </button>
                 <button
                   className="section-cta"
                   onClick={() => setShowMnemonic(v => !v)}
                 >
-                  {showMnemonic ? '👁️ Hide' : '👁️ Reveal'}
+                  <Icon name={showMnemonic ? 'eye-off' : 'eye'} size={14} decorative />
+                  {showMnemonic ? 'Hide' : 'Reveal'}
                 </button>
               </div>
             </div>
@@ -451,22 +471,28 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     return (
       <div className="container">
         <div className="header">
-          <button className="btn-back" onClick={() => setScreen('create-mnemonic')}>
-            ← Back
+          <button className="btn-back" onClick={() => setScreen('create-mnemonic')} aria-label="Back">
+            <Icon name="arrow-left" size={16} decorative />
+            <span>Back</span>
           </button>
-          <h1>Verify Phase</h1>
+          <h1>Verify Phrase</h1>
         </div>
         <div className="content">
           <div className="info-box">
             <p>
-              Please select the following words from your recovery phrase to verify you've saved it.
+              Enter the requested words from your recovery phrase to confirm you've saved it.
             </p>
           </div>
 
           <form onSubmit={(e) => { e.preventDefault(); handleVerifyAndCreate(); }}>
             {verifyIndices.map((wordIndex, i) => (
               <div className="form-group" key={wordIndex}>
-                <label>Word #{wordIndex + 1}</label>
+                <label>
+                  Word #{wordIndex + 1}
+                  <span className="verify-progress" aria-hidden>
+                    {i + 1} of {verifyIndices.length}
+                  </span>
+                </label>
                 <input
                   value={verifyInputs[i]}
                   onChange={(e) => {
@@ -502,8 +528,9 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     return (
       <div className="container">
         <div className="header">
-          <button className="btn-back" onClick={() => setScreen('choice')}>
-            ← Back
+          <button className="btn-back" onClick={() => setScreen('choice')} aria-label="Back">
+            <Icon name="arrow-left" size={16} decorative />
+            <span>Back</span>
           </button>
           <h1>Import Wallet</h1>
         </div>

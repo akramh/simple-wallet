@@ -183,6 +183,180 @@
   font-family: monospace;
 }
 
+/* ============================================================================
+ * PasswordField (input with show/hide toggle + 4-bucket strength meter)
+ * ============================================================================ */
+.password-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.password-field__label {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.password-field__input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-field__input {
+  flex: 1;
+  width: 100%;
+  padding: 10px 40px 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-base);
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text-primary);
+  transition: border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.password-field__input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.password-field.has-error .password-field__input {
+  border-color: var(--danger);
+}
+
+.password-field.has-error .password-field__input:focus {
+  box-shadow: 0 0 0 3px var(--focus-ring-danger);
+}
+
+.password-field__toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.password-field__toggle:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+.password-field__toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.password-field__error {
+  font-size: var(--font-size-sm);
+  color: var(--danger);
+}
+
+.password-field__hint {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+/* --- Strength meter --- */
+.password-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.password-strength__bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+  flex: 1;
+}
+
+.password-strength__seg {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.password-strength--weak .password-strength__seg.is-filled { background: var(--danger); }
+.password-strength--fair .password-strength__seg.is-filled { background: var(--warning); }
+.password-strength--strong .password-strength__seg.is-filled { background: var(--success); }
+.password-strength--excellent .password-strength__seg.is-filled {
+  background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
+}
+
+.password-strength__label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+  min-width: 58px;
+  text-align: right;
+}
+
+.password-strength--weak .password-strength__label { color: var(--danger); }
+.password-strength--fair .password-strength__label { color: var(--warning-dark); }
+.password-strength--strong .password-strength__label { color: var(--success-dark); }
+.password-strength--excellent .password-strength__label { color: var(--primary); }
+
+.theme-dark .password-strength--fair .password-strength__label { color: var(--warning-mid); }
+.theme-dark .password-strength--strong .password-strength__label { color: var(--success); }
+
+/* ============================================================================
+ * EmptyState (centered icon + title + subtitle + optional CTA)
+ * ============================================================================ */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 32px 16px;
+  gap: 8px;
+}
+
+.empty-state__icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+
+.empty-state__title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.empty-state__subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: var(--line-height-sm);
+  max-width: 260px;
+}
+
+.empty-state__action {
+  margin-top: 10px;
+}
+
 .btn {
   width: 100%;
   padding: 12px 16px;
@@ -430,54 +604,410 @@
 }
 
 /* Approval modal */
+/* ============================================================================
+ * Approval modal (dApp connect / transaction / signature)
+ * ============================================================================ */
 .approval-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  padding: 16px;
+  z-index: var(--z-modal);
 }
 
 .approval-modal {
   background: var(--surface);
   color: var(--text-primary);
   border-radius: var(--radius-lg);
-  padding: 20px;
-  width: min(420px, 90vw);
-  box-shadow: var(--shadow-md);
+  width: min(420px, 100%);
+  max-height: min(92vh, 640px);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header: dApp origin + action title */
+.approval-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+
+.approval-origin {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.approval-origin__icon {
+  --chip-accent: var(--primary);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--chip-accent) 14%, var(--surface-muted));
+  color: var(--chip-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+  flex-shrink: 0;
+}
+
+.approval-origin__icon img {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+}
+
+.approval-origin__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.approval-origin__host {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.approval-origin__title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  line-height: var(--line-height-lg);
+}
+
+/* Body */
+.approval-body {
+  padding: 16px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.approval-label {
-  font-weight: 700;
-  margin: 0;
+/* Callout — info/warning/danger */
+.approval-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-sm);
 }
 
-.approval-value {
-  margin: 0;
+.approval-callout--info {
+  background: var(--info-light);
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
+}
+
+.approval-callout--info > svg { color: var(--info); flex-shrink: 0; margin-top: 1px; }
+
+.approval-callout--warning {
+  background: var(--warning-light);
+  color: var(--warning-dark);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+}
+
+.approval-callout--warning > svg { color: var(--warning); flex-shrink: 0; margin-top: 1px; }
+
+.theme-dark .approval-callout--warning {
+  color: var(--text-primary);
+}
+
+/* Details stack (To / Amount / Fee / Network rows) */
+.approval-details {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-muted);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.approval-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+}
+
+.approval-row:last-child { border-bottom: none; }
+
+.approval-row__label {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+  flex-shrink: 0;
+}
+
+.approval-row__value {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+  text-align: right;
   word-break: break-word;
 }
 
-.approval-box {
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  padding: 10px;
-  font-family: monospace;
-  font-size: 12px;
-  max-height: 200px;
-  overflow: auto;
-  white-space: pre-wrap;
+.approval-row__value.is-mono {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-regular);
+  font-size: var(--font-size-sm);
 }
 
+.approval-amount {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Message preview + raw-data disclosure */
+.approval-message {
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.approval-message__label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.approval-message__body {
+  margin: 0;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.approval-raw {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  background: var(--surface);
+}
+
+.approval-raw > summary {
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.approval-raw > summary::-webkit-details-marker { display: none; }
+
+.approval-raw[open] > summary > svg {
+  transform: rotate(90deg);
+}
+
+.approval-raw > summary > svg {
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.approval-raw__body {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-subtle);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* Footer actions */
 .approval-actions {
   display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+
+.approval-actions .btn {
+  flex: 1;
+}
+
+/* Shared chain chip (also used in Header / SettingsView down the road). */
+.chain-chip {
+  --chip-accent: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--chip-accent) 12%, var(--surface-muted));
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.chain-chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--chip-accent);
+  flex-shrink: 0;
+}
+
+/* ============================================================================
+ * Activity — subtle fallback chip when the explorer can't be reached
+ * ============================================================================ */
+.activity-fallback-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--info-light);
+  color: var(--info);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  border: 1px solid color-mix(in srgb, var(--info) 24%, transparent);
+}
+
+.theme-dark .activity-fallback-chip {
+  color: var(--text-primary);
+}
+
+/* ============================================================================
+ * Unlock screen — wallet picker
+ * ============================================================================ */
+.unlock-wallet-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.unlock-wallet-option,
+.unlock-wallet-single {
+  --chip-accent: var(--primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.unlock-wallet-option:hover:not(.is-active) {
+  border-color: color-mix(in srgb, var(--chip-accent) 40%, var(--border));
+}
+
+.unlock-wallet-option.is-active {
+  border-color: var(--chip-accent);
+  background: color-mix(in srgb, var(--chip-accent) 10%, var(--surface));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--chip-accent) 22%, transparent);
+}
+
+.unlock-wallet-option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.unlock-wallet-option__dot,
+.unlock-wallet-single .unlock-wallet-option__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chip-accent);
+  flex-shrink: 0;
+}
+
+.unlock-wallet-option__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unlock-wallet-option__badge {
+  font-size: var(--font-size-xxs);
+  font-weight: var(--font-weight-bold);
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+}
+
+.unlock-wallet-single {
+  cursor: default;
+}
+
+/* ============================================================================
+ * App boot states (initial load / background unreachable)
+ * ============================================================================ */
+.app-boot {
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-secondary);
+  padding: 24px;
+}
+
+.app-boot__spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2.5px solid var(--border);
+  border-top-color: var(--primary);
+  animation: app-spin 0.9s linear infinite;
+}
+
+.app-boot__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.app-boot__label.is-error {
+  color: var(--danger);
+}
+
+@keyframes app-spin {
+  from { transform: rotate(0); }
+  to   { transform: rotate(360deg); }
 }
 
 /* Welcome Screen Styles */
@@ -506,18 +1036,46 @@
 }
 
 .btn-back {
-  background: rgba(255, 255, 255, 0.2);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.16);
   border: none;
   color: white;
-  padding: 6px 12px;
-  border-radius: 6px;
+  padding: 6px 10px 6px 8px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
-  font-size: 13px;
-  transition: background 0.2s;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  transition: background var(--duration-fast) var(--ease-standard);
 }
 
 .btn-back:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.btn-back:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35);
+}
+
+/* Inline icon used next to heading/text for alignment. */
+.inline-icon {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+
+/* Small "step X of N" pill for the mnemonic verify screen. */
+.verify-progress {
+  float: right;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  line-height: 1.4;
 }
 
 .wallet-card {
@@ -738,6 +1296,45 @@
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+/* Skeleton row shares .token-item layout but disables interaction. */
+.token-item--skeleton {
+  pointer-events: none;
+}
+
+.token-balance--skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+/* Dashed "add custom token" CTA row. */
+.token-item--add-cta {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  border: 2px dashed var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard);
+}
+
+.token-item--add-cta:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+
+.token-item--add-cta:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
 .token-info {
   display: flex;
   align-items: center;
@@ -860,13 +1457,139 @@
   align-items: center;
   justify-content: flex-start;
   gap: 12px;
-  margin-bottom: 12px;
+  padding: 16px 20px;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .settings-title {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
   color: var(--text-primary);
+}
+
+/* Section wrapper (label + card) */
+.settings-section {
+  margin-bottom: 24px;
+}
+
+.settings-section__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+/* Cards inside settings */
+.settings-card {
+  padding: 14px 16px;
+}
+
+.settings-card--rows {
+  padding: 0; /* rows provide their own padding */
+}
+
+/* Tappable rows */
+.settings-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.settings-row.has-top-border {
+  border-top: 1px solid var(--border);
+}
+
+div.settings-row {
+  cursor: default;
+}
+
+.settings-row:hover:not(div) {
+  background: var(--surface-muted);
+}
+
+.settings-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.settings-row__main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-row__title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.settings-row__subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.settings-row__chev {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.settings-row__trailing-text {
+  font-size: var(--font-size-base);
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+/* Hint card (centered icon + text block) */
+.settings-hint {
+  text-align: center;
+  padding: 20px 16px;
+}
+
+.settings-hint__icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 12px;
+}
+
+.settings-hint__primary {
+  font-size: var(--font-size-base);
+  color: var(--text-secondary);
+  line-height: var(--line-height-base);
+  margin-bottom: 12px;
+}
+
+.settings-hint__secondary {
+  font-size: var(--font-size-base);
+  color: var(--text-tertiary);
+  line-height: var(--line-height-base);
 }
 
 .settings-icon {
@@ -906,56 +1629,46 @@
   color: var(--text-secondary);
 }
 
-.theme-toggle {
-  width: 44px;
-  height: 24px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--border-dark) 70%, transparent);
+/* ============================================================================
+ * Segmented control (Light / Dark / Auto picker in Settings)
+ * ============================================================================ */
+.theme-segmented {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
   border: 1px solid var(--border-subtle);
-  position: relative;
+  gap: 2px;
+}
+
+.theme-segmented__btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+  min-width: 52px;
 }
 
-.theme-toggle .theme-toggle-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
+.theme-segmented__btn:hover:not(.is-active) {
+  color: var(--text-primary);
+}
+
+.theme-segmented__btn.is-active {
   background: var(--surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
-  transition: transform 0.15s ease;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-xs);
 }
 
-.theme-toggle--header {
-  width: 40px;
-  height: 22px;
-  border-radius: 999px;
-}
-
-.theme-toggle--header .theme-toggle-thumb {
-  width: 18px;
-  height: 18px;
-  top: 1px;
-  left: 1px;
-}
-
-.theme-toggle--header.on .theme-toggle-thumb {
-  transform: translateX(18px);
-}
-
-.theme-toggle.on {
-  background: var(--primary);
-  border-color: color-mix(in srgb, var(--primary) 70%, transparent);
-}
-
-.theme-toggle.on .theme-toggle-thumb {
-  transform: translateX(20px);
-}
-
-.theme-toggle:focus-visible {
+.theme-segmented__btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
@@ -1187,6 +1900,20 @@
   font-weight: 700;
   font-size: 13px;
   flex-shrink: 0;
+  position: relative;
+}
+
+/* Small chain-accent dot overlaid on the bottom-right of the avatar, so the
+ * active chain is readable even when only the avatar is visible. */
+.account-avatar__chain-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  box-shadow: var(--shadow-xs);
 }
 
 .account-button:focus-visible {
@@ -1481,14 +2208,19 @@
 }
 
 .section-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: none;
+  color: var(--text-primary);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 700;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
 }
 
 .section-cta:hover:not(:disabled) {
@@ -1787,31 +2519,76 @@
   font-family: monospace;
 }
 
-.toast {
+/* ============================================================================
+ * Toast stack (bottom-centered, stackable, variant-aware)
+ * ============================================================================ */
+.toast-stack {
   position: fixed;
-  bottom: 20px;
   left: 50%;
+  bottom: 20px;
   transform: translateX(-50%);
-  background: var(--bg-inverse);
-  color: var(--text-on-inverse);
-  padding: 12px 20px;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 500;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
-  z-index: 4000;
-  animation: slideUpFade 0.2s ease-out;
+  display: flex;
+  flex-direction: column-reverse; /* newest on top visually */
+  align-items: center;
+  gap: 8px;
+  z-index: var(--z-toast);
+  pointer-events: none;
 }
 
-@keyframes slideUpFade {
-  from {
-    opacity: 0;
-    transform: translate(-50%, 10px);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
+.toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  background: var(--bg-inverse);
+  color: var(--text-on-inverse);
+  box-shadow: var(--shadow-lg);
+  max-width: 320px;
+  pointer-events: auto;
+  animation: toast-enter var(--duration-base) var(--ease-emphasis);
+}
+
+.toast.is-leaving {
+  animation: toast-exit 180ms var(--ease-in) forwards;
+}
+
+.toast__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.toast__message {
+  line-height: var(--line-height-base);
+}
+
+.toast--success {
+  background: var(--success);
+  color: #fff;
+}
+
+.toast--error {
+  background: var(--danger);
+  color: #fff;
+}
+
+.toast--info {
+  background: var(--info);
+  color: #fff;
+}
+
+@keyframes toast-enter {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes toast-exit {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(6px) scale(0.98); }
 }
 
 .account-details {
@@ -2002,6 +2779,68 @@
   color: var(--text-primary);
 }
 
+/* Tappable address chip — copy on click, animated check on success. */
+.receive-address-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard);
+}
+
+.receive-address-chip:hover {
+  border-color: var(--primary);
+}
+
+.receive-address-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--primary);
+}
+
+.receive-address-chip.is-copied {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 8%, var(--bg-secondary));
+}
+
+.receive-address-chip__addr {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  word-break: break-all;
+}
+
+.receive-address-chip__icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-secondary);
+  transition: background var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-base) var(--ease-emphasis);
+}
+
+.receive-address-chip.is-copied .receive-address-chip__icon {
+  background: var(--success);
+  color: #fff;
+  transform: scale(1.06);
+}
+
 .receive-warning {
   width: 100%;
   max-width: 400px;
@@ -2022,13 +2861,31 @@
 }
 
 .warning-icon {
-  font-size: 20px;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
 }
 
 .receive-warning .warning-icon,
 .receive-warning strong {
-  color: var(--warning);
+  color: var(--warning-dark);
+}
+
+.receive-warning--info {
+  background: var(--info-light);
+  border-color: color-mix(in srgb, var(--info) 40%, transparent);
+}
+
+.receive-warning--info .warning-icon,
+.receive-warning--info strong {
+  color: var(--info);
+}
+
+.theme-dark .receive-warning--info {
+  background: color-mix(in srgb, var(--surface) 86%, var(--info) 14%);
+  border-color: color-mix(in srgb, var(--border) 55%, var(--info) 45%);
 }
 
 .warning-content {

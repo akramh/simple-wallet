@@ -22,7 +22,9 @@ import SendTransactionView from './SendTransactionView';
 import TokenDetailsScreen from './TokenDetailsScreen';
 import Identicon from './ui/Identicon';
 import NetworkSelector from './ui/NetworkSelector';
-import Skeleton from './ui/Skeleton';
+import { Icon } from './ui';
+import BalanceCard from './wallet/BalanceCard';
+import TokenList from './wallet/TokenList';
 import ethIcon from '../../assets/img/eth_logo.svg';
 import { useToast } from '../context/ToastContext';
 import bnbIcon from '../../assets/img/bnb.svg';
@@ -39,8 +41,6 @@ import bitcoinIcon from '../../assets/img/bitcoin-logo.svg';
 import xrpIcon from '../../assets/img/xrp.svg';
 import tonIcon from '../../assets/img/ton_symbol.svg';
 import raydiumIcon from '../../assets/img/raydium-ray-logo.svg';
-import sendIcon from '../../assets/icons/send.svg';
-import receiveIcon from '../../assets/icons/receive.svg';
 import backIcon from '../../assets/icons/arrow-left.svg';
 import { isValidBitcoinAddress } from '../../../src/bitcoin/index.js';
 import { isValidTonAddress } from '../../../src/ton/index.js';
@@ -725,6 +725,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
   return (
     <div className="container">
       <Header
+        network={network}
         currentAddress={address}
         currentWalletName={currentWalletName}
         currentAccountIndex={currentAccountIndex}
@@ -832,43 +833,20 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
                 aria-label="Open account menu"
                 title="Open account menu"
               >
-                <span className="dropdown-arrow">▼</span>
+                <Icon name="chevron-down" size={14} decorative className="dropdown-arrow" />
               </button>
             </div>
           </div>
 
           {/* Balance + Actions always above tabs */}
-          <div className='balance-row'>
-          <div className="balance-card">
-            <div className="balance-header">
-              <div className="balance-label">Total Balance</div>
-              <button
-                className="refresh-link"
-                onClick={handleRefresh}
-                disabled={refreshing || pricesLoading}
-              >
-                {refreshing || pricesLoading ? 'Refreshing...' : 'Refresh'}
-              </button>
-            </div>
-            <div className="balance-amount-display">{totalBalance}</div>
-            <div className="action-row">
-              <button
-                className="action-tile"
-                onClick={() => setView('receive')}
-              >
-                <img src={receiveIcon} alt="Receive" className="action-icon" />
-                <span>Receive</span>
-              </button>
-              <button
-                className="action-tile"
-                onClick={() => setView('send')}
-              >
-                <img src={sendIcon} alt="Send" className="action-icon" />
-                <span>Send</span>
-              </button>
-            </div>
-          </div>
-          </div>
+          <BalanceCard
+            totalBalance={totalBalance}
+            refreshing={refreshing}
+            pricesLoading={pricesLoading}
+            onRefresh={handleRefresh}
+            onSend={() => setView('send')}
+            onReceive={() => setView('receive')}
+          />
 
           <div className="top-nav">
             {['tokens', 'activity'].map((tab) => (
@@ -907,85 +885,18 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
               />
             </div>
 
-            {loading ? (
-              <div className="token-list">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="token-item" style={{ pointerEvents: 'none' }}>
-                    <div className="token-info">
-                      <Skeleton width={34} height={34} borderRadius="50%" />
-                      <div className="token-details">
-                        <Skeleton width={40} height={14} style={{ marginBottom: 4 }} />
-                        <Skeleton width={80} height={12} />
-                      </div>
-                    </div>
-                    <div className="token-balance" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                      <Skeleton width={60} height={15} style={{ marginBottom: 4 }} />
-                      <Skeleton width={40} height={12} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="token-list">
-                {portfolio.map((item, index) => {
-                  const iconSrc = getTokenIcon(item.token);
-                  const usdValue = getTokenUsdValue(item.token, item.balance);
-                  return (
-                    <div
-                      key={index}
-                      className="token-item token-item-clickable"
-                      onClick={() => {
-                        setSelectedTokenDetails({ token: item.token, icon: iconSrc });
-                        setView('tokenDetails');
-                      }}
-                    >
-                      <div className="token-info">
-                        {iconSrc ? (
-                          <img src={iconSrc} alt={item.token.symbol} className="token-icon-img" />
-                        ) : (
-                          <div className="token-icon">
-                            {item.token.symbol.substring(0, 1)}
-                          </div>
-                        )}
-                        <div className="token-details">
-                          <h3>{item.token.symbol}</h3>
-                          <p>{item.token.name}</p>
-                        </div>
-                      </div>
-                      <div className="token-balance">
-                        <div className="token-amount">
-                          {item.error ? 'Error' : formatBalance(item.balance)}
-                        </div>
-                        {usdValue && !item.error && (
-                          <div className="token-usd-value">{usdValue}</div>
-                        )}
-                        {!usdValue && (
-                          <div className="token-symbol">{item.token.symbol}</div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {/* Add Token Button */}
-                {isEvmNetwork(network) && (
-                  <button
-                    className="token-item add-token-btn"
-                    onClick={() => setShowAddToken(true)}
-                    style={{
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      border: '2px dashed var(--border)',
-                      background: 'transparent'
-                    }}
-                  >
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-                      + Add Custom Token
-                    </span>
-                  </button>
-                )}
-              </div>
-            )}
+            <TokenList
+              items={portfolio}
+              loading={loading}
+              getIcon={getTokenIcon}
+              getUsdValue={getTokenUsdValue}
+              onSelect={(token, iconSrc) => {
+                setSelectedTokenDetails({ token, icon: iconSrc });
+                setView('tokenDetails');
+              }}
+              showAddToken={isEvmNetwork(network)}
+              onAddToken={() => setShowAddToken(true)}
+            />
 
             {/* Add Token Modal */}
             {isEvmNetwork(network) && (

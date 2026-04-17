@@ -1,9 +1,18 @@
 /**
  * Shared UI styles for popup and sidepanel.
- * Tokens are defined in tailwind.css (@theme) and aliased here for any legacy CSS.
+ *
+ * Tokens are defined in tailwind.css (@theme). This file:
+ *   1. Aliases verbose `--color-*` tokens to shorter legacy names used by popup.css.
+ *   2. Declares `.theme-dark` overrides (same logical tokens, different values).
+ *   3. Re-exposes new typography/spacing/motion tokens as short aliases.
+ *   4. Hosts lightweight shared utilities (skeleton pulse).
  */
+
+/* -------------------------------------------------------------------------
+ * Light-theme aliases (also the defaults for `.theme-light` / no-theme-class).
+ * ---------------------------------------------------------------------- */
 :root {
-  /* Aliases to shared theme tokens */
+  /* --- Brand ---------------------------------------------------------- */
   --primary: var(--color-primary);
   --primary-dark: var(--color-primary-dark);
   --primary-light: var(--color-primary-light);
@@ -11,6 +20,11 @@
   --primary-100: var(--color-primary-100);
   --primary-700: var(--color-primary-700);
 
+  --accent: var(--color-accent);
+  --accent-light: var(--color-accent-light);
+  --accent-dark: var(--color-accent-dark);
+
+  /* --- Semantic ------------------------------------------------------- */
   --danger: var(--color-danger);
   --danger-light: var(--color-danger-light);
   --danger-softer: var(--color-danger-softer);
@@ -29,11 +43,16 @@
   --warning-dark: var(--color-warning-dark);
   --warning-faint: var(--color-warning-faint);
 
+  --info: var(--color-info);
+  --info-light: var(--color-info-light);
+
+  /* --- Text ----------------------------------------------------------- */
   --text-primary: var(--color-text-primary);
   --text-secondary: var(--color-text-secondary);
   --text-tertiary: var(--color-text-tertiary);
   --text-on-inverse: var(--color-text-on-inverse);
 
+  /* --- Surface -------------------------------------------------------- */
   --bg-primary: var(--color-surface-primary);
   --bg-secondary: var(--color-surface-secondary);
   --bg-tertiary: var(--color-surface-tertiary);
@@ -49,12 +68,23 @@
   --gradient-soft-from: var(--color-gradient-soft-from);
   --gradient-soft-to: var(--color-gradient-soft-to);
 
+  --overlay-scrim: var(--color-overlay-scrim);
+
+  /* --- Chain accents -------------------------------------------------- */
+  --chain-eth: var(--color-chain-eth);
+  --chain-sol: var(--color-chain-sol);
+  --chain-btc: var(--color-chain-btc);
+  --chain-xrp: var(--color-chain-xrp);
+  --chain-ton: var(--color-chain-ton);
+
   /* -------------------------------------------------------------------------
    * Opinionated UI tokens (use these in popup.css/components).
    * ---------------------------------------------------------------------- */
   --app-bg: var(--bg-secondary);
   --surface: var(--bg-primary);
-  --surface-2: var(--bg-secondary);
+  --surface-2: var(--bg-tertiary);
+  --surface-raised: var(--bg-tertiary);
+  --surface-muted: var(--bg-muted);
 
   /* Softer borders read better in small, card-heavy extension UIs */
   --border-subtle: color-mix(in srgb, var(--border) 65%, transparent);
@@ -70,64 +100,92 @@
   --focus-ring-danger: color-mix(in srgb, var(--danger) 55%, transparent);
 }
 
-/* Dark theme overrides (light theme remains the default). */
+/* -------------------------------------------------------------------------
+ * Dark theme overrides.
+ *
+ * Brand hue is preserved (violet #6D4AFF) — only neutrals, borders, shadows,
+ * and semantic tints shift to read well on deep backgrounds.
+ * ---------------------------------------------------------------------- */
 .theme-dark {
-  --color-primary: #8b5cf6;
-  --color-primary-dark: #7c3aed;
-  --color-primary-light: #a78bfa;
-  --color-primary-50: rgba(139, 92, 246, 0.12);
-  --color-primary-100: rgba(139, 92, 246, 0.18);
-  --color-primary-500: #8b5cf6;
-  --color-primary-600: #7c3aed;
-  --color-primary-700: #6d28d9;
+  /* Brand stays constant; a slightly brighter tint reads better on dark */
+  --color-primary: #8B6DFF;
+  --color-primary-dark: #6D4AFF;
+  --color-primary-light: #B8A6FF;
+  --color-primary-50: rgba(139, 109, 255, 0.10);
+  --color-primary-100: rgba(139, 109, 255, 0.18);
+  --color-primary-500: #8B6DFF;
+  --color-primary-600: #6D4AFF;
+  --color-primary-700: #5438E0;
 
-  --color-surface-primary: #0f172a;   /* slate-900 */
-  --color-surface-secondary: #0b1220; /* deeper base */
-  --color-surface-tertiary: #111c33;  /* elevated */
+  --color-accent: #33DDFF;
+  --color-accent-light: #7FEBFF;
+  --color-accent-dark: #00D4FF;
+
+  /* Surfaces — deep, slightly cool near-blacks */
+  --color-surface-primary: #13131F;   /* card/base */
+  --color-surface-secondary: #08080F; /* app bg */
+  --color-surface-tertiary: #1C1C2B;  /* raised */
   --color-surface-muted: rgba(255, 255, 255, 0.06);
-  --color-surface-inverse: #ffffff;
+  --color-surface-inverse: #FFFFFF;
 
-  --color-border: rgba(148, 163, 184, 0.22);       /* slate-400 @ 22% */
-  --color-border-light: rgba(148, 163, 184, 0.16);
-  --color-border-dark: rgba(148, 163, 184, 0.34);
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-light: rgba(255, 255, 255, 0.05);
+  --color-border-dark: rgba(255, 255, 255, 0.16);
 
-  --color-text-primary: #f8fafc;   /* slate-50 */
-  --color-text-secondary: rgba(248, 250, 252, 0.72);
-  --color-text-tertiary: rgba(248, 250, 252, 0.52);
-  --color-text-on-inverse: #0b1220;
+  --color-text-primary: #F4F4F9;
+  --color-text-secondary: rgba(244, 244, 249, 0.70);
+  --color-text-tertiary: rgba(244, 244, 249, 0.48);
+  --color-text-on-inverse: #0F0F17;
 
-  --color-gradient-accent-from: #7c3aed;
-  --color-gradient-accent-to: #4f46e5;
-  --color-gradient-soft-from: #0f172a;
-  --color-gradient-soft-to: #0b1220;
+  --color-gradient-accent-from: #6D4AFF;
+  --color-gradient-accent-to: #00D4FF;
+  --color-gradient-soft-from: #13131F;
+  --color-gradient-soft-to: #08080F;
 
-  /* Semantic color overrides for dark mode contrast */
-  --color-success-softbg: rgba(16, 185, 129, 0.15);
-  --color-success-light: rgba(16, 185, 129, 0.25);
-  --color-danger-softbg: rgba(239, 68, 68, 0.15);
-  --color-danger-light: rgba(239, 68, 68, 0.25);
-  --color-warning-light: rgba(245, 158, 11, 0.15);
+  --color-overlay-scrim: rgba(0, 0, 0, 0.68);
 
-  /* Dark shadows should be tighter to avoid a “foggy” feel. */
-  --shadow-wallet: 0 6px 18px rgba(0, 0, 0, 0.28);
-  --shadow-wallet-lg: 0 10px 30px rgba(0, 0, 0, 0.34);
-  --shadow-wallet-hover: 0 10px 30px rgba(139, 92, 246, 0.18);
-  --shadow-modal: 0 24px 70px rgba(0, 0, 0, 0.55);
+  /* Semantic tints re-tuned for dark contrast */
+  --color-success-softbg: rgba(16, 185, 129, 0.14);
+  --color-success-light: rgba(16, 185, 129, 0.22);
+  --color-danger-softbg: rgba(239, 68, 68, 0.14);
+  --color-danger-light: rgba(239, 68, 68, 0.22);
+  --color-warning-light: rgba(245, 158, 11, 0.14);
+  --color-warning-faint: rgba(245, 158, 11, 0.08);
+  --color-info-light: rgba(59, 130, 246, 0.16);
+
+  /* Chain accents — XRP flips from near-black to near-white so it remains visible */
+  --color-chain-xrp: #C7CBD1;
+
+  /* Shadows should be tighter & deeper on dark surfaces */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.44);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.50);
+  --shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.56);
+  --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.62);
+  --shadow-hover: 0 8px 28px rgba(109, 74, 255, 0.30);
+
+  /* Back-compat aliases */
+  --shadow-wallet: var(--shadow-sm);
+  --shadow-wallet-lg: var(--shadow-md);
+  --shadow-wallet-hover: var(--shadow-hover);
 }
 
-/* Skeleton Loading */
+/* -------------------------------------------------------------------------
+ * Skeleton loader (cross-theme).
+ * ---------------------------------------------------------------------- */
 .skeleton {
-  background-color: var(--border); 
+  background-color: var(--border);
   animation: skeleton-pulse 1.5s ease-in-out infinite;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
+}
+
+.theme-dark .skeleton {
+  background-color: rgba(255, 255, 255, 0.08);
 }
 
 @keyframes skeleton-pulse {
   0% { opacity: 0.6; }
   50% { opacity: 0.3; }
   100% { opacity: 0.6; }
-}
-
-.theme-dark .skeleton {
-  background-color: rgba(255, 255, 255, 0.1);
 }

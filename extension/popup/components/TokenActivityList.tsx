@@ -15,6 +15,7 @@
 import React, { useState } from 'react';
 import TransactionDetailsModal from './TransactionDetailsModal';
 import { formatAddress, formatDate, formatTransactionValue } from '../utils/transactionFormat';
+import { EmptyState } from './ui';
 
 interface TokenActivityListProps {
   transactions: Transaction[];
@@ -95,10 +96,11 @@ export default function TokenActivityList({
       {loading ? (
         <div className="loading">Loading activity...</div>
       ) : transactions.length === 0 ? (
-        <div className="loading token-activity-empty">
-          <div style={{ fontSize: '40px', marginBottom: '12px' }}>📋</div>
-          <p>No token activity yet</p>
-        </div>
+        <EmptyState
+          icon="clipboard"
+          title="No token activity yet"
+          subtitle="Transfers involving this token will show up here."
+        />
       ) : (
         <div className="transaction-list">
           {transactions.map((tx) => (

@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useToast } from '../context/ToastContext';
+import { Icon } from './ui';
 
 interface Props {
   address: string;
@@ -11,14 +12,19 @@ interface Props {
 function ReceiveView({ address, network, networks }: Props) {
   const { showToast } = useToast();
   const isXrp = network.startsWith('xrp-');
+  const [justCopied, setJustCopied] = useState(false);
 
   const handleCopyAddress = async () => {
     try {
       await navigator.clipboard.writeText(address);
+      setJustCopied(true);
       showToast('Address copied!');
+      // Keep the inline "Copied" state a little longer than the toast so the
+      // user sees the CTA confirm the action even if they dismissed the toast.
+      window.setTimeout(() => setJustCopied(false), 1800);
     } catch (err) {
       console.error('Failed to copy address:', err);
-      showToast('Failed to copy address', 3000);
+      showToast('Failed to copy address', { duration: 3000, variant: 'error' });
     }
   };
 
@@ -67,11 +73,32 @@ function ReceiveView({ address, network, networks }: Props) {
       {/* Address Section */}
       <div className="receive-address-section">
         <div className="receive-label">Your Address</div>
-        <div className="receive-address">{address}</div>
-        <button className="btn btn-primary" style={{ marginTop: '16px' }} onClick={handleCopyAddress}>
-          Copy Address
+        <button
+          type="button"
+          className={`receive-address-chip${justCopied ? ' is-copied' : ''}`}
+          onClick={handleCopyAddress}
+          aria-label="Copy address"
+        >
+          <span className="receive-address-chip__addr">{address}</span>
+          <span className="receive-address-chip__icon" aria-hidden>
+            <Icon name={justCopied ? 'check' : 'copy'} size={16} decorative />
+          </span>
         </button>
-        {navigator.share && (
+        <button
+          className="btn btn-primary"
+          style={{
+            marginTop: '12px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+          }}
+          onClick={handleCopyAddress}
+        >
+          <Icon name={justCopied ? 'check' : 'copy'} size={16} decorative />
+          {justCopied ? 'Copied!' : 'Copy Address'}
+        </button>
+        {typeof navigator.share === 'function' && (
           <button className="btn btn-secondary" style={{ marginTop: '8px' }} onClick={handleShareAddress}>
             Share Address
           </button>
@@ -80,15 +107,19 @@ function ReceiveView({ address, network, networks }: Props) {
 
       {/* Warning */}
       <div className="receive-warning">
-        <div className="warning-icon">⚠️</div>
+        <div className="warning-icon">
+          <Icon name="alert-triangle" size={16} decorative />
+        </div>
         <div className="warning-content">
           <strong>Important:</strong> Only send {nativeSymbol} and tokens on the <strong>{networkName}</strong> network to this address. Sending assets from other networks may result in permanent loss.
         </div>
       </div>
 
       {isXrp && (
-        <div className="receive-warning" style={{ marginTop: 12 }}>
-          <div className="warning-icon">ℹ️</div>
+        <div className="receive-warning receive-warning--info" style={{ marginTop: 12 }}>
+          <div className="warning-icon">
+            <Icon name="info" size={16} decorative />
+          </div>
           <div className="warning-content">
             <strong>XRP note:</strong> Some exchanges require a destination tag for deposits. Personal wallets typically do not.
           </div>

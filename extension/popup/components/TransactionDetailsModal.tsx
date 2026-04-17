@@ -14,7 +14,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useToast } from '../context/ToastContext';
 import { TransactionHistoryManager } from '../../../src/transaction-history.js';
-import { Modal } from './ui';
+import { Icon, Modal } from './ui';
 
 interface Transaction {
   hash: string;
@@ -142,7 +142,7 @@ function TransactionDetailsModal({ isOpen, onClose, transaction, networkConfig }
           <span className="detail-label">From</span>
           <span className="detail-value copyable" onClick={() => copyToClipboard(transaction.from, 'Address')}>
             {formatAddress(transaction.from)}
-            <span className="copy-icon">📋</span>
+            <Icon name="copy" size={12} decorative className="copy-icon" />
           </span>
         </div>
 
@@ -150,7 +150,7 @@ function TransactionDetailsModal({ isOpen, onClose, transaction, networkConfig }
           <span className="detail-label">To</span>
           <span className="detail-value copyable" onClick={() => copyToClipboard(transaction.to || '', 'Address')}>
             {formatAddress(transaction.to)}
-            <span className="copy-icon">📋</span>
+            <Icon name="copy" size={12} decorative className="copy-icon" />
           </span>
         </div>
 
@@ -165,7 +165,7 @@ function TransactionDetailsModal({ isOpen, onClose, transaction, networkConfig }
           <span className="detail-label">Transaction Hash</span>
           <span className="detail-value copyable" onClick={() => copyToClipboard(transaction.hash, 'Hash')}>
             {formatHash(transaction.hash)}
-            <span className="copy-icon">📋</span>
+            <Icon name="copy" size={12} decorative className="copy-icon" />
           </span>
         </div>
 

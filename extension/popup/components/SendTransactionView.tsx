@@ -16,6 +16,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Token } from '../../../src/types/token.js';
 import { calculateTransactionCosts, formatUSDValue } from '../../../src/price-service';
 import { findTonTransaction } from '../../../src/ton/index.js';
+import { Icon, Skeleton } from './ui';
 
 interface SendTransactionViewProps {
   token: Token;
@@ -354,33 +355,38 @@ export function SendTransactionView({
               <div className="tx-detail-row">
                 <span className="tx-detail-label">Estimated Network Fee</span>
                 <div className="tx-detail-value-group">
-                  {displayMode === 'token' ? (
+                  {gasEstimateStatus === 'loading' ? (
+                    <Skeleton width={110} height={14} borderRadius={7} />
+                  ) : gasEstimateStatus === 'failed' || !gasEstimate ? (
+                    <span
+                      className="tx-detail-value"
+                      style={{ color: 'var(--warning-dark)', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                      title="We couldn't estimate the network fee. Continue at your own risk or retry."
+                    >
+                      <Icon name="alert-triangle" size={12} decorative />
+                      Estimate unavailable
+                    </span>
+                  ) : displayMode === 'token' ? (
                     <>
                       <span className="tx-detail-value">
-                        {gasEstimateStatus === 'loading'
-                          ? 'Estimating...'
-                          : gasEstimate
-                            ? `${parseFloat(gasEstimate.estimatedCostNative).toFixed(
-                              networkConfig?.isBitcoin
-                                ? 8
-                                : (networkConfig?.isTon || networkConfig?.isSolana ? 9 : 6)
-                            )} ${gasEstimate.nativeSymbol}`
-                            : '--'}
+                        {parseFloat(gasEstimate.estimatedCostNative).toFixed(
+                          networkConfig?.isBitcoin
+                            ? 8
+                            : (networkConfig?.isTon || networkConfig?.isSolana ? 9 : 6)
+                        )} {gasEstimate.nativeSymbol}
                       </span>
                       {getGasUsd() && <span className="tx-detail-usd">{getGasUsd()}</span>}
                     </>
                   ) : (
                     <>
                       <span className="tx-detail-value">{getGasUsd() || '--'}</span>
-                      {gasEstimate && (
-                        <span className="tx-detail-usd">
-                          {parseFloat(gasEstimate.estimatedCostNative).toFixed(
-                            networkConfig?.isBitcoin
-                              ? 8
-                              : (networkConfig?.isTon || networkConfig?.isSolana ? 9 : 6)
-                          )} {gasEstimate.nativeSymbol}
-                        </span>
-                      )}
+                      <span className="tx-detail-usd">
+                        {parseFloat(gasEstimate.estimatedCostNative).toFixed(
+                          networkConfig?.isBitcoin
+                            ? 8
+                            : (networkConfig?.isTon || networkConfig?.isSolana ? 9 : 6)
+                        )} {gasEstimate.nativeSymbol}
+                      </span>
                     </>
                   )}
                 </div>

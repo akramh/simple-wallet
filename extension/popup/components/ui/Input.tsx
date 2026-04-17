@@ -1,4 +1,5 @@
 import React from 'react';
+import { Icon } from './Icon';
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -154,7 +155,7 @@ export function Select({
           ))}
         </select>
         <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-secondary">
-          ▼
+          <Icon name="chevron-down" size={14} decorative />
         </div>
       </div>
       {error && (

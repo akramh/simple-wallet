@@ -6,11 +6,10 @@ This repo keeps **project plans, design notes, and implementation checklists** i
 
 - Feature plans / rollout checklists
 - Architecture notes and decision records (lightweight)
-- Tool-generated plans (Cursor, Copilot, etc.) that are worth keeping in git
+- Tool-generated plans worth keeping in git
 
 ## What does not go here
 
-- Cursor local artifacts (those are ignored via `.gitignore`, e.g. `.cursor/plans/`)
 - Random scratch notes that aren’t meant to be reviewed
 
 ## Naming convention (suggested)
