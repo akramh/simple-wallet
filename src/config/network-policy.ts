@@ -129,8 +129,45 @@ export const ALLOWED_DOMAINS = [
 ];
 
 /**
+ * Hosts that must be reached over WebSocket (wss://) rather than HTTPS.
+ * The runtime guard only checks hostname; this list is used exclusively by
+ * the CSP generator to emit the correct scheme per host.
+ */
+export const WSS_ONLY_HOSTS: ReadonlySet<string> = new Set([
+  'xrplcluster.com',
+  's1.ripple.com',
+  's2.ripple.com',
+  's.altnet.rippletest.net',
+]);
+
+/**
+ * Builds the `connect-src` directive value for the extension manifest CSP
+ * from {@link ALLOWED_DOMAINS}. Hosts in {@link WSS_ONLY_HOSTS} are emitted
+ * as `wss://`; all others as `https://`.
+ *
+ * Keeps the manifest CSP in lockstep with the runtime guard — one source of
+ * truth, no drift.
+ */
+export function buildConnectSrcDirective(): string {
+  const entries: string[] = ["'self'"];
+  for (const host of ALLOWED_DOMAINS) {
+    if (WSS_ONLY_HOSTS.has(host)) {
+      entries.push(`wss://${host}`);
+      // XRP hosts are accessed on a non-standard port in one case; keep
+      // parity with the previously hand-maintained CSP.
+      if (host === 's.altnet.rippletest.net') {
+        entries.push('wss://s.altnet.rippletest.net:51233');
+      }
+    } else {
+      entries.push(`https://${host}`);
+    }
+  }
+  return entries.join(' ');
+}
+
+/**
  * Checks if a given URL is allowed by the security policy.
- * 
+ *
  * @param urlString - The full URL to check (e.g. "https://api.example.com/v1/...")
  * @returns true if allowed, false otherwise
  */
