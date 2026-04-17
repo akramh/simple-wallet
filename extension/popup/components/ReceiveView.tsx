@@ -98,7 +98,7 @@ function ReceiveView({ address, network, networks }: Props) {
           <Icon name={justCopied ? 'check' : 'copy'} size={16} decorative />
           {justCopied ? 'Copied!' : 'Copy Address'}
         </button>
-        {navigator.share && (
+        {typeof navigator.share === 'function' && (
           <button className="btn btn-secondary" style={{ marginTop: '8px' }} onClick={handleShareAddress}>
             Share Address
           </button>

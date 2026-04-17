@@ -16,7 +16,8 @@
     "start": "npm run build && node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "npm run build && node --test tests/*.test.js",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "type-check:extension": "tsc --noEmit -p extension"
   },
   "keywords": [
     "ethereum",
