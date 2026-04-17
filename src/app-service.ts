@@ -1500,7 +1500,14 @@ export class WalletAppService {
 
     const nodeEnv = typeof process !== 'undefined' ? process.env?.NODE_ENV : undefined;
     if (persist && nodeEnv !== 'test') {
-      this.storage.writeJSON(this.configPath, this.config);
+      // Persist only the mutable user-state field. Writing the whole in-memory
+      // config here was a bug: when `storage` is a real filesystem (CLI), it
+      // clobbered the repo-root config.json with substituted rpcUrl values
+      // containing the literal Alchemy key — re-introducing a secret-in-git
+      // leak. Base network definitions should be loaded from the shipped
+      // config.json and merged with this state file at startup.
+      const existing = this.storage.readJSON<Record<string, unknown>>(this.configPath, {});
+      this.storage.writeJSON(this.configPath, { ...existing, network: this.config.network });
     }
   }
 

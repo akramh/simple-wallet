@@ -57,6 +57,13 @@ import { explorerAPI } from '../../src/explorer-api.js';
 import { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, getPriceHistory, getTokenMetadata, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
 import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
+import { installConsoleRedactor } from '../../src/utils/redact-logs.js';
+
+// Install console redactor as early as possible so any downstream init that
+// logs will already be sanitized. Registers the Alchemy key (and Helius, for
+// legacy configs) as secrets. Does nothing if the var is unset.
+installConsoleRedactor(import.meta.env.VITE_ALCHEMY_API_KEY);
+installConsoleRedactor(import.meta.env.VITE_HELIUS_API_KEY);
 import type { Config } from '../../src/types/index.js';
 import { getBitcoinExplorer, getBitcoinProvider, satoshisToBtc } from '../../src/bitcoin/index.js';
 import { ethers } from 'ethers';

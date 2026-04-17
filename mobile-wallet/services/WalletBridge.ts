@@ -30,6 +30,18 @@ import { mobileStorage, MobileStorageAdapter } from "./MobileStorageAdapter";
 import { mobileCrypto, MobileCryptoAdapter } from "./MobileCryptoAdapter";
 import { cacheService } from "./CacheService";
 import type { Token } from "@wallet/types/token";
+import { installConsoleRedactor } from "@wallet/utils/redact-logs";
+import Constants from "expo-constants";
+
+// Redact the Alchemy (and legacy Helius) key from any console.* output.
+// Keys are shipped in the app bundle and visible in request URLs; this
+// prevents them from also leaking into error messages/logs. Network tab
+// in remote debugging still shows URLs — that is unavoidable.
+{
+  const extra = Constants.expoConfig?.extra ?? {};
+  installConsoleRedactor(extra.alchemyApiKey as string | undefined);
+  installConsoleRedactor(extra.heliusApiKey as string | undefined);
+}
 
 // Types (these match the extension's service-worker types)
 export interface WalletState {

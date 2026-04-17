@@ -104,6 +104,10 @@ test('setNetwork persists updated config using storage adapter', async () => {
   const persisted = storage.readJSON('config.json', { network: '' });
   assert.equal(persisted.network, 'base');
   assert.equal(wallet.provider.chainId, 8453);
+  // Regression: setNetwork must NOT persist the full networks map. Writing the
+  // in-memory config back to a FileStorage-backed storage overwrote config.json
+  // with substituted rpcUrls containing the literal Alchemy key.
+  assert.equal(persisted.networks, undefined, 'networks map must not leak into persisted state');
 });
 
 test('getGasEstimate uses in-memory mnemonic for TON fee estimation', async () => {
