@@ -16,20 +16,21 @@ import logoIcon from '../../assets/img/logo.svg';
 import { applyTheme, getStoredTheme, resolveTheme, setStoredTheme, type UiTheme } from '../theme';
 import { useToast } from '../context/ToastContext';
 import { Icon } from './ui/Icon';
+import { chainAccentVar, chainFromNetworkKey, formatAddress as formatChainAddress } from '../utils/address';
 
 interface Props {
   network: string;
-  networks: Record<string, any>;
- currentAddress: string;
- currentWalletName: string;
- currentAccountIndex: number;
- onAccountMenuClick: () => void;
- onOpenSettings?: () => void;
- onLock: () => void;
+  currentAddress: string;
+  currentWalletName: string;
+  currentAccountIndex: number;
+  onAccountMenuClick: () => void;
+  onOpenSettings?: () => void;
+  onLock: () => void;
   showAccountButton?: boolean;
 }
 
 function Header({
+  network,
   currentAddress,
   currentWalletName,
   currentAccountIndex,
@@ -71,9 +72,9 @@ function Header({
     }
   };
 
-  const formatAddress = (addr: string) => {
-    return `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
-  };
+  const activeChain = chainFromNetworkKey(network);
+  const chainAccent = chainAccentVar(activeChain);
+  const formatAddress = (addr: string) => formatChainAddress(addr, { chain: activeChain });
 
   // Icon reflects the *currently applied* appearance (resolved if auto).
   const resolved = resolveTheme(uiTheme);
@@ -142,6 +143,11 @@ function Header({
           >
             <div className="account-avatar">
               {currentAddress.substring(2, 4).toUpperCase()}
+              <span
+                className="account-avatar__chain-dot"
+                style={{ background: chainAccent }}
+                aria-label={`Network: ${activeChain}`}
+              />
             </div>
             <div className="account-info">
               <div className="account-name">{currentWalletName} : Account {currentAccountIndex + 1}</div>

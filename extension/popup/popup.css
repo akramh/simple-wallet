@@ -604,54 +604,410 @@
 }
 
 /* Approval modal */
+/* ============================================================================
+ * Approval modal (dApp connect / transaction / signature)
+ * ============================================================================ */
 .approval-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  padding: 16px;
+  z-index: var(--z-modal);
 }
 
 .approval-modal {
   background: var(--surface);
   color: var(--text-primary);
   border-radius: var(--radius-lg);
-  padding: 20px;
-  width: min(420px, 90vw);
-  box-shadow: var(--shadow-md);
+  width: min(420px, 100%);
+  max-height: min(92vh, 640px);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header: dApp origin + action title */
+.approval-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+
+.approval-origin {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.approval-origin__icon {
+  --chip-accent: var(--primary);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--chip-accent) 14%, var(--surface-muted));
+  color: var(--chip-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+  flex-shrink: 0;
+}
+
+.approval-origin__icon img {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+}
+
+.approval-origin__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.approval-origin__host {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.approval-origin__title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  line-height: var(--line-height-lg);
+}
+
+/* Body */
+.approval-body {
+  padding: 16px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.approval-label {
-  font-weight: 700;
-  margin: 0;
+/* Callout — info/warning/danger */
+.approval-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-sm);
 }
 
-.approval-value {
-  margin: 0;
+.approval-callout--info {
+  background: var(--info-light);
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
+}
+
+.approval-callout--info > svg { color: var(--info); flex-shrink: 0; margin-top: 1px; }
+
+.approval-callout--warning {
+  background: var(--warning-light);
+  color: var(--warning-dark);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+}
+
+.approval-callout--warning > svg { color: var(--warning); flex-shrink: 0; margin-top: 1px; }
+
+.theme-dark .approval-callout--warning {
+  color: var(--text-primary);
+}
+
+/* Details stack (To / Amount / Fee / Network rows) */
+.approval-details {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-muted);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.approval-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+}
+
+.approval-row:last-child { border-bottom: none; }
+
+.approval-row__label {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+  flex-shrink: 0;
+}
+
+.approval-row__value {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+  text-align: right;
   word-break: break-word;
 }
 
-.approval-box {
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  padding: 10px;
-  font-family: monospace;
-  font-size: 12px;
-  max-height: 200px;
-  overflow: auto;
-  white-space: pre-wrap;
+.approval-row__value.is-mono {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-regular);
+  font-size: var(--font-size-sm);
 }
 
+.approval-amount {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Message preview + raw-data disclosure */
+.approval-message {
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.approval-message__label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.approval-message__body {
+  margin: 0;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.approval-raw {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  background: var(--surface);
+}
+
+.approval-raw > summary {
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.approval-raw > summary::-webkit-details-marker { display: none; }
+
+.approval-raw[open] > summary > svg {
+  transform: rotate(90deg);
+}
+
+.approval-raw > summary > svg {
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.approval-raw__body {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-subtle);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* Footer actions */
 .approval-actions {
   display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+
+.approval-actions .btn {
+  flex: 1;
+}
+
+/* Shared chain chip (also used in Header / SettingsView down the road). */
+.chain-chip {
+  --chip-accent: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--chip-accent) 12%, var(--surface-muted));
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.chain-chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--chip-accent);
+  flex-shrink: 0;
+}
+
+/* ============================================================================
+ * Activity — subtle fallback chip when the explorer can't be reached
+ * ============================================================================ */
+.activity-fallback-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--info-light);
+  color: var(--info);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  border: 1px solid color-mix(in srgb, var(--info) 24%, transparent);
+}
+
+.theme-dark .activity-fallback-chip {
+  color: var(--text-primary);
+}
+
+/* ============================================================================
+ * Unlock screen — wallet picker
+ * ============================================================================ */
+.unlock-wallet-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.unlock-wallet-option,
+.unlock-wallet-single {
+  --chip-accent: var(--primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.unlock-wallet-option:hover:not(.is-active) {
+  border-color: color-mix(in srgb, var(--chip-accent) 40%, var(--border));
+}
+
+.unlock-wallet-option.is-active {
+  border-color: var(--chip-accent);
+  background: color-mix(in srgb, var(--chip-accent) 10%, var(--surface));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--chip-accent) 22%, transparent);
+}
+
+.unlock-wallet-option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.unlock-wallet-option__dot,
+.unlock-wallet-single .unlock-wallet-option__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chip-accent);
+  flex-shrink: 0;
+}
+
+.unlock-wallet-option__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unlock-wallet-option__badge {
+  font-size: var(--font-size-xxs);
+  font-weight: var(--font-weight-bold);
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+}
+
+.unlock-wallet-single {
+  cursor: default;
+}
+
+/* ============================================================================
+ * App boot states (initial load / background unreachable)
+ * ============================================================================ */
+.app-boot {
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-secondary);
+  padding: 24px;
+}
+
+.app-boot__spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2.5px solid var(--border);
+  border-top-color: var(--primary);
+  animation: app-spin 0.9s linear infinite;
+}
+
+.app-boot__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.app-boot__label.is-error {
+  color: var(--danger);
+}
+
+@keyframes app-spin {
+  from { transform: rotate(0); }
+  to   { transform: rotate(360deg); }
 }
 
 /* Welcome Screen Styles */
@@ -1433,6 +1789,20 @@
   font-weight: 700;
   font-size: 13px;
   flex-shrink: 0;
+  position: relative;
+}
+
+/* Small chain-accent dot overlaid on the bottom-right of the avatar, so the
+ * active chain is readable even when only the avatar is visible. */
+.account-avatar__chain-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  box-shadow: var(--shadow-xs);
 }
 
 .account-button:focus-visible {
@@ -2296,6 +2666,68 @@
   border-radius: 8px;
   text-align: center;
   color: var(--text-primary);
+}
+
+/* Tappable address chip — copy on click, animated check on success. */
+.receive-address-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard);
+}
+
+.receive-address-chip:hover {
+  border-color: var(--primary);
+}
+
+.receive-address-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--primary);
+}
+
+.receive-address-chip.is-copied {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 8%, var(--bg-secondary));
+}
+
+.receive-address-chip__addr {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  word-break: break-all;
+}
+
+.receive-address-chip__icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-secondary);
+  transition: background var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-base) var(--ease-emphasis);
+}
+
+.receive-address-chip.is-copied .receive-address-chip__icon {
+  background: var(--success);
+  color: #fff;
+  transform: scale(1.06);
 }
 
 .receive-warning {

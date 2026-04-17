@@ -141,24 +141,11 @@ function ActivityView({ currentAddress, network, networks }: Props) {
         </button>
       </div>
 
-      {/* Error Banner */}
+      {/* Fallback notice: explorer unreachable → local cache. Keep it calm & subtle. */}
       {error && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 8,
-            padding: '8px 12px',
-            background: 'var(--warning-light)',
-            border: '1px solid var(--warning-mid)',
-            borderRadius: 'var(--radius-sm)',
-            fontSize: 'var(--font-size-sm)',
-            color: 'var(--warning-dark)',
-            marginBottom: 12,
-          }}
-        >
-          <Icon name="alert-triangle" size={14} decorative style={{ flex: '0 0 auto', marginTop: 2 }} />
-          <span>{error}. Showing local transactions.</span>
+        <div className="activity-fallback-chip" title={error}>
+          <Icon name="info" size={12} decorative />
+          <span>Showing cached history</span>
         </div>
       )}
 

@@ -726,6 +726,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
   return (
     <div className="container">
       <Header
+        network={network}
         currentAddress={address}
         currentWalletName={currentWalletName}
         currentAccountIndex={currentAccountIndex}

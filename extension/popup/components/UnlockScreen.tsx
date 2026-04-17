@@ -1,15 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import lockIcon from '../../assets/icons/lock.svg';
 import { PasswordField } from './ui';
+import { detectChain, chainAccentVar } from '../utils/address';
 
 interface Props {
   onUnlocked: () => void;
 }
 
+interface WalletMeta {
+  name: string;
+  importType?: 'mnemonic' | 'privateKey';
+  /** One or more addresses across chains — used to pick an accent. */
+  addresses?: string[];
+}
+
 function UnlockScreen({ onUnlocked }: Props) {
   const [password, setPassword] = useState('');
   const [walletName, setWalletName] = useState('default');
-  const [availableWallets, setAvailableWallets] = useState<string[]>([]);
+  const [wallets, setWallets] = useState<WalletMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -18,11 +26,20 @@ function UnlockScreen({ onUnlocked }: Props) {
     const loadWallets = async () => {
       try {
         const response = await chrome.runtime.sendMessage({ type: 'GET_ALL_WALLETS' });
-        if (response.wallets) {
-          const walletNames = Object.keys(response.wallets);
-          setAvailableWallets(walletNames);
-          if (walletNames.length > 0 && !walletNames.includes('default')) {
-            setWalletName(walletNames[0]);
+        if (response?.wallets) {
+          const walletsList: WalletMeta[] = Object.entries(response.wallets).map(
+            ([name, meta]: [string, any]) => ({
+              name,
+              importType: meta?.importType,
+              addresses: Object.values(meta?.accounts ?? {})
+                .map((a: any) => a?.address)
+                .filter(Boolean),
+            }),
+          );
+          setWallets(walletsList);
+          const names = walletsList.map((w) => w.name);
+          if (names.length > 0 && !names.includes('default')) {
+            setWalletName(names[0]);
           }
         }
       } catch (err) {
@@ -31,6 +48,11 @@ function UnlockScreen({ onUnlocked }: Props) {
     };
     loadWallets();
   }, []);
+
+  const selectedWallet = wallets.find((w) => w.name === walletName);
+  const selectedAccent = chainAccentVar(
+    detectChain(selectedWallet?.addresses?.[0]),
+  );
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,21 +96,40 @@ function UnlockScreen({ onUnlocked }: Props) {
         </div>
 
         <form onSubmit={handleUnlock}>
-          {availableWallets.length > 0 && (
+          {wallets.length > 0 && (
             <div className="form-group">
               <label>Wallet</label>
-              {availableWallets.length > 1 ? (
-                <select
-                  value={walletName}
-                  onChange={(e) => setWalletName(e.target.value)}
-                >
-                  {availableWallets.map(name => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
+              {wallets.length > 1 ? (
+                <div className="unlock-wallet-picker" role="radiogroup" aria-label="Select wallet">
+                  {wallets.map((w) => {
+                    const accent = chainAccentVar(detectChain(w.addresses?.[0]));
+                    const active = w.name === walletName;
+                    return (
+                      <button
+                        key={w.name}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        className={`unlock-wallet-option${active ? ' is-active' : ''}`}
+                        onClick={() => setWalletName(w.name)}
+                        style={{ ['--chip-accent' as any]: accent }}
+                      >
+                        <span className="unlock-wallet-option__dot" />
+                        <span className="unlock-wallet-option__name">{w.name}</span>
+                        {w.importType === 'privateKey' && (
+                          <span className="unlock-wallet-option__badge">PK</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               ) : (
-                <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.05)' }}>
-                  {walletName}
+                <div
+                  className="unlock-wallet-single"
+                  style={{ ['--chip-accent' as any]: selectedAccent }}
+                >
+                  <span className="unlock-wallet-option__dot" />
+                  <span>{walletName}</span>
                 </div>
               )}
             </div>

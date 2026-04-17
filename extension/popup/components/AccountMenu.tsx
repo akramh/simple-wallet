@@ -7,6 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import { Icon, MnemonicDisplay } from './ui';
 import { useToast } from '../context/ToastContext';
+import { formatAddress } from '../utils/address';
 
 interface Account {
   index: number;
@@ -377,7 +378,8 @@ function AccountMenu({
     }
   };
 
-  const formatAddress = (addr: string) => `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}`;
+  // NB: chain is auto-detected per address so mnemonic wallets with multiple
+  // chain accounts truncate correctly for each row.
 
   const getWalletsWithAccounts = () => {
     return wallets.map(wallet => ({

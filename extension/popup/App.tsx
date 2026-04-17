@@ -30,6 +30,7 @@ import { sendMessageWithRetry } from './utils/messaging';
 import WelcomeScreen from './components/WelcomeScreen';
 import UnlockScreen from './components/UnlockScreen';
 import MainWallet from './components/MainWallet';
+import ApprovalModal, { type ApprovalRequest } from './components/ApprovalModal';
 import { applyTheme, getStoredTheme, subscribeSystemTheme } from './theme';
 
 // ============================================================================
@@ -56,13 +57,8 @@ interface WalletState {
   privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton' | null;
 }
 
-/**
- * Types of pending approval requests from dApps.
- */
-type PendingRequest =
-  | { id: string; type: 'connect'; origin: string; createdAt: number }
-  | { id: string; type: 'transaction'; origin: string; createdAt: number; tx: any }
-  | { id: string; type: 'signature'; origin: string; createdAt: number; method: string; params: any[] };
+/** Pending approval request from the dApp provider. */
+type PendingRequest = ApprovalRequest;
 
 // ============================================================================
 // App Component
@@ -81,6 +77,9 @@ function App() {
 
   /** Queue of pending dApp approval requests */
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+
+  /** Networks metadata (populated lazily so approval modal can show human names). */
+  const [networks, setNetworks] = useState<Record<string, { name?: string; nativeSymbol?: string }>>({});
 
   /**
    * Handles wallet lock events by resetting unlocked state.
@@ -152,6 +151,14 @@ function App() {
 
     loadState();
     loadPending();
+    // Best-effort: fetch network metadata so the approval modal can resolve
+    // a human-readable network name + native symbol. Failures fall back to
+    // the raw network key.
+    sendMessageWithRetry({ type: 'GET_NETWORKS' })
+      .then((res) => {
+        if (res?.networks) setNetworks(res.networks);
+      })
+      .catch(() => { });
 
     // Periodically resync state in case the service worker restarted and lost in-memory state
     const interval = setInterval(() => {
@@ -229,94 +236,35 @@ function App() {
     }
   };
 
-  /** Currently active approval request (first in queue) */
+  /** Currently active approval request (first in queue). */
   const currentRequest = pendingRequests[0];
-
-  /**
-   * Renders the approval modal for the current pending request.
-   * Shows different content based on request type:
-   * - connect: dApp connection request
-   * - transaction: Transaction signing request
-   * - signature: Message signing request
-   * 
-   * @returns Modal JSX or null if no pending requests
-   */
-  const renderApprovalModal = () => {
-    if (!currentRequest) return null;
-
-    const renderBody = () => {
-      switch (currentRequest.type) {
-        case 'connect':
-          return (
-            <>
-              <p className="approval-label">Connection request</p>
-              <p className="approval-value">Origin: {currentRequest.origin}</p>
-              {state?.currentWalletName && (
-                <p className="approval-value">Wallet: {state.currentWalletName}</p>
-              )}
-              <p className="approval-value">Account: {state?.address}</p>
-            </>
-          );
-        case 'transaction':
-          return (
-            <>
-              <p className="approval-label">Transaction request</p>
-              <p className="approval-value">Origin: {currentRequest.origin}</p>
-              {state?.currentWalletName && (
-                <p className="approval-value">Wallet: {state.currentWalletName}</p>
-              )}
-              <p className="approval-value">To: {currentRequest.tx?.to || 'N/A'}</p>
-              <p className="approval-value">Value: {currentRequest.tx?.value || '0'} wei</p>
-            </>
-          );
-        case 'signature':
-          return (
-            <>
-              <p className="approval-label">Signature request</p>
-              <p className="approval-value">Origin: {currentRequest.origin}</p>
-              {state?.currentWalletName && (
-                <p className="approval-value">Wallet: {state.currentWalletName}</p>
-              )}
-              <p className="approval-value">Method: {currentRequest.method}</p>
-              <p className="approval-box">{JSON.stringify(currentRequest.params, null, 2)}</p>
-            </>
-          );
-        default:
-          return null;
-      }
-    };
-
-    return (
-      <div className="approval-backdrop">
-        <div className="approval-modal">
-          {renderBody()}
-          <div className="approval-actions">
-            <button className="btn btn-secondary" onClick={() => handleResolve(currentRequest.id, false)}>Reject</button>
-            <button className="btn btn-primary" onClick={() => handleResolve(currentRequest.id, true)}>Approve</button>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   // ============================================================================
   // Render Logic
   // ============================================================================
 
-  // Show loading spinner during initial state fetch
+  // Initial boot state — show a compact centered spinner rather than bare text.
   if (loading) {
     return (
-      <div className="container">
-        <div className="loading">Loading...</div>
+      <div className="container app-boot">
+        <div className="app-boot__spinner" aria-label="Loading" />
+        <div className="app-boot__label">Loading wallet…</div>
       </div>
     );
   }
 
-  // Show error state if state fetch failed
+  // Background-service failure. Tell the user we're stuck and offer to retry.
   if (!state) {
     return (
-      <div className="container">
-        <div className="loading">Error loading wallet</div>
+      <div className="container app-boot">
+        <div className="app-boot__label is-error">We couldn't reach the wallet.</div>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => { setLoading(true); loadState(); }}
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -344,7 +292,18 @@ function App() {
         onLock={loadState}
         onStateChange={loadState}
       />
-      {renderApprovalModal()}
+      {currentRequest && (
+        <ApprovalModal
+          request={currentRequest}
+          wallet={{
+            name: state.currentWalletName,
+            address: state.address,
+            network: state.network,
+          }}
+          networks={networks}
+          onResolve={handleResolve}
+        />
+      )}
     </>
   );
 }
