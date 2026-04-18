@@ -467,8 +467,18 @@
 
 .balance-amount-display {
   font-size: 28px;
-  font-weight: 700;
+  /* Inter ships weights 100–900. 800 (extra-bold) reads as a confident
+   * "headline" number without tipping into 900 (black), which feels shouty
+   * at 40 px. */
+  font-weight: 800;
   color: var(--text-primary);
+  /* Tabular numerals keep each digit the same width, so the hero total
+   * doesn't shift horizontally when it ticks (e.g. $366.38 → $367.12).
+   * Slight negative tracking tightens the numeric run and reinforces the
+   * heavier weight without relying on `-webkit-text-stroke` tricks. */
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 
 .action-row {
@@ -3736,4 +3746,290 @@ div.settings-row {
 .tx-toggle-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* ============================================================================
+ * Unified cross-chain portfolio view
+ * ==========================================================================*/
+
+/* Wrap the token icon so the chain badge can be absolutely positioned on it. */
+.token-icon-wrap {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+}
+
+.token-icon-wrap > .token-icon-img,
+.token-icon-wrap > .token-icon {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Small chain logo overlay on the lower-right corner. The white ring keeps it
+ * readable on both light and dark themes even when the token icon extends to
+ * the edge of its circle. */
+.token-chain-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 0 0 1.5px var(--surface);
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* Balance older than BALANCE_CACHE_TTL — dim the row and surface a subtle dot. */
+.token-item--stale {
+  opacity: 0.7;
+}
+
+.token-item--stale .token-amount::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--warning, #d97706);
+  vertical-align: middle;
+}
+
+/* Portfolio hero — reuses .balance-card but restyles the total + meta line
+ * as a centered hero block. Bigger type so the aggregate number is the
+ * anchor of the popup, not a number squeezed into the card's top-left. */
+.balance-card.portfolio-hero .balance-amount-display {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  text-align: center;
+  display: block;
+  width: 100%;
+}
+
+.portfolio-hero__meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  margin-bottom: 16px;
+  min-height: 16px;
+  text-align: center;
+}
+
+/* Tappable total — looks like plain text but toggles privacy mode.
+ * Only reset the button chrome; leave font-size / weight to cascade from
+ * `.balance-amount-display` (using `font: inherit` here would clobber
+ * the 40px rule above). */
+.portfolio-hero__total {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font-family: inherit;
+  font-weight: inherit;
+  text-align: center;
+  width: 100%;
+}
+
+.portfolio-hero__total:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-radius: 6px;
+}
+
+/* Controls row above the unified token list: hide-zero toggle + sort button. */
+.unified-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 2px 10px;
+}
+
+.unified-controls__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.unified-controls__toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.unified-controls__sort {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.unified-controls__sort:hover {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border-subtle));
+  color: var(--text-primary);
+}
+
+.unified-controls__sort:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* Offline / error banner above the unified list. */
+.portfolio-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: color-mix(in srgb, var(--warning, #d97706) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning, #d97706) 35%, var(--border-subtle));
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.portfolio-banner__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.portfolio-banner__message {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.portfolio-banner__action {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.portfolio-banner__action:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* Empty-portfolio wrapper aligns the Receive CTA under the default EmptyState. */
+.empty-portfolio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.empty-portfolio__actions {
+  display: flex;
+  justify-content: center;
+}
+
+/* Sort modal rows — mirrors the MetaMask "selectable list item" pattern. */
+.sort-modal__options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sort-modal__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  color: var(--text-primary);
+}
+
+.sort-modal__option:hover {
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border-subtle));
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+}
+
+.sort-modal__option.is-selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+
+.sort-modal__option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.sort-modal__option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.sort-modal__radio {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  flex: 0 0 16px;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sort-modal__option.is-selected .sort-modal__radio {
+  border-color: var(--primary);
+}
+
+.sort-modal__radio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.sort-modal__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sort-modal__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sort-modal__description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.sort-modal__badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
 }

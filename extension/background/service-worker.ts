@@ -58,6 +58,19 @@ import { explorerAPI } from '../../src/explorer-api.js';
 import { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, getPriceHistory, getTokenMetadata, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
 import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
+import { getVisibleNetworkEntries, isNetworkUsable } from '../../src/network-visibility.js';
+import { buildUnifiedPortfolio } from '../../src/unified-portfolio.js';
+import {
+  fetchAlchemyPortfolio,
+  isPortfolioSupported,
+  type PortfolioAddressGroup,
+} from '../../src/portfolio-api.js';
+import type {
+  BuildUnifiedPortfolioOptions,
+  NetworkPortfolioInput,
+  UnifiedPortfolioSnapshot,
+} from '../../src/types/unified-portfolio.js';
+import type { Token } from '../../src/types/token.js';
 import { installConsoleRedactor } from '../../src/utils/redact-logs.js';
 
 // Install console redactor as early as possible so any downstream init that
@@ -416,37 +429,39 @@ async function saveBalanceCache(): Promise<void> {
 }
 
 /**
- * Broadcast balance update to all UI contexts
+ * Broadcast balance update to all UI contexts.
+ *
+ * `extra` is a merged into the envelope — used to attach an aggregate unified
+ * snapshot block after a per-network refresh so the popup's unified-view hook
+ * can update its hero total without re-querying.
  */
-function broadcastBalanceUpdate(network: string, balances: { token: any; balance: string }[]): void {
+function broadcastBalanceUpdate(
+  network: string,
+  balances: { token: any; balance: string }[],
+  extra?: Record<string, unknown>
+): void {
   chrome.runtime.sendMessage({
     type: 'BALANCES_UPDATED',
     network,
-    balances
+    balances,
+    ...(extra || {}),
   }).catch(() => { });
 }
 
 /**
- * Start balance polling
+ * Broadcast a full unified-portfolio snapshot to UI contexts.
+ * Fires once at the end of a fan-out refresh across all enabled chains.
  */
-function startBalancePolling(): void {
-  if (balancePollingTimer) return;
-
-  balancePollingTimer = setInterval(async () => {
-    if (!isUnlocked || !walletService) return;
-
-    try {
-      await refreshBalancesForCurrentNetwork();
-    } catch (err) {
-      console.warn('[BalancePolling] Error:', err);
-    }
-  }, BALANCE_POLLING_INTERVAL);
-
-  console.log('[BalancePolling] Started');
+function broadcastUnifiedPortfolio(snapshot: UnifiedPortfolioSnapshot): void {
+  chrome.runtime.sendMessage({
+    type: 'UNIFIED_PORTFOLIO_UPDATED',
+    snapshot,
+  }).catch(() => { });
 }
 
 /**
- * Stop balance polling
+ * Legacy popup-driven polling timer. Superseded by the alarm + popup-port
+ * hybrid, but retained as the engine for the popup-port fast path below.
  */
 function stopBalancePolling(): void {
   if (balancePollingTimer) {
@@ -460,43 +475,530 @@ function stopBalancePolling(): void {
 // Balance Refresh (Network-Aware)
 // ============================================================================
 
-async function refreshBalancesForCurrentNetwork(): Promise<void> {
-  if (!isUnlocked || !walletService) return;
+type RefreshResult = Awaited<ReturnType<WalletAppService['getPortfolioForNetwork']>>;
 
-  const network = walletService.config.network;
-  const networkConfig = walletService.config.networks[network];
+/**
+ * Refresh balances for a single network and update the cache.
+ *
+ * Skips networks the current wallet cannot use (e.g. an EVM private-key
+ * import viewing a Bitcoin network), returning an empty array instead of
+ * throwing. `suppressBroadcast` is used by the fan-out refresh to avoid
+ * per-network re-render storms; callers that want per-network UI updates
+ * (the legacy single-network refresh path) pass false.
+ */
+async function refreshBalancesForNetwork(
+  networkKey: string,
+  opts: { suppressBroadcast?: boolean } = {}
+): Promise<RefreshResult> {
+  if (!isUnlocked || !walletService) return [];
 
-  if (
-    isBitcoinNetworkConfig(networkConfig) ||
-    isSolanaNetworkConfig(networkConfig) ||
-    isXRPNetworkConfig(networkConfig) ||
-    isTonNetworkConfig(networkConfig)
-  ) {
-    const portfolio = await walletService.getPortfolioForNetwork(network);
+  const networkConfig = walletService.config.networks[networkKey];
+  if (!networkConfig) return [];
 
-    for (const item of portfolio) {
-      if (!item.error) {
-        setCachedBalance(network, item.token, item.balance);
-      }
-    }
+  const wallet = walletService.wallet;
+  const usable = isNetworkUsable(networkKey, networkConfig, {
+    importType: wallet.importType ?? null,
+    privateKeyType: wallet.privateKeyType ?? null,
+  });
+  if (!usable) return [];
 
-    await saveBalanceCache();
-    broadcastBalanceUpdate(network, portfolio);
-    return;
+  let portfolio: RefreshResult;
+  try {
+    portfolio = await walletService.getPortfolioForNetwork(networkKey);
+  } catch (err) {
+    console.warn(`[BalanceRefresh] ${networkKey} failed:`, err);
+    return [];
   }
 
-  const tokens = walletService.getTokensForNetwork(network);
-  const balances = await walletService.fetchBalances(tokens);
-
-  for (const item of balances) {
+  for (const item of portfolio) {
     if (!item.error) {
-      setCachedBalance(network, item.token, item.balance);
+      setCachedBalance(networkKey, item.token, item.balance);
     }
   }
 
   await saveBalanceCache();
-  broadcastBalanceUpdate(network, balances);
+  if (!opts.suppressBroadcast) {
+    broadcastBalanceUpdate(networkKey, portfolio);
+  }
+  return portfolio;
 }
+
+/**
+ * Thin wrapper preserving the legacy `REFRESH_BALANCES` contract — refreshes
+ * whichever single network is active in `walletService.config.network`.
+ */
+async function refreshBalancesForCurrentNetwork(): Promise<void> {
+  if (!isUnlocked || !walletService) return;
+  await refreshBalancesForNetwork(walletService.config.network);
+}
+
+/**
+ * Return the list of networks the current wallet can both see (testnet
+ * visibility respected, current-network always included) and use (chain
+ * type matches any private-key import restriction).
+ */
+function getEnabledNetworksForWallet(): Array<[string, any]> {
+  if (!walletService) return [];
+  const wallet = walletService.wallet;
+  const visible = getVisibleNetworkEntries(walletService.config.networks, {
+    showTestnets: walletService.config.showTestnets ?? false,
+    currentNetwork: walletService.config.network,
+  });
+  return visible.filter(([key, config]) =>
+    isNetworkUsable(key, config, {
+      importType: wallet.importType ?? null,
+      privateKeyType: wallet.privateKeyType ?? null,
+    })
+  );
+}
+
+/** Whether a fan-out refresh is currently running (guards against overlap). */
+let isRefreshingAllEnabled = false;
+
+/**
+ * Prices sourced from the Alchemy Portfolio API on the most recent refresh.
+ * Keyed by `${networkKey}:${tokenKey}`. Read by the snapshot builder before
+ * falling back to the live price provider — makes the unified view zero-hop
+ * for prices on the 9 chains the Portfolio API covers. Refreshed wholesale
+ * on each fan-out; never mutated piecewise.
+ */
+const portfolioPriceCache = new Map<string, number | null>();
+
+/**
+ * Refresh EVM + Solana balances and prices in a single batched call.
+ *
+ * Uses Alchemy's Portfolio API (`POST /assets/tokens/by-address`) which
+ * returns native + ERC-20 + SPL balances, prices, and metadata for up to
+ * 2 addresses × 5 networks each. For our 8 EVM + Solana mainnet, that's
+ * ~2 round-trips (1 – 2 s) instead of the 24 s serial fan-out.
+ *
+ * Returns the set of network keys this path successfully covered, so the
+ * main refresh orchestrator knows which chains still need the per-chain
+ * fallback path. On total failure (Portfolio API down / rate-limited /
+ * no API key configured) returns an empty set, and the caller falls back
+ * to the legacy per-chain loop for every enabled network.
+ *
+ * Networks the wallet can't use (private-key wallets restricted to one
+ * chain type) are filtered out by `isNetworkUsable` at the group-building
+ * stage, so calling this for a BTC-only wallet is a no-op.
+ */
+async function refreshViaPortfolioApi(
+  apiKey: string,
+  targetNetworks: Array<[string, any]>,
+): Promise<Set<string>> {
+  const covered = new Set<string>();
+  if (!walletService || targetNetworks.length === 0) return covered;
+
+  const wallet = walletService.wallet;
+  const usabilityCtx = {
+    importType: wallet.importType ?? null,
+    privateKeyType: wallet.privateKeyType ?? null,
+  };
+
+  // Collect one address-group per chain family this wallet can use.
+  const groups: PortfolioAddressGroup[] = [];
+
+  const evmNetworks: string[] = [];
+  for (const [key, config] of targetNetworks) {
+    if (!isPortfolioSupported(key)) continue;
+    if (key.startsWith('solana-')) continue;
+    if (!isNetworkUsable(key, config, usabilityCtx)) continue;
+    evmNetworks.push(key);
+  }
+  if (evmNetworks.length > 0) {
+    try {
+      // Go through the raw wallet (not `walletService.getAddress()`) because
+      // the latter is network-aware — if the wallet's current network is
+      // Solana/Bitcoin/XRP/TON, `walletService.getAddress()` returns THAT
+      // chain's address (base58 / bech32 / r... / EQ...), not the EVM 0x
+      // address we need for the Alchemy Portfolio API call. For a fresh
+      // mnemonic import where `config.network` happens to be the bundled
+      // default (`solana-mainnet`), this bug caused every EVM chain to be
+      // queried with a Solana address — Alchemy returned nothing, and only
+      // the Solana group succeeded.
+      const evmAddress = wallet.getAddress();
+      if (evmAddress) {
+        groups.push({ address: evmAddress, networkKeys: evmNetworks });
+      }
+    } catch {
+      // `wallet.getAddress()` throws for non-EVM private-key imports — that's
+      // correct: we can't sign on EVM chains without an EVM key, so skipping
+      // the Portfolio EVM call is the right behavior.
+    }
+  }
+
+  const solanaNetworks = targetNetworks
+    .map(([key]) => key)
+    .filter(key => key.startsWith('solana-') && isPortfolioSupported(key) && isNetworkUsable(key, walletService!.config.networks[key], usabilityCtx));
+  if (solanaNetworks.length > 0) {
+    try {
+      const solInfo = wallet.getSolanaAddress(wallet.getCurrentAccountIndex());
+      if (solInfo?.address) {
+        groups.push({ address: solInfo.address, networkKeys: solanaNetworks });
+      }
+    } catch {
+      // Wallet has no Solana address.
+    }
+  }
+
+  if (groups.length === 0) return covered;
+
+  const entries = await fetchAlchemyPortfolio(apiKey, groups);
+  if (entries.length === 0) {
+    // Non-empty groups but zero entries: either the wallet holds nothing on
+    // these chains or the API failed. Don't mark these networks as covered
+    // so the orchestrator falls back to per-chain fetches; that path will
+    // correctly produce zero balances for tokens in our allowlist.
+    return covered;
+  }
+
+  // Index entries by (networkKey, tokenKey) for fast lookup.
+  const now = Date.now();
+  const byNetwork = new Map<string, Map<string, (typeof entries)[number]>>();
+  for (const entry of entries) {
+    let bucket = byNetwork.get(entry.networkKey);
+    if (!bucket) { bucket = new Map(); byNetwork.set(entry.networkKey, bucket); }
+    bucket.set(entry.tokenKey, entry);
+  }
+
+  // For every queried network, fill balanceCache + portfolioPriceCache from
+  // what the API returned. Tokens in our allowlist that the API didn't
+  // return are set to "0" — Alchemy omits zero balances, and rendering them
+  // as 0 keeps the hide-zero toggle correct.
+  const queriedNetworks = new Set<string>([...evmNetworks, ...solanaNetworks]);
+  for (const networkKey of queriedNetworks) {
+    const bucket = byNetwork.get(networkKey) ?? new Map();
+    const allowlist = walletService.getTokensForNetwork(networkKey);
+    for (const token of allowlist) {
+      const tokenKey = getTokenCacheKey(token);
+      const entry = bucket.get(tokenKey);
+      setCachedBalance(networkKey, token, entry?.balance ?? '0');
+      portfolioPriceCache.set(`${networkKey}:${tokenKey}`, entry?.priceUsd ?? null);
+    }
+    covered.add(networkKey);
+    // Silence the unused-warn on `now` — kept for future staleness tracking.
+    void now;
+  }
+
+  await saveBalanceCache();
+  return covered;
+}
+
+/**
+ * Fan-out refresh across every enabled network.
+ *
+ * Fast path: one batched call via the Alchemy Portfolio API covers the 8 EVM
+ * chains plus Solana mainnet. Slow path: legacy per-chain fetches handle BTC,
+ * XRP, TON, and any Portfolio-unsupported testnet — or everything, if the
+ * Portfolio call failed.
+ *
+ * A single `UNIFIED_PORTFOLIO_UPDATED` fires at the end with the fresh
+ * snapshot. Per-network `BALANCES_UPDATED` broadcasts are suppressed during
+ * the fan-out so the popup doesn't re-render 12 times; legacy UI code still
+ * receives them from the single-network refresh path.
+ */
+async function refreshAllEnabledNetworks(): Promise<void> {
+  if (!isUnlocked || !walletService) return;
+  if (isRefreshingAllEnabled) return;
+  isRefreshingAllEnabled = true;
+
+  try {
+    const networks = getEnabledNetworksForWallet();
+
+    // Step 1: Portfolio API batch — covers EVM + Solana in ~2 round-trips.
+    const apiKey = resolveAlchemyApiKey();
+    const covered = apiKey
+      ? await refreshViaPortfolioApi(apiKey, networks).catch(err => {
+          console.warn('[UnifiedRefresh] Portfolio API failed, falling back:', err);
+          return new Set<string>();
+        })
+      : new Set<string>();
+
+    // Step 2: per-chain fallback for networks the batch didn't cover (always
+    // BTC / XRP / TON; everything when the batch failed).
+    for (let i = 0; i < networks.length; i++) {
+      const [networkKey] = networks[i];
+      if (covered.has(networkKey)) continue;
+      try {
+        await refreshBalancesForNetwork(networkKey, { suppressBroadcast: true });
+      } catch (err) {
+        console.warn(`[UnifiedRefresh] ${networkKey} error:`, err);
+      }
+      await delay(PER_NETWORK_REFRESH_STAGGER_MS);
+    }
+
+    // Step 3: broadcast the consolidated snapshot.
+    try {
+      const snapshot = await buildUnifiedPortfolioSnapshot();
+      broadcastUnifiedPortfolio(snapshot);
+    } catch (err) {
+      console.warn('[UnifiedRefresh] Snapshot build failed:', err);
+    }
+  } finally {
+    isRefreshingAllEnabled = false;
+  }
+}
+
+/**
+ * Resolve the Alchemy API key available to the service worker.
+ * Matches the pattern used in `src/price-providers/alchemy.ts`: env first,
+ * then whatever was set at startup via `setAlchemyApiKey`. Kept local
+ * because the alchemy module doesn't export its getter.
+ */
+function resolveAlchemyApiKey(): string | undefined {
+  // `import.meta.env` is inlined by Vite at build time for the extension.
+  const fromEnv = (import.meta as any).env?.VITE_ALCHEMY_API_KEY;
+  return typeof fromEnv === 'string' && fromEnv.length > 0 ? fromEnv : undefined;
+}
+
+/** Resolve USD prices for all tokens on a single network. */
+async function fetchPricesForNetwork(
+  networkKey: string,
+  tokens: Token[]
+): Promise<Map<string, number | null>> {
+  const result = new Map<string, number | null>();
+  if (!walletService) return result;
+  const networkConfig = walletService.config.networks[networkKey];
+  if (!networkConfig) return result;
+
+  try {
+    if (isBitcoinNetworkConfig(networkConfig)) {
+      result.set('native', await getBitcoinPrice().catch(() => null));
+      return result;
+    }
+    if (isSolanaNetworkConfig(networkConfig)) {
+      result.set('native', await getSolanaPrice().catch(() => null));
+      for (const t of tokens) {
+        if (t.type === 'spl' && t.address) {
+          const p = await getTokenPriceBySymbol(t.symbol).catch(() => null);
+          result.set(t.address.toLowerCase(), p);
+        }
+      }
+      return result;
+    }
+    if (isXRPNetworkConfig(networkConfig)) {
+      result.set('native', await getXRPPrice(networkKey).catch(() => null));
+      return result;
+    }
+    if (isTonNetworkConfig(networkConfig)) {
+      result.set('native', await getTonPrice().catch(() => null));
+      return result;
+    }
+    if (isEVMNetworkConfig(networkConfig)) {
+      const chainId = networkConfig.chainId;
+      const tokenInfos: TokenInfo[] = tokens.map(t => ({
+        type: t.type === 'native' ? 'native' : 'erc20',
+        symbol: t.symbol,
+        address: t.address,
+        decimals: t.decimals,
+      }));
+      const prices = await getTokenPrices(chainId, tokenInfos);
+      for (const [key, price] of prices.entries()) {
+        result.set(key, price);
+      }
+    }
+  } catch (err) {
+    console.warn(`[UnifiedRefresh] Price fetch for ${networkKey} failed:`, err);
+  }
+  return result;
+}
+
+/**
+ * Build a unified cross-chain snapshot from the current cache.
+ *
+ * Only tokens with a cached balance are rendered — first-time opens with an
+ * empty cache return an empty snapshot, and the UI shows a loading skeleton
+ * until the post-unlock refresh populates the cache.
+ */
+async function buildUnifiedPortfolioSnapshot(
+  options: BuildUnifiedPortfolioOptions = {}
+): Promise<UnifiedPortfolioSnapshot> {
+  if (!isUnlocked || !walletService) {
+    return {
+      rows: [],
+      totalUsd: 0,
+      totalUsdFormatted: '$0.00',
+      networkStaleness: {},
+      updatedAt: Date.now(),
+      locked: true,
+    };
+  }
+
+  const networks = getEnabledNetworksForWallet();
+  const inputs: NetworkPortfolioInput[] = [];
+
+  for (const [networkKey, config] of networks) {
+    const tokens = walletService.getTokensForNetwork(networkKey);
+    const prices = await resolvePricesForNetwork(networkKey, tokens);
+    const cachedForNetwork = balanceCache[networkKey] || {};
+
+    const balances: NetworkPortfolioInput['balances'] = [];
+    for (const token of tokens) {
+      const tokenKey = getTokenCacheKey(token);
+      const cached = cachedForNetwork[tokenKey];
+      if (!cached) continue;
+      balances.push({
+        token,
+        balance: cached.balance,
+        lastUpdated: cached.lastUpdated,
+        priceUsd: prices.get(tokenKey) ?? null,
+      });
+    }
+
+    inputs.push({
+      networkKey,
+      networkLabel: config.name || networkKey,
+      balances,
+    });
+  }
+
+  return buildUnifiedPortfolio(inputs, options);
+}
+
+/**
+ * Resolve USD prices preferring the Portfolio API cache (populated during
+ * the batch refresh) before falling back to individual price-provider calls.
+ *
+ * For the 9 chains the Portfolio API covers, this is a zero-RPC lookup —
+ * prices come bundled with the batched balance fetch and are re-used for
+ * every snapshot build until the next refresh. For BTC / XRP / TON, the
+ * existing per-chain provider path runs unchanged.
+ */
+async function resolvePricesForNetwork(
+  networkKey: string,
+  tokens: Token[]
+): Promise<Map<string, number | null>> {
+  const prices = new Map<string, number | null>();
+  const missing: Token[] = [];
+
+  for (const token of tokens) {
+    const tokenKey = getTokenCacheKey(token);
+    const cacheKey = `${networkKey}:${tokenKey}`;
+    if (portfolioPriceCache.has(cacheKey)) {
+      prices.set(tokenKey, portfolioPriceCache.get(cacheKey) ?? null);
+    } else {
+      missing.push(token);
+    }
+  }
+
+  // Anything not populated by the Portfolio API falls back to the legacy
+  // provider path — notably BTC / XRP / TON natives, plus any token the API
+  // didn't return (it may omit unknown tokens, though those also tend to
+  // have balance=0 and get hidden by the zero-balance filter anyway).
+  if (missing.length > 0) {
+    const fallbackPrices = await fetchPricesForNetwork(networkKey, missing);
+    for (const [tokenKey, price] of fallbackPrices.entries()) {
+      prices.set(tokenKey, price);
+    }
+  }
+
+  return prices;
+}
+
+// ============================================================================
+// Background Refresh Orchestration (alarms + popup-port hybrid)
+// ============================================================================
+
+/** `chrome.alarms` alarm name for the idle cross-chain refresh cadence. */
+const UNIFIED_REFRESH_ALARM_NAME = 'unifiedRefresh';
+
+/** Period for the idle refresh alarm (minutes). Chrome enforces a 1 min floor. */
+const UNIFIED_REFRESH_PERIOD_MIN = 2;
+
+/** Delay between per-chain refreshes during a fan-out run (ms). */
+const PER_NETWORK_REFRESH_STAGGER_MS = 2000;
+
+/** Connect-port name used by the popup for fast-path polling while open. */
+const POPUP_PORT_NAME = 'popup';
+
+/** Polling interval driven by the popup port. Faster than the alarm. */
+const POPUP_REFRESH_INTERVAL_MS = 30 * 1000;
+
+/** Ports currently held open by the popup / sidepanel. */
+const popupPorts = new Set<chrome.runtime.Port>();
+
+/** Small sleep helper used by the fan-out stagger. */
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Ensure the idle refresh alarm exists. Idempotent — creating an alarm with
+ * the same name replaces it, so this is safe to call on unlock or startup.
+ */
+function ensureUnifiedRefreshAlarm(): void {
+  try {
+    chrome.alarms.create(UNIFIED_REFRESH_ALARM_NAME, {
+      periodInMinutes: UNIFIED_REFRESH_PERIOD_MIN,
+    });
+  } catch (err) {
+    console.warn('[UnifiedRefresh] alarm create failed:', err);
+  }
+}
+
+function clearUnifiedRefreshAlarm(): void {
+  try {
+    chrome.alarms.clear(UNIFIED_REFRESH_ALARM_NAME);
+  } catch { /* no-op */ }
+}
+
+/**
+ * Start the popup-driven 30 s polling interval. Guards against double-starts
+ * so multiple open UI surfaces share one timer.
+ */
+function startPopupDrivenPolling(): void {
+  if (balancePollingTimer) return;
+  balancePollingTimer = setInterval(() => {
+    if (!isUnlocked || !walletService) return;
+    refreshAllEnabledNetworks().catch(err =>
+      console.warn('[PopupPolling] Error:', err)
+    );
+  }, POPUP_REFRESH_INTERVAL_MS);
+  console.log('[PopupPolling] Started');
+}
+
+// Alarm handler — fires every UNIFIED_REFRESH_PERIOD_MIN minutes when the
+// wallet is unlocked. Early-returns when locked (and never touches the
+// auto-lock timer — idle alarms must not extend the unlock session).
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== UNIFIED_REFRESH_ALARM_NAME) return;
+  if (!isUnlocked || !walletService) return;
+  refreshAllEnabledNetworks().catch(err =>
+    console.warn('[UnifiedRefresh] alarm run failed:', err)
+  );
+});
+
+// Popup port lifecycle — opening the popup connects a port named 'popup'.
+// While any popup port is connected we run a faster setInterval; when the
+// last one disconnects we fall back to the alarm-only cadence.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== POPUP_PORT_NAME) return;
+  popupPorts.add(port);
+
+  // Fast-path: if any cached entry is stale, kick off an immediate refresh.
+  if (isUnlocked && walletService) {
+    const now = Date.now();
+    let stale = false;
+    for (const net of Object.values(balanceCache)) {
+      for (const entry of Object.values(net)) {
+        if (now - entry.lastUpdated > BALANCE_CACHE_TTL) { stale = true; break; }
+      }
+      if (stale) break;
+    }
+    if (stale || Object.keys(balanceCache).length === 0) {
+      refreshAllEnabledNetworks().catch(() => { /* already logged */ });
+    }
+  }
+
+  startPopupDrivenPolling();
+
+  port.onDisconnect.addListener(() => {
+    popupPorts.delete(port);
+    if (popupPorts.size === 0) {
+      stopBalancePolling();
+    }
+  });
+});
 
 function isChainMatch(chainType: PrivateKeyChain, config: Config['networks'][string]): boolean {
   switch (chainType) {
@@ -1007,8 +1509,9 @@ function lockWallet(): void {
     autoLockTimer = null;
   }
 
-  // Stop balance polling
+  // Stop balance polling + clear the idle cross-chain refresh alarm.
   stopBalancePolling();
+  clearUnifiedRefreshAlarm();
 
   // Security: Clear session-only dApp approvals on lock
   clearSessionOnlyApprovals();
@@ -1304,6 +1807,17 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const importStorage = await ChromeStorageAdapter.create();
       transactionHistory = new TransactionHistoryManager(importStorage, currentWalletName);
 
+      // Kick off a fan-out refresh across every enabled chain so the unified
+      // view populates immediately after import. Mirrors the UNLOCK_WALLET
+      // path — without this, the popup would render empty until the next
+      // popup-port connect (which only triggers a refresh when the cache is
+      // already stale / empty, introducing visible delay).
+      await loadBalanceCache();
+      refreshAllEnabledNetworks().catch(err => {
+        console.warn('[UnifiedRefresh] post-import fan-out failed:', err);
+      });
+      ensureUnifiedRefreshAlarm();
+
       resetAutoLockTimer();
       return {
         success: true,
@@ -1327,13 +1841,15 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const storage = await ChromeStorageAdapter.create();
       transactionHistory = new TransactionHistoryManager(storage, currentWalletName);
 
-      // Load balance cache and start polling
+      // Load balance cache; kick off an immediate fan-out refresh across every
+      // enabled chain so the unified view has data to render on first paint.
+      // Popup-driven polling starts when a popup port connects; the idle
+      // alarm keeps cadence when the popup is closed.
       await loadBalanceCache();
-      // Immediately refresh balances for the active network to avoid stale cache
-      refreshBalancesForCurrentNetwork().catch(err => {
-        console.warn('[BalanceRefresh] Error:', err);
+      refreshAllEnabledNetworks().catch(err => {
+        console.warn('[UnifiedRefresh] post-unlock fan-out failed:', err);
       });
-      startBalancePolling();
+      ensureUnifiedRefreshAlarm();
 
       resetAutoLockTimer();
       return {
@@ -1471,6 +1987,55 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         balances: balanceCache[cacheNetwork] || {},
         network: cacheNetwork
       };
+
+    case 'GET_UNIFIED_PORTFOLIO': {
+      // Returns an aggregated cross-chain snapshot from the current cache.
+      // Cache-only read — no network I/O. Locked wallets get an empty snapshot
+      // with `locked: true` rather than throwing, so the popup can render a
+      // locked state without triggering an error toast.
+      if (!isUnlocked) {
+        return {
+          snapshot: {
+            rows: [],
+            totalUsd: 0,
+            totalUsdFormatted: '$0.00',
+            networkStaleness: {},
+            updatedAt: Date.now(),
+            locked: true,
+          } satisfies UnifiedPortfolioSnapshot,
+        };
+      }
+      resetAutoLockTimer();
+      const snapshot = await buildUnifiedPortfolioSnapshot(payload?.options || {});
+      return { snapshot };
+    }
+
+    case 'REFRESH_UNIFIED_PORTFOLIO': {
+      // Force a fan-out refresh across every enabled chain and return the
+      // freshly-built snapshot. Awaited so the popup can show a spinner until
+      // completion; failures of individual chains are silent (per-row stale
+      // indicators communicate them via the snapshot).
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      await refreshAllEnabledNetworks();
+      const snapshot = await buildUnifiedPortfolioSnapshot(payload?.options || {});
+      return { snapshot };
+    }
+
+    case 'GET_ENABLED_NETWORKS': {
+      // Returns the list of networks this wallet can both see + use, used by
+      // the scope modal and the unified view for chain-badge / label lookup.
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      resetAutoLockTimer();
+      const enabled = getEnabledNetworksForWallet().map(([key, config]: [string, any]) => ({
+        key,
+        label: config.name || key,
+        nativeSymbol: config.nativeSymbol,
+        isTestnet: Boolean(config.isTestnet),
+        type: config.type ?? 'evm',
+      }));
+      return { networks: enabled };
+    }
 
     case 'GET_TOKEN_PRICES': {
       // Fetch prices for tokens and calculate total portfolio value
