@@ -10,7 +10,9 @@ Multi-chain wallet (EVM, Bitcoin, Solana, XRP, TON) with a **shared TypeScript c
 - **Chrome extension (MV3)** — `extension/` (popup, sidepanel, MV3 service worker, content/provider scripts), built with Vite
 - **Mobile app** — `mobile-wallet/` (Expo + React Native, expo-router, Zustand)
 
-Deeper background: `ARCHITECTURE.md`, `README.md`, `EXTENSION_SETUP.md`.
+Deeper background: `README.md` and the canonical docs under `docs/`, especially
+`docs/architecture.md`, `docs/platforms/extension.md`, and
+`docs/platforms/mobile.md`.
 
 ## Commands
 

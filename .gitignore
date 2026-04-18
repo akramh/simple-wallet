@@ -21,11 +21,11 @@ dist-extension/
 .npm-cache/
 temp/
 # -----------------------------------------------------------------------------
-# Plan / design docs location policy
+# Documentation location policy
 # -----------------------------------------------------------------------------
-# Store project plans in the top-level `plans/` folder.
-# Ignore plan-like markdown elsewhere to avoid scattered docs.
+# Keep canonical project documentation under docs/. Root README, LICENSE, and
+# tool-specific instruction files stay at the repository root.
 **/*PLAN*.md
 **/*.plan.md
-!plans/
-!plans/**
+!docs/
+!docs/**
