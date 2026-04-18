@@ -32,6 +32,9 @@ export const ALLOWED_DOMAINS = [
   "linea-mainnet.g.alchemy.com",
   "solana-mainnet.g.alchemy.com",
   "solana-devnet.g.alchemy.com",
+  // Alchemy Data APIs (Prices, NFT, Portfolio) — hostname is
+  // `api.g.alchemy.com`, not per-chain.
+  "api.g.alchemy.com",
 
   // Ethereum (public fallback)
   "ethereum-rpc.publicnode.com",

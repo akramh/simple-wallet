@@ -199,3 +199,13 @@ export function getTokensForNetwork(networkKey: string): Token[] {
 export function getCoingeckoApiKey(): string | undefined {
   return Constants.expoConfig?.extra?.coingeckoApiKey;
 }
+
+/**
+ * Get the Alchemy API key from Expo config.
+ * Same key is used for RPC, Transfers, and Prices.
+ *
+ * @returns Alchemy API key or undefined if not configured.
+ */
+export function getAlchemyApiKey(): string | undefined {
+  return Constants.expoConfig?.extra?.alchemyApiKey;
+}

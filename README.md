@@ -182,12 +182,13 @@ Edit `config.json` to change the default network or add custom RPC endpoints:
 RPC and explorer API keys are provided through environment variables:
 
 1. Copy `.env.example` to `.env`.
-2. **Alchemy** — a single key covers EVM RPC (ethereum, base, polygon, arbitrum, optimism, bnb, avalanche, linea + testnets) and Solana RPC (mainnet, devnet). Set:
+2. **Alchemy** — a single key covers EVM RPC (ethereum, base, polygon, arbitrum, optimism, bnb, avalanche, linea + testnets), Solana RPC (mainnet, devnet), and the **Prices API** (primary source for current USD prices — replaces CoinGecko in the hot path). Set:
    - `ALCHEMY_API_KEY` — CLI
    - `VITE_ALCHEMY_API_KEY` — Chrome extension build (same value)
    - `EXPO_PUBLIC_ALCHEMY_API_KEY` — mobile app build (same value; falls back to `ALCHEMY_API_KEY` in `mobile-wallet/app.config.js`)
 
    The placeholder `${ALCHEMY_API_KEY}` in `config.json` gets substituted at load time. If the key is unset, the wallet falls back to public RPC endpoints listed in each network's `rpcUrl` array.
+6. **CoinGecko** — still needed as fallback for current prices and as the **primary source for historical charts and token metadata** (description, circulating/total supply, website URL — all fields Alchemy Prices does not expose). Set `COINGECKO_API_KEY` / `VITE_COINGECKO_API_KEY`. Without a key the free tier is used.
 3. **Etherscan (optional)** — Alchemy's `alchemy_getAssetTransfers` covers transaction history for eth/sepolia/base/polygon/arbitrum/optimism. For **avalanche, bsc, and linea** (not supported by Alchemy Transfers), the wallet still uses Etherscan V2. Set `EXPLORER_API_KEY` (global) or per-network `EXPLORER_API_KEY_AVALANCHE` / `_BSC` / `_LINEA`. Same pattern with `VITE_` / `EXPO_PUBLIC_` prefixes for extension/mobile.
 4. **TON** — set `TONCENTER_API_KEY_TON_MAINNET` / `_TESTNET` for Toncenter RPC (optional but recommended).
 5. **Legacy `HELIUS_API_KEY`** — still read for backward compatibility if a `${HELIUS_API_KEY}` placeholder remains in a config fork, but Alchemy now handles Solana.

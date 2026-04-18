@@ -256,10 +256,18 @@ class WalletBridge {
     const {
       getBundledConfig,
       getCoingeckoApiKey,
+      getAlchemyApiKey,
     } = require("../config/bundled-config");
     const bundledConfig = getBundledConfig();
 
-    // Configure CoinGecko API key for price provider
+    // Configure Alchemy API key — primary for current prices (same key used for RPC + Transfers).
+    const alchemyApiKey = getAlchemyApiKey();
+    if (alchemyApiKey) {
+      const { setAlchemyApiKey } = require("@wallet/price-providers");
+      setAlchemyApiKey(alchemyApiKey);
+    }
+
+    // Configure CoinGecko API key — fallback for current prices, primary for history/metadata.
     const coingeckoApiKey = getCoingeckoApiKey();
     if (coingeckoApiKey) {
       const { setCoingeckoApiKey } = require("@wallet/price-providers");

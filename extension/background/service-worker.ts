@@ -86,9 +86,15 @@ setCryptoAdapter(createWebCryptoAdapter());
 // Price Provider Setup
 // ============================================================================
 
-import { setCoingeckoApiKey } from '../../src/price-providers/index.js';
+import { setAlchemyApiKey, setCoingeckoApiKey } from '../../src/price-providers/index.js';
 
-/** Configure CoinGecko API key from Vite environment */
+/** Configure Alchemy Prices API key (primary provider for current prices) */
+const alchemyApiKey = import.meta.env.VITE_ALCHEMY_API_KEY;
+if (alchemyApiKey) {
+  setAlchemyApiKey(alchemyApiKey);
+}
+
+/** Configure CoinGecko API key (fallback for current prices + primary for history/metadata) */
 const coingeckoApiKey = import.meta.env.VITE_COINGECKO_API_KEY;
 if (coingeckoApiKey) {
   setCoingeckoApiKey(coingeckoApiKey);
