@@ -40,8 +40,13 @@
 
 import 'dotenv/config';
 import { applyNetworkGuard } from './utils/network-guard.js';
+import { installConsoleRedactor } from './utils/redact-logs.js';
 
-// Apply security guard immediately
+// Apply security guard + console redactor immediately (before any module that
+// might log network URLs). The redactor replaces occurrences of the Alchemy
+// key (and legacy Helius key) with <redacted> in any console.* output.
+installConsoleRedactor(process.env.ALCHEMY_API_KEY);
+installConsoleRedactor(process.env.HELIUS_API_KEY);
 applyNetworkGuard();
 
 import inquirer from 'inquirer';
@@ -81,8 +86,23 @@ import { getVisibleNetworkEntries } from './network-visibility.js';
 // Configuration and Global State
 // ============================================================================
 
-/** Load and parse config.json with network definitions */
+/**
+ * Load the base network definitions from the shipped config.json (never
+ * written back). Merge any user-state from the gitignored config.local.json
+ * (current network, testnet toggle). Then apply env-var substitution for
+ * placeholders like `${ALCHEMY_API_KEY}`.
+ */
+const LOCAL_STATE_PATH = 'config.local.json';
 const configData = JSON.parse(fs.readFileSync('config.json', 'utf8')) as Config & { network: string };
+if (fs.existsSync(LOCAL_STATE_PATH)) {
+  try {
+    const localState = JSON.parse(fs.readFileSync(LOCAL_STATE_PATH, 'utf8')) as Partial<Config & { network: string }>;
+    if (typeof localState.network === 'string') configData.network = localState.network;
+    if (typeof (localState as any).showTestnets === 'boolean') (configData as any).showTestnets = (localState as any).showTestnets;
+  } catch (err) {
+    console.warn(`[config] failed to merge ${LOCAL_STATE_PATH}:`, (err as Error).message);
+  }
+}
 const { config, globalApiKey } = applyExplorerApiKeys(configData);
 
 /** File-based storage adapter for persistent wallet data */
@@ -101,7 +121,11 @@ const CUSTOM_TOKENS_PATH = 'tokens-user.json';
 const walletService = new WalletAppService(wallet, config, {
   tokenListPath: TOKEN_LIST_PATH,
   customTokenPath: CUSTOM_TOKENS_PATH,
-  configPath: 'config.json',
+  // CLI persists user-state to a separate gitignored file so the shipped
+  // config.json never gets written back (which would leak the substituted
+  // Alchemy key). Extension + mobile use sandboxed storage and aren't
+  // affected; they can continue to use the default 'config.json' key.
+  configPath: LOCAL_STATE_PATH,
   storage
 });
 
@@ -2866,7 +2890,11 @@ async function changeNetwork(): Promise<void> {
       showTestnets = !showTestnets;
       config.showTestnets = showTestnets;
       if (process.env.NODE_ENV !== 'test') {
-        storage.writeJSON('config.json', { ...config, showTestnets });
+        // Persist only user-state to the gitignored local file; never rewrite
+        // the shipped config.json (which would embed the substituted
+        // ${ALCHEMY_API_KEY} as a literal key).
+        const existing = storage.readJSON<Record<string, unknown>>(LOCAL_STATE_PATH, {});
+        storage.writeJSON(LOCAL_STATE_PATH, { ...existing, showTestnets });
       }
       console.log(`\n✅ Test networks ${showTestnets ? 'shown' : 'hidden'}\n`);
       continue;

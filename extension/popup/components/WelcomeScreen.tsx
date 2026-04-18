@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import * as bip39 from 'bip39';
 import { Icon, MnemonicDisplay, PasswordField } from './ui';
 import logoIcon from '../../assets/img/logo.svg';
+import { getWalletNameValidationMessage, isValidWalletName, WALLET_NAME_REQUIREMENTS } from '../../../src/wallet-name.js';
 
 interface Props {
   onWalletCreated: () => void;
@@ -87,9 +88,6 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     }
     return true;
   };
-
-  // Keep wallet names consistent with storage keys and background validation rules.
-  const isValidWalletName = (name: string) => /^[A-Za-z0-9]{1,12}$/.test(name);
 
   const getNextWalletName = async (): Promise<string> => {
     try {
@@ -199,7 +197,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     }
     const finalWalletName = walletNameInput.trim() || suggestedWalletName;
     if (!isValidWalletName(finalWalletName)) {
-      setError('Wallet name must be 1-12 characters and contain only letters and numbers');
+      setError(getWalletNameValidationMessage());
       return;
     }
 
@@ -226,7 +224,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
     setError('');
     const finalWalletName = walletNameInput.trim() || suggestedWalletName;
     if (!isValidWalletName(finalWalletName)) {
-      setError('Wallet name must be 1-12 characters and contain only letters and numbers');
+      setError(getWalletNameValidationMessage());
       return;
     }
 
@@ -305,7 +303,7 @@ function WelcomeScreen({ onWalletCreated }: Props) {
                 placeholder={`Default: ${suggestedWalletName}`}
               />
               <div className="text-sm text-text-secondary mt-2">
-                1-12 letters/numbers (no spaces or symbols)
+                {WALLET_NAME_REQUIREMENTS}
               </div>
             </div>
             <div className="form-group">

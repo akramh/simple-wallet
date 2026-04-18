@@ -8,6 +8,7 @@ import React, { useState, useEffect } from 'react';
 import { Icon, MnemonicDisplay } from './ui';
 import { useToast } from '../context/ToastContext';
 import { formatAddress } from '../utils/address';
+import { getWalletNameValidationMessage, isValidWalletName, WALLET_NAME_REQUIREMENTS } from '../../../src/wallet-name.js';
 
 interface Account {
   index: number;
@@ -40,9 +41,6 @@ function AccountMenu({
   onWalletSwitch,
   onStateChange
 }: Props) {
-  // Keep wallet names consistent with storage keys and background validation rules.
-  const isValidWalletName = (name: string) => /^[A-Za-z0-9]{1,12}$/.test(name);
-
   // Chain-specific private key validation patterns and help text
   const chainValidation: Record<string, { pattern: RegExp; example: string; hint: string }> = {
     evm: {
@@ -225,7 +223,7 @@ function AccountMenu({
     if (!currentWalletName) return;
     const next = currentWalletNameDraft.trim();
     if (!isValidWalletName(next)) {
-      setStatus({ type: 'error', message: 'Name must be 1-12 letters/numbers (no spaces or symbols)' });
+      setStatus({ type: 'error', message: getWalletNameValidationMessage() });
       return;
     }
     if (next === currentWalletName) {
@@ -275,7 +273,7 @@ function AccountMenu({
     // Optional name; fallback to existing walletN convention.
     const finalName = createNameInput.trim() || pendingCreateName || (await getNextWalletName());
     if (!isValidWalletName(finalName)) {
-      setStatus({ type: 'error', message: 'Name must be 1-12 letters/numbers (no spaces or symbols)' });
+      setStatus({ type: 'error', message: getWalletNameValidationMessage() });
       return;
     }
     setLoading(true);
@@ -325,7 +323,7 @@ function AccountMenu({
     // Optional name; fallback to existing walletN convention.
     const finalName = importNameInput.trim() || pendingImportName || (await getNextWalletName());
     if (!isValidWalletName(finalName)) {
-      setStatus({ type: 'error', message: 'Name must be 1-12 letters/numbers (no spaces or symbols)' });
+      setStatus({ type: 'error', message: getWalletNameValidationMessage() });
       return;
     }
 
@@ -425,7 +423,7 @@ function AccountMenu({
               <div
                 className="account-menu-title"
                 onClick={startEditingCurrentWalletName}
-                title="Click to rename (1-12 letters/numbers)"
+                title={`Click to rename (${WALLET_NAME_REQUIREMENTS})`}
                 style={{ cursor: 'text' }}
               >
                 {currentWalletName || 'Wallet'}
@@ -622,6 +620,9 @@ function AccountMenu({
                     onChange={(e) => setCreateNameInput(e.target.value)}
                     placeholder={`Default: ${pendingCreateName}`}
                   />
+                  <div className="text-sm text-text-secondary mt-2">
+                    {WALLET_NAME_REQUIREMENTS}
+                  </div>
                 </div>
                 <button className="btn btn-primary" onClick={handleCreateWallet} disabled={loading}>
                   {loading ? 'Creating...' : 'Create wallet'}
@@ -682,6 +683,9 @@ function AccountMenu({
                     onChange={(e) => setImportNameInput(e.target.value)}
                     placeholder={`Default: ${pendingImportName}`}
                   />
+                  <div className="text-sm text-text-secondary mt-2">
+                    {WALLET_NAME_REQUIREMENTS}
+                  </div>
                 </div>
 
                 {importType === 'mnemonic' ? (

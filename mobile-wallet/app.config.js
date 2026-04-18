@@ -14,6 +14,7 @@ module.exports = ({ config }) => {
       explorerApiKeySolanaMainnet: process.env.EXPLORER_API_KEY_SOLANA_MAINNET,
       explorerApiKeySolanaDevnet: process.env.EXPLORER_API_KEY_SOLANA_DEVNET,
       // RPC API keys
+      alchemyApiKey: process.env.ALCHEMY_API_KEY || process.env.EXPO_PUBLIC_ALCHEMY_API_KEY,
       heliusApiKey: process.env.HELIUS_API_KEY,
       tonCenterApiKeyMainnet: process.env.TONCENTER_API_KEY_TON_MAINNET,
       tonCenterApiKeyTestnet: process.env.TONCENTER_API_KEY_TON_TESTNET,

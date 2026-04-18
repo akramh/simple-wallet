@@ -11,6 +11,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "gen:manifest-csp": "tsx scripts/generate-manifest-csp.ts",
+    "check:manifest-csp": "tsx scripts/generate-manifest-csp.ts --check",
+    "prebuild:extension": "npm run gen:manifest-csp",
     "build:extension": "vite build --config vite.config.extension.ts",
     "watch:extension": "vite build --config vite.config.extension.ts --watch",
     "start": "npm run build && node dist/index.js",

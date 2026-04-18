@@ -473,3 +473,244 @@ describe('Price Service (Integration)', () => {
   });
 });
 
+// ============================================================================
+// Alchemy Provider Tests
+// ============================================================================
+
+describe('AlchemyPriceProvider', () => {
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('has priority 0 so it is tried before CoinGecko and CoinPaprika', async () => {
+    const { AlchemyPriceProvider } = await import('../dist/price-providers/alchemy.js');
+    const provider = new AlchemyPriceProvider();
+    assert.strictEqual(provider.priority, 0);
+    assert.strictEqual(provider.name, 'Alchemy');
+  });
+
+  it('supportsToken returns true for common symbols and false for obscure ones', async () => {
+    const { AlchemyPriceProvider } = await import('../dist/price-providers/alchemy.js');
+    const provider = new AlchemyPriceProvider();
+    assert.strictEqual(provider.supportsToken('ETH'), true);
+    assert.strictEqual(provider.supportsToken('btc'), true); // case-insensitive
+    assert.strictEqual(provider.supportsToken('USDC'), true);
+    assert.strictEqual(provider.supportsToken('OBSCURE_TOKEN_XYZ'), false);
+  });
+
+  it('getCurrentPrice calls /tokens/by-symbol and parses USD price', async () => {
+    let capturedUrl = '';
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return {
+        ok: true,
+        json: async () => ({
+          data: [
+            { symbol: 'ETH', prices: [{ currency: 'usd', value: '3500.12', lastUpdatedAt: '2026-04-17T00:00:00Z' }] },
+          ],
+        }),
+      };
+    };
+
+    const { AlchemyPriceProvider, setAlchemyApiKey } = await import('../dist/price-providers/alchemy.js');
+    setAlchemyApiKey('test-key-abc123');
+    const provider = new AlchemyPriceProvider();
+    const result = await provider.getCurrentPrice('ETH');
+
+    assert.strictEqual(result.price, 3500.12);
+    assert.ok(capturedUrl.startsWith('https://api.g.alchemy.com/prices/v1/test-key-abc123/tokens/by-symbol?symbols=ETH'));
+    setAlchemyApiKey(undefined);
+  });
+
+  it('getCurrentPrice throws on per-symbol error so manager falls through', async () => {
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({
+        data: [{ symbol: 'WEIRD', error: { message: 'symbol not found' } }],
+      }),
+    });
+
+    const { AlchemyPriceProvider, setAlchemyApiKey } = await import('../dist/price-providers/alchemy.js');
+    setAlchemyApiKey('test-key');
+    const provider = new AlchemyPriceProvider();
+    await assert.rejects(() => provider.getCurrentPrice('WEIRD'), /no price for WEIRD/);
+    setAlchemyApiKey(undefined);
+  });
+
+  it('getCurrentPrice throws when ALCHEMY_API_KEY is not set', async () => {
+    const { AlchemyPriceProvider, setAlchemyApiKey } = await import('../dist/price-providers/alchemy.js');
+    setAlchemyApiKey(undefined);
+    const prevEnv = process.env.ALCHEMY_API_KEY;
+    delete process.env.ALCHEMY_API_KEY;
+    try {
+      const provider = new AlchemyPriceProvider();
+      await assert.rejects(() => provider.getCurrentPrice('ETH'), /ALCHEMY_API_KEY not set/);
+    } finally {
+      if (prevEnv !== undefined) process.env.ALCHEMY_API_KEY = prevEnv;
+    }
+  });
+
+  it('getTokenPriceByContract POSTs to /tokens/by-address with network+address body', async () => {
+    let capturedUrl = '';
+    let capturedInit = null;
+    globalThis.fetch = async (url, init) => {
+      capturedUrl = url;
+      capturedInit = init;
+      return {
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              network: 'eth-mainnet',
+              address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+              prices: [{ currency: 'usd', value: '1.0001', lastUpdatedAt: '2026-04-17T00:00:00Z' }],
+            },
+          ],
+        }),
+      };
+    };
+
+    const { AlchemyPriceProvider, setAlchemyApiKey } = await import('../dist/price-providers/alchemy.js');
+    setAlchemyApiKey('test-key-xyz');
+    const provider = new AlchemyPriceProvider();
+    const result = await provider.getTokenPriceByContract(1, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eB48');
+
+    assert.strictEqual(result.price, 1.0001);
+    assert.strictEqual(capturedUrl, 'https://api.g.alchemy.com/prices/v1/test-key-xyz/tokens/by-address');
+    assert.strictEqual(capturedInit.method, 'POST');
+    const body = JSON.parse(capturedInit.body);
+    assert.deepStrictEqual(body, {
+      addresses: [{ network: 'eth-mainnet', address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eB48' }],
+    });
+    setAlchemyApiKey(undefined);
+  });
+
+  it('getTokenPriceByContract throws for unmapped chainId', async () => {
+    const { AlchemyPriceProvider, setAlchemyApiKey } = await import('../dist/price-providers/alchemy.js');
+    setAlchemyApiKey('test-key');
+    const provider = new AlchemyPriceProvider();
+    await assert.rejects(
+      () => provider.getTokenPriceByContract(999999, '0xabc'),
+      /no slug mapped for chainId 999999/,
+    );
+    setAlchemyApiKey(undefined);
+  });
+
+  it('getPriceHistory throws fast without hitting the network', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return { ok: true, json: async () => ({}) };
+    };
+
+    const { AlchemyPriceProvider, setAlchemyApiKey } = await import('../dist/price-providers/alchemy.js');
+    setAlchemyApiKey('test-key');
+    const provider = new AlchemyPriceProvider();
+    await assert.rejects(() => provider.getPriceHistory('ETH', '1D'), /getPriceHistory not implemented/);
+    assert.strictEqual(fetchCalled, false, 'must not make an HTTP request');
+    setAlchemyApiKey(undefined);
+  });
+
+  it('getTokenMetadata throws fast without hitting the network', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return { ok: true, json: async () => ({}) };
+    };
+
+    const { AlchemyPriceProvider, setAlchemyApiKey } = await import('../dist/price-providers/alchemy.js');
+    setAlchemyApiKey('test-key');
+    const provider = new AlchemyPriceProvider();
+    await assert.rejects(() => provider.getTokenMetadata('ETH'), /getTokenMetadata not implemented/);
+    assert.strictEqual(fetchCalled, false, 'must not make an HTTP request');
+    setAlchemyApiKey(undefined);
+  });
+});
+
+// ============================================================================
+// Registration Order Tests — verifies Alchemy is tried first for current prices
+// ============================================================================
+
+describe('Provider registration order', () => {
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('singleton priceProviderManager tries Alchemy first, then CoinGecko, then CoinPaprika', async () => {
+    const callOrder = [];
+    globalThis.fetch = async (url) => {
+      if (url.includes('api.g.alchemy.com/prices')) {
+        callOrder.push('alchemy');
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ symbol: 'ETH', prices: [{ currency: 'usd', value: '3600.00' }] }],
+          }),
+        };
+      }
+      if (url.includes('coingecko')) {
+        callOrder.push('coingecko');
+        return { ok: true, json: async () => ({ ethereum: { usd: 3500.00 } }) };
+      }
+      if (url.includes('coinpaprika')) {
+        callOrder.push('coinpaprika');
+        return { ok: true, json: async () => ({ quotes: { USD: { price: 3400.00 } } }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const { priceProviderManager, setAlchemyApiKey } = await import('../dist/price-providers/index.js');
+    priceProviderManager.clearCache();
+    setAlchemyApiKey('test-key');
+
+    const result = await priceProviderManager.getCurrentPrice('ETH');
+
+    assert.strictEqual(result.price, 3600.00, 'should return Alchemy price (tried first)');
+    assert.deepStrictEqual(callOrder, ['alchemy'], 'only Alchemy should have been called');
+    setAlchemyApiKey(undefined);
+    priceProviderManager.clearCache();
+  });
+
+  it('falls through to CoinGecko when Alchemy returns a per-symbol error', async () => {
+    const callOrder = [];
+    globalThis.fetch = async (url) => {
+      if (url.includes('api.g.alchemy.com/prices')) {
+        callOrder.push('alchemy');
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ symbol: 'ETH', error: { message: 'Alchemy miss for ETH in this test' } }],
+          }),
+        };
+      }
+      if (url.includes('coingecko')) {
+        callOrder.push('coingecko');
+        return { ok: true, json: async () => ({ ethereum: { usd: 3500.00 } }) };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const { priceProviderManager, setAlchemyApiKey } = await import('../dist/price-providers/index.js');
+    priceProviderManager.clearCache();
+    setAlchemyApiKey('test-key');
+
+    const result = await priceProviderManager.getCurrentPrice('ETH');
+    assert.strictEqual(result.price, 3500.00, 'should fall through to CoinGecko');
+    assert.deepStrictEqual(callOrder, ['alchemy', 'coingecko'], 'Alchemy tried first, then CoinGecko');
+    setAlchemyApiKey(undefined);
+    priceProviderManager.clearCache();
+  });
+});
+

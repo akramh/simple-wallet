@@ -493,22 +493,28 @@ refactor4/
 
 `.env` file:
 ```
+# Primary: Alchemy (one key covers EVM RPC + Solana RPC + Transfers API)
+ALCHEMY_API_KEY=your_key
+
+# Etherscan fallback — only needed for avalanche/bsc/linea tx history
+# (Alchemy Transfers doesn't support those chains)
 EXPLORER_API_KEY=your_key
-EXPLORER_API_KEY_MAINNET=specific_key
-HELIUS_API_KEY=solana_rpc_key
+EXPLORER_API_KEY_AVALANCHE=optional_specific_key
+EXPLORER_API_KEY_BSC=optional_specific_key
+EXPLORER_API_KEY_LINEA=optional_specific_key
 ```
 
 ### Extension
 
 `VITE_`-prefixed in `.env`:
 ```
-VITE_EXPLORER_API_KEY_MAINNET=your_key
-VITE_HELIUS_API_KEY=your_key
+VITE_ALCHEMY_API_KEY=your_key
+VITE_EXPLORER_API_KEY=your_etherscan_key  # for avalanche/bsc/linea only
 ```
 
 ### Mobile
 
-Expo managed via `app.config.js`
+Expo managed via `app.config.js`; reads `ALCHEMY_API_KEY` (or `EXPO_PUBLIC_ALCHEMY_API_KEY`) from root `.env` and ships it via `expo-constants`. Placeholders in `config.json` are substituted in `mobile-wallet/config/bundled-config.ts::applyApiKeysToNetworks`.
 
 ## Code Reuse Strategy
 
@@ -518,11 +524,20 @@ Expo managed via `app.config.js`
 
 **Shared Code Percentage: ~90%**
 
+## Price Data Providers
+
+Priority-ordered fallback chain in `src/price-providers/`:
+
+1. **Alchemy** (`alchemy.ts`) — current prices by symbol and by contract address via `api.g.alchemy.com/prices/v1`. Reuses the shared `ALCHEMY_API_KEY`. Throws fast for `getPriceHistory` / `getTokenMetadata` so the manager falls through without a wasted HTTP round-trip.
+2. **CoinGecko** (`coingecko.ts`) — fallback for current prices; primary source for historical charts (`/coins/{id}/market_chart`) and token metadata (description, circulating/total supply, website URL — fields Alchemy Prices doesn't expose). Supports contract-address lookups as an alternate path.
+3. **CoinPaprika** (`coinpaprika.ts`) — keyless third-tier fallback for symbol-based prices.
+
+Manager at `provider-manager.ts` caches results (60 s current, 5 min history, 1 hr metadata) and catches provider errors to try the next one.
+
 ## Future Enhancements
 
 See `/plans` directory for:
 - Token interface standardization
 - Mobile wallet improvements
-- Price provider refactoring
 - Transaction history enhancements
 - TON network integration details

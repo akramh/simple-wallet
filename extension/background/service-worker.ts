@@ -48,6 +48,7 @@ applyNetworkGuard();
 
 import { Wallet } from '../../src/wallet.js';
 import { WalletAppService } from '../../src/app-service.js';
+import { getWalletNameValidationMessage, isValidWalletName } from '../../src/wallet-name.js';
 import { ChromeStorageAdapter } from '../../src/chrome-storage.js';
 import { createProviderFactory } from '../../src/providers.js';
 import { setCryptoAdapter } from '../../src/crypto-utils.js';
@@ -57,6 +58,13 @@ import { explorerAPI } from '../../src/explorer-api.js';
 import { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, getPriceHistory, getTokenMetadata, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
 import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
+import { installConsoleRedactor } from '../../src/utils/redact-logs.js';
+
+// Install console redactor as early as possible so any downstream init that
+// logs will already be sanitized. Registers the Alchemy key (and Helius, for
+// legacy configs) as secrets. Does nothing if the var is unset.
+installConsoleRedactor(import.meta.env.VITE_ALCHEMY_API_KEY);
+installConsoleRedactor(import.meta.env.VITE_HELIUS_API_KEY);
 import type { Config } from '../../src/types/index.js';
 import { getBitcoinExplorer, getBitcoinProvider, satoshisToBtc } from '../../src/bitcoin/index.js';
 import { ethers } from 'ethers';
@@ -79,9 +87,15 @@ setCryptoAdapter(createWebCryptoAdapter());
 // Price Provider Setup
 // ============================================================================
 
-import { setCoingeckoApiKey } from '../../src/price-providers/index.js';
+import { setAlchemyApiKey, setCoingeckoApiKey } from '../../src/price-providers/index.js';
 
-/** Configure CoinGecko API key from Vite environment */
+/** Configure Alchemy Prices API key (primary provider for current prices) */
+const alchemyApiKey = import.meta.env.VITE_ALCHEMY_API_KEY;
+if (alchemyApiKey) {
+  setAlchemyApiKey(alchemyApiKey);
+}
+
+/** Configure CoinGecko API key (fallback for current prices + primary for history/metadata) */
 const coingeckoApiKey = import.meta.env.VITE_COINGECKO_API_KEY;
 if (coingeckoApiKey) {
   setCoingeckoApiKey(coingeckoApiKey);
@@ -293,13 +307,6 @@ function clearSessionOnlyApprovals(): void {
   }
   sessionOnlyApprovals.clear();
   console.log('[DappApproval] Cleared session-only approvals');
-}
-
-function isValidWalletName(name: string): boolean {
-  // Wallet names are storage keys (top-level keys in wallets.json), so keep them simple/stable:
-  // - 1–12 chars
-  // - alphanumeric only (no spaces/symbols)
-  return /^[A-Za-z0-9]{1,12}$/.test(name);
 }
 
 // ============================================================================
@@ -1206,7 +1213,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'CREATE_WALLET': {
       const walletName = payload.name || 'default';
       if (!isValidWalletName(walletName)) {
-        throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+        throw new Error(getWalletNameValidationMessage());
       }
       const createPassword = payload.password ?? getSessionPassword();
       if (!createPassword) {
@@ -1246,7 +1253,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'IMPORT_WALLET':
       const importWalletName = payload.name || 'default';
       if (!isValidWalletName(importWalletName)) {
-        throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+        throw new Error(getWalletNameValidationMessage());
       }
       const importPassword = payload.password ?? getSessionPassword();
       if (!importPassword) {
@@ -1375,7 +1382,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         throw new Error('Wallet name is required');
       }
       if (!isValidWalletName(newName)) {
-        throw new Error('Wallet name must be 1-12 characters and contain only letters and numbers');
+        throw new Error(getWalletNameValidationMessage());
       }
       const allWallets = walletService!.getAllWallets();
       if (!allWallets[oldName]) {

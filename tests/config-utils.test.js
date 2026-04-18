@@ -47,3 +47,74 @@ test('applies Toncenter API key from env to TON networks', () => {
 
   assert.equal(config.networks['ton-mainnet'].rpcApiKey, 'ton-mainnet-key');
 });
+
+test('substitutes ${ALCHEMY_API_KEY} in EVM and Solana rpcUrl from env', () => {
+  const cfg = {
+    network: 'mainnet',
+    networks: {
+      mainnet: {
+        chainId: 1,
+        rpcUrl: ['https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}', 'https://fallback.example.com'],
+        nativeSymbol: 'ETH',
+        nativeName: 'Ether',
+      },
+      'solana-mainnet': {
+        type: 'solana',
+        rpcUrl: 'https://solana-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}',
+        nativeSymbol: 'SOL',
+        nativeName: 'Solana',
+      },
+    },
+  };
+
+  const { config } = applyExplorerApiKeys(cfg, { ALCHEMY_API_KEY: 'abc123' });
+
+  assert.deepEqual(config.networks.mainnet.rpcUrl, [
+    'https://eth-mainnet.g.alchemy.com/v2/abc123',
+    'https://fallback.example.com',
+  ]);
+  assert.equal(
+    config.networks['solana-mainnet'].rpcUrl,
+    'https://solana-mainnet.g.alchemy.com/v2/abc123',
+  );
+});
+
+test('drops ${ALCHEMY_API_KEY} URLs when key is missing, keeps public fallbacks', () => {
+  const cfg = {
+    network: 'mainnet',
+    networks: {
+      mainnet: {
+        chainId: 1,
+        rpcUrl: ['https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}', 'https://public.example.com'],
+        nativeSymbol: 'ETH',
+        nativeName: 'Ether',
+      },
+    },
+  };
+
+  const { config } = applyExplorerApiKeys(cfg, {});
+
+  // Placeholder URL dropped; fallback collapses string[] of length 1 to a string.
+  assert.equal(config.networks.mainnet.rpcUrl, 'https://public.example.com');
+});
+
+test('regression: legacy ${HELIUS_API_KEY} substitution still works', () => {
+  const cfg = {
+    network: 'solana-mainnet',
+    networks: {
+      'solana-mainnet': {
+        type: 'solana',
+        rpcUrl: 'https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}',
+        nativeSymbol: 'SOL',
+        nativeName: 'Solana',
+      },
+    },
+  };
+
+  const { config } = applyExplorerApiKeys(cfg, { HELIUS_API_KEY: 'legacy-key' });
+
+  assert.equal(
+    config.networks['solana-mainnet'].rpcUrl,
+    'https://mainnet.helius-rpc.com/?api-key=legacy-key',
+  );
+});

@@ -30,6 +30,18 @@ import { mobileStorage, MobileStorageAdapter } from "./MobileStorageAdapter";
 import { mobileCrypto, MobileCryptoAdapter } from "./MobileCryptoAdapter";
 import { cacheService } from "./CacheService";
 import type { Token } from "@wallet/types/token";
+import { installConsoleRedactor } from "@wallet/utils/redact-logs";
+import Constants from "expo-constants";
+
+// Redact the Alchemy (and legacy Helius) key from any console.* output.
+// Keys are shipped in the app bundle and visible in request URLs; this
+// prevents them from also leaking into error messages/logs. Network tab
+// in remote debugging still shows URLs — that is unavoidable.
+{
+  const extra = Constants.expoConfig?.extra ?? {};
+  installConsoleRedactor(extra.alchemyApiKey as string | undefined);
+  installConsoleRedactor(extra.heliusApiKey as string | undefined);
+}
 
 // Types (these match the extension's service-worker types)
 export interface WalletState {
@@ -244,10 +256,18 @@ class WalletBridge {
     const {
       getBundledConfig,
       getCoingeckoApiKey,
+      getAlchemyApiKey,
     } = require("../config/bundled-config");
     const bundledConfig = getBundledConfig();
 
-    // Configure CoinGecko API key for price provider
+    // Configure Alchemy API key — primary for current prices (same key used for RPC + Transfers).
+    const alchemyApiKey = getAlchemyApiKey();
+    if (alchemyApiKey) {
+      const { setAlchemyApiKey } = require("@wallet/price-providers");
+      setAlchemyApiKey(alchemyApiKey);
+    }
+
+    // Configure CoinGecko API key — fallback for current prices, primary for history/metadata.
     const coingeckoApiKey = getCoingeckoApiKey();
     if (coingeckoApiKey) {
       const { setCoingeckoApiKey } = require("@wallet/price-providers");
@@ -1264,17 +1284,12 @@ class WalletBridge {
     // Import explorer API
     const { explorerAPI } = require("@wallet/explorer-api");
 
-    // Check if network is supported
+    // Check if network is supported. Use bulk registerNetworks so the Alchemy
+    // RPC URL (from networkConfig.rpcUrl) gets extracted and preferred over
+    // Etherscan V2 for the chains Alchemy covers.
     if (!explorerAPI.isSupported(network)) {
-      // Register the network if it has explorer config
-      if (networkConfig.explorerApiUrl && networkConfig.chainId) {
-        explorerAPI.registerNetwork(
-          network,
-          networkConfig.explorerApiUrl,
-          networkConfig.chainId,
-          networkConfig.explorerApiKey,
-        );
-      } else {
+      explorerAPI.registerNetworks({ [network]: networkConfig });
+      if (!explorerAPI.isSupported(network)) {
         console.warn(
           `[WalletBridge] Network ${network} not supported for transaction history`,
         );

@@ -8,6 +8,10 @@ backup-*.json
 *.log
 .env
 .claude/
+# CLI user-state (current network, showTestnets toggle). Persisted here
+# rather than config.json so the shipped template is never mutated with
+# substituted env values (would leak the Alchemy key into git).
+config.local.json
 
 # TypeScript build output
 dist/
