@@ -183,6 +183,16 @@ function App() {
       if (message.type === 'PENDING_REQUESTS_UPDATED') {
         setPendingRequests(message.pending || []);
       }
+      // The service worker emits WALLET_CONTEXT_CHANGED whenever the active
+      // wallet identity *or* its network shifts (import, unlock, switch-wallet,
+      // switch-account, switch-network). Applying the whole context in a single
+      // setState avoids the race we used to have when the popup issued
+      // GET_ACCOUNTS and GET_STATE separately — the two round-trips could
+      // complete out of order, briefly rendering the new wallet name against
+      // the previous wallet's network (the visible "flash of Solana" on import).
+      if (message.type === 'WALLET_CONTEXT_CHANGED' && message.context) {
+        setState(message.context as WalletState);
+      }
     };
     chrome.runtime.onMessage.addListener(messageListener);
 
@@ -287,6 +297,7 @@ function App() {
       <MainWallet
         address={state.address!}
         network={state.network}
+        walletName={state.currentWalletName}
         importType={state.importType}
         privateKeyType={state.privateKeyType}
         onLock={loadState}
