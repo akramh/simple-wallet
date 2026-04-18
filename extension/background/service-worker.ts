@@ -338,14 +338,58 @@ interface CachedBalance {
  * Balance cache structure: network -> tokenKey -> CachedBalance
  * tokenKey is 'native' for native currency or lowercase token address
  */
+/**
+ * Per-wallet cache of per-network token balances.
+ *
+ * Keyed by `walletName` → `network` → `tokenKey` so that switching wallets
+ * never serves the prior wallet's balances. Each wallet's subtree is
+ * independent and survives wallet switches, which makes re-selecting a
+ * previously opened wallet render instantly from cache while the background
+ * fan-out refresh confirms freshness.
+ */
+interface NetworkBalances {
+  [tokenKey: string]: CachedBalance;
+}
 interface BalanceCache {
-  [network: string]: {
-    [tokenKey: string]: CachedBalance;
+  [walletName: string]: {
+    [network: string]: NetworkBalances;
   };
 }
 
-/** In-memory balance cache */
+/** In-memory balance cache (keyed by wallet, then network). */
 let balanceCache: BalanceCache = {};
+
+/** Sentinel storage key used for the persisted cache blob. */
+const BALANCE_CACHE_STORAGE_KEY = 'balanceCache';
+
+/**
+ * Read-only view of the active wallet's network cache. Returns an empty
+ * object (not a cache reference) when no wallet is active, so callers can
+ * iterate without null checks but cannot accidentally mutate storage before
+ * a wallet is unlocked.
+ */
+function getActiveWalletCache(): { [network: string]: NetworkBalances } {
+  if (!currentWalletName) return {};
+  return balanceCache[currentWalletName] || {};
+}
+
+/**
+ * Writable reference to the active wallet's network cache. Lazily allocates
+ * the subtree so `setCachedBalance` never has to do it. Throws if called
+ * before a wallet is active — that would indicate a bug: no code should be
+ * writing balances for a nameless wallet.
+ */
+function ensureActiveWalletCache(): { [network: string]: NetworkBalances } {
+  if (!currentWalletName) {
+    throw new Error('Cannot write balance cache before a wallet is active');
+  }
+  let bucket = balanceCache[currentWalletName];
+  if (!bucket) {
+    bucket = {};
+    balanceCache[currentWalletName] = bucket;
+  }
+  return bucket;
+}
 
 /** Balance polling interval timer */
 let balancePollingTimer: NodeJS.Timeout | null = null;
@@ -370,48 +414,129 @@ function getTokenCacheKey(token: { type?: string; address?: string }): string {
 }
 
 /**
- * Get cached balance for a token
+ * Get cached balance for a token on the active wallet.
  */
 function getCachedBalance(network: string, token: { type?: string; address?: string }): CachedBalance | null {
   const key = getTokenCacheKey(token);
-  return balanceCache[network]?.[key] || null;
+  return getActiveWalletCache()[network]?.[key] || null;
 }
 
 /**
- * Update cached balance for a token
+ * Update cached balance for a token. When `walletName` is supplied, the
+ * write lands in that wallet's bucket regardless of which wallet is
+ * currently active — essential for in-flight refreshes that started before
+ * the user switched wallets, so A's balances never leak into B's cache.
+ * Omitting `walletName` falls back to the active wallet.
  */
-function setCachedBalance(network: string, token: { type?: string; address?: string }, balance: string): void {
-  if (!balanceCache[network]) {
-    balanceCache[network] = {};
+function setCachedBalance(
+  network: string,
+  token: { type?: string; address?: string },
+  balance: string,
+  walletName?: string
+): void {
+  const walletKey = walletName ?? currentWalletName;
+  if (!walletKey) {
+    throw new Error('Cannot write balance cache before a wallet is active');
+  }
+  let bucket = balanceCache[walletKey];
+  if (!bucket) {
+    bucket = {};
+    balanceCache[walletKey] = bucket;
+  }
+  if (!bucket[network]) {
+    bucket[network] = {};
   }
   const key = getTokenCacheKey(token);
-  balanceCache[network][key] = {
+  bucket[network][key] = {
     balance,
     lastUpdated: Date.now()
   };
 }
 
 /**
- * Clear balance cache for a network (or all networks)
+ * Clear cache entries. Scope is narrowed by the options:
+ *  - `{}` / no args: wipes every wallet's cache (used on full reset).
+ *  - `{ wallet }`: drops a single wallet's entire cache (e.g. wallet deleted).
+ *  - `{ network }` (no wallet): drops that network for the active wallet only.
+ *  - `{ wallet, network }`: drops a specific wallet+network pair.
  */
-function clearBalanceCache(network?: string): void {
-  if (network) {
-    delete balanceCache[network];
-  } else {
+function clearBalanceCache(opts: { wallet?: string; network?: string } = {}): void {
+  const { wallet, network } = opts;
+  if (!wallet && !network) {
     balanceCache = {};
+    return;
+  }
+  const walletKey = wallet ?? currentWalletName;
+  if (!walletKey) return;
+  if (!network) {
+    delete balanceCache[walletKey];
+    return;
+  }
+  const bucket = balanceCache[walletKey];
+  if (!bucket) return;
+  delete bucket[network];
+  if (Object.keys(bucket).length === 0) {
+    delete balanceCache[walletKey];
   }
 }
 
 /**
- * Load balance cache from persistent storage
+ * Detect the legacy `{[network]: {[token]: CachedBalance}}` shape so we can
+ * migrate it into the per-wallet form on first load after upgrade.
+ *
+ * Returns true when every top-level value looks like a network bucket whose
+ * leaves carry `balance` + `lastUpdated`. Safe against the new shape because
+ * per-wallet buckets contain network sub-objects whose leaves match the same
+ * shape, but the *second* level in the new shape is always networks, never
+ * tokens — we probe a leaf at depth 2 vs depth 3 to disambiguate.
+ */
+function isLegacyBalanceCache(raw: any): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const topValues = Object.values(raw);
+  if (topValues.length === 0) return false;
+  for (const level2 of topValues) {
+    if (!level2 || typeof level2 !== 'object') return false;
+    const level2Values = Object.values(level2);
+    if (level2Values.length === 0) continue;
+    for (const leaf of level2Values) {
+      if (!leaf || typeof leaf !== 'object') return false;
+      // Legacy leaf: { balance, lastUpdated }. New shape's level-2 leaf is a
+      // tokenKey → CachedBalance map, i.e. an object with nested objects.
+      const l: any = leaf;
+      if (typeof l.balance === 'string' && typeof l.lastUpdated === 'number') {
+        return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Load balance cache from persistent storage. Migrates the legacy network-
+ * keyed blob to the per-wallet shape by attributing the legacy data to the
+ * currently active wallet. If no wallet is active yet (cold start before
+ * unlock), legacy data is discarded — we can't safely attribute it.
  */
 async function loadBalanceCache(): Promise<void> {
   try {
-    const result = await chrome.storage.local.get('balanceCache');
-    if (result.balanceCache) {
-      balanceCache = result.balanceCache;
-      console.log('[BalanceCache] Loaded from storage');
+    const result = await chrome.storage.local.get(BALANCE_CACHE_STORAGE_KEY);
+    const raw = result[BALANCE_CACHE_STORAGE_KEY];
+    if (!raw) return;
+    if (isLegacyBalanceCache(raw)) {
+      if (currentWalletName) {
+        balanceCache = { [currentWalletName]: raw };
+        console.log('[BalanceCache] Migrated legacy cache into per-wallet shape for', currentWalletName);
+        await saveBalanceCache();
+      } else {
+        balanceCache = {};
+        await chrome.storage.local.remove(BALANCE_CACHE_STORAGE_KEY);
+        console.log('[BalanceCache] Discarded legacy cache (no active wallet to attribute)');
+      }
+      return;
     }
+    balanceCache = raw as BalanceCache;
+    console.log('[BalanceCache] Loaded from storage');
   } catch (err) {
     console.warn('[BalanceCache] Failed to load from storage:', err);
   }
@@ -422,10 +547,159 @@ async function loadBalanceCache(): Promise<void> {
  */
 async function saveBalanceCache(): Promise<void> {
   try {
-    await chrome.storage.local.set({ balanceCache });
+    await chrome.storage.local.set({ [BALANCE_CACHE_STORAGE_KEY]: balanceCache });
   } catch (err) {
     console.warn('[BalanceCache] Failed to save to storage:', err);
   }
+}
+
+// ============================================================================
+// Per-Wallet Preferences (active network per wallet)
+// ============================================================================
+
+/**
+ * Per-wallet UI preferences persisted across sessions.
+ *
+ * `lastNetwork` records which chain the user was viewing when they last had
+ * this wallet active. Restoring it on wallet switch (or on import/unlock)
+ * means each wallet "remembers" its own chain — no more bleed-through from
+ * the previously active wallet and no more flash-of-bundled-default (the
+ * repo's config.json ships with `solana-mainnet` as the cross-wallet default,
+ * which surprised every mnemonic import that landed on a non-Solana chain).
+ */
+interface WalletPreferences {
+  lastNetwork?: string;
+}
+
+/** In-memory prefs keyed by wallet name. */
+let walletPreferences: { [walletName: string]: WalletPreferences } = {};
+
+/** Persisted storage key for the wallet preferences blob. */
+const WALLET_PREFS_STORAGE_KEY = 'walletPreferences';
+
+/**
+ * Load persisted wallet preferences into memory. Idempotent — safe to call on
+ * every SW wake-up. Failures leave the in-memory map empty so fallbacks still
+ * apply.
+ */
+async function loadWalletPreferences(): Promise<void> {
+  try {
+    const result = await chrome.storage.local.get(WALLET_PREFS_STORAGE_KEY);
+    const raw = result[WALLET_PREFS_STORAGE_KEY];
+    if (raw && typeof raw === 'object') {
+      walletPreferences = raw as typeof walletPreferences;
+    }
+  } catch (err) {
+    console.warn('[WalletPrefs] Failed to load from storage:', err);
+  }
+}
+
+/**
+ * Persist the in-memory wallet preferences blob. Best-effort — never throws.
+ */
+async function saveWalletPreferences(): Promise<void> {
+  try {
+    await chrome.storage.local.set({ [WALLET_PREFS_STORAGE_KEY]: walletPreferences });
+  } catch (err) {
+    console.warn('[WalletPrefs] Failed to save to storage:', err);
+  }
+}
+
+/**
+ * Return the network this wallet was last viewing, or null if none stored.
+ * Callers use this to restore the wallet's chain on switch/unlock/import so
+ * the bundled default never leaks across wallets.
+ */
+function getWalletPreferredNetwork(walletName: string): string | null {
+  return walletPreferences[walletName]?.lastNetwork ?? null;
+}
+
+/**
+ * Persist the given network as this wallet's last-viewed chain. Writes through
+ * to chrome.storage so the preference survives SW eviction.
+ */
+async function setWalletPreferredNetwork(walletName: string, network: string): Promise<void> {
+  if (!walletName || !network) return;
+  const existing = walletPreferences[walletName] ?? {};
+  if (existing.lastNetwork === network) return;
+  walletPreferences[walletName] = { ...existing, lastNetwork: network };
+  await saveWalletPreferences();
+}
+
+/**
+ * Drop any stored preferences for a wallet. Called from DELETE_WALLET so the
+ * prefs blob doesn't accumulate entries for wallets that no longer exist.
+ */
+async function removeWalletPreferences(walletName: string): Promise<void> {
+  if (!walletName) return;
+  if (!(walletName in walletPreferences)) return;
+  delete walletPreferences[walletName];
+  await saveWalletPreferences();
+}
+
+/**
+ * Pick a sensible default network for a newly imported wallet. Mnemonic
+ * wallets default to EVM mainnet (most users expect EVM); private-key
+ * imports default to the chain family of their key. Falls back to the
+ * caller-supplied fallback (the current `config.network`) if nothing else
+ * fits, which preserves pre-existing behavior for edge cases.
+ */
+function defaultNetworkForImport(
+  importType: 'mnemonic' | 'privateKey',
+  chainType: PrivateKeyChain | undefined,
+  fallback: string
+): string {
+  if (importType === 'privateKey' && chainType) {
+    const chainToNetwork: Record<PrivateKeyChain, string> = {
+      evm: 'mainnet',
+      bitcoin: 'bitcoin-mainnet',
+      solana: 'solana-mainnet',
+      xrp: 'xrp-mainnet',
+      ton: 'ton-mainnet',
+    };
+    return chainToNetwork[chainType] ?? fallback;
+  }
+  // Mnemonic imports can span every chain — pick a universally useful default
+  // (EVM mainnet) rather than inheriting whatever happened to be active.
+  return 'mainnet';
+}
+
+// ============================================================================
+// Broadcasts
+// ============================================================================
+
+/**
+ * Broadcast the full active-wallet context to the popup/sidepanel in a single
+ * envelope. Consumers apply every field in one `setState` so the UI never
+ * re-renders with a mix of old and new fields (which caused visible flashes
+ * — e.g. the address/walletName updating before the network caught up).
+ *
+ * Fired by every handler that mutates the active-wallet identity or its
+ * network: IMPORT_WALLET, UNLOCK_WALLET, SWITCH_WALLET, SWITCH_ACCOUNT,
+ * SWITCH_NETWORK. Guarded on `isUnlocked` — locked transitions use their own
+ * `WALLET_LOCKED` message.
+ */
+function broadcastWalletContext(): void {
+  if (!isUnlocked || !walletService) return;
+  let address: string | null = null;
+  try {
+    address = walletService.getAddress();
+  } catch {
+    // Non-EVM private-key wallets may not expose a direct address via
+    // getAddress on the wrong network; the popup tolerates null.
+  }
+  chrome.runtime.sendMessage({
+    type: 'WALLET_CONTEXT_CHANGED',
+    context: {
+      isUnlocked: true,
+      hasWallet: true,
+      network: walletService.config.network,
+      address,
+      currentWalletName,
+      importType: walletService.wallet.importType ?? null,
+      privateKeyType: walletService.wallet.privateKeyType ?? null,
+    },
+  }).catch(() => { });
 }
 
 /**
@@ -488,7 +762,7 @@ type RefreshResult = Awaited<ReturnType<WalletAppService['getPortfolioForNetwork
  */
 async function refreshBalancesForNetwork(
   networkKey: string,
-  opts: { suppressBroadcast?: boolean } = {}
+  opts: { suppressBroadcast?: boolean; targetWallet?: string } = {}
 ): Promise<RefreshResult> {
   if (!isUnlocked || !walletService) return [];
 
@@ -512,12 +786,15 @@ async function refreshBalancesForNetwork(
 
   for (const item of portfolio) {
     if (!item.error) {
-      setCachedBalance(networkKey, item.token, item.balance);
+      setCachedBalance(networkKey, item.token, item.balance, opts.targetWallet);
     }
   }
 
   await saveBalanceCache();
-  if (!opts.suppressBroadcast) {
+  // Only broadcast per-network updates when they are still relevant to the
+  // active wallet — routing them to an already-switched-away wallet would
+  // confuse single-network UI that keys off the active wallet.
+  if (!opts.suppressBroadcast && (!opts.targetWallet || opts.targetWallet === currentWalletName)) {
     broadcastBalanceUpdate(networkKey, portfolio);
   }
   return portfolio;
@@ -552,8 +829,13 @@ function getEnabledNetworksForWallet(): Array<[string, any]> {
   );
 }
 
-/** Whether a fan-out refresh is currently running (guards against overlap). */
-let isRefreshingAllEnabled = false;
+/**
+ * Per-wallet in-flight fan-out refreshes. Keyed by walletName so concurrent
+ * refreshes for *different* wallets can run — a refresh for wallet A must
+ * never block a freshly-imported wallet B from populating its own cache.
+ * Same-wallet reentrancy is deduped by returning the existing promise.
+ */
+const activeRefreshesByWallet = new Map<string, Promise<void>>();
 
 /**
  * Prices sourced from the Alchemy Portfolio API on the most recent refresh.
@@ -585,6 +867,7 @@ const portfolioPriceCache = new Map<string, number | null>();
 async function refreshViaPortfolioApi(
   apiKey: string,
   targetNetworks: Array<[string, any]>,
+  targetWallet: string,
 ): Promise<Set<string>> {
   const covered = new Set<string>();
   if (!walletService || targetNetworks.length === 0) return covered;
@@ -672,7 +955,7 @@ async function refreshViaPortfolioApi(
     for (const token of allowlist) {
       const tokenKey = getTokenCacheKey(token);
       const entry = bucket.get(tokenKey);
-      setCachedBalance(networkKey, token, entry?.balance ?? '0');
+      setCachedBalance(networkKey, token, entry?.balance ?? '0', targetWallet);
       portfolioPriceCache.set(`${networkKey}:${tokenKey}`, entry?.priceUsd ?? null);
     }
     covered.add(networkKey);
@@ -698,44 +981,82 @@ async function refreshViaPortfolioApi(
  * receives them from the single-network refresh path.
  */
 async function refreshAllEnabledNetworks(): Promise<void> {
-  if (!isUnlocked || !walletService) return;
-  if (isRefreshingAllEnabled) return;
-  isRefreshingAllEnabled = true;
+  if (!isUnlocked || !walletService || !currentWalletName) return;
 
+  // Capture the wallet identity at entry. Every write and the terminal
+  // broadcast are tagged with this identity so a switch mid-flight can't
+  // cause A's balances to land in B's cache or to be broadcast as B's data.
+  const targetWallet = currentWalletName;
+
+  // Dedupe: if the same wallet already has a refresh running, share it.
+  const existing = activeRefreshesByWallet.get(targetWallet);
+  if (existing) return existing;
+
+  const promise = runRefreshForWallet(targetWallet);
+  activeRefreshesByWallet.set(targetWallet, promise);
+  try {
+    await promise;
+  } finally {
+    if (activeRefreshesByWallet.get(targetWallet) === promise) {
+      activeRefreshesByWallet.delete(targetWallet);
+    }
+  }
+}
+
+/**
+ * Execute a fan-out refresh for a specific wallet. Each balance write is
+ * routed to `targetWallet`'s cache bucket regardless of the currently active
+ * wallet, so a slow refresh that finishes after a wallet switch still
+ * populates the correct bucket (and won't pollute another wallet's).
+ *
+ * The final `UNIFIED_PORTFOLIO_UPDATED` broadcast is only emitted when
+ * `targetWallet` is still active — otherwise the popup would rehydrate with
+ * a snapshot for a wallet the user has already left. A refresh started from
+ * the new wallet path handles that side separately.
+ */
+async function runRefreshForWallet(targetWallet: string): Promise<void> {
   try {
     const networks = getEnabledNetworksForWallet();
 
     // Step 1: Portfolio API batch — covers EVM + Solana in ~2 round-trips.
     const apiKey = resolveAlchemyApiKey();
     const covered = apiKey
-      ? await refreshViaPortfolioApi(apiKey, networks).catch(err => {
+      ? await refreshViaPortfolioApi(apiKey, networks, targetWallet).catch(err => {
           console.warn('[UnifiedRefresh] Portfolio API failed, falling back:', err);
           return new Set<string>();
         })
       : new Set<string>();
 
     // Step 2: per-chain fallback for networks the batch didn't cover (always
-    // BTC / XRP / TON; everything when the batch failed).
+    // BTC / XRP / TON; everything when the batch failed). Abort the loop if
+    // the active wallet has flipped to something else *and* the target
+    // wallet is no longer even loaded — continuing would waste work on data
+    // that won't be broadcast.
     for (let i = 0; i < networks.length; i++) {
       const [networkKey] = networks[i];
       if (covered.has(networkKey)) continue;
+      if (currentWalletName !== targetWallet) break;
       try {
-        await refreshBalancesForNetwork(networkKey, { suppressBroadcast: true });
+        await refreshBalancesForNetwork(networkKey, { suppressBroadcast: true, targetWallet });
       } catch (err) {
         console.warn(`[UnifiedRefresh] ${networkKey} error:`, err);
       }
       await delay(PER_NETWORK_REFRESH_STAGGER_MS);
     }
 
-    // Step 3: broadcast the consolidated snapshot.
+    // Step 3: broadcast the consolidated snapshot — only if this wallet is
+    // still active. If the user switched away, the new wallet's own refresh
+    // will drive its own broadcast; we'd only be overwriting their view with
+    // the previous wallet's totals.
+    if (currentWalletName !== targetWallet) return;
     try {
       const snapshot = await buildUnifiedPortfolioSnapshot();
       broadcastUnifiedPortfolio(snapshot);
     } catch (err) {
       console.warn('[UnifiedRefresh] Snapshot build failed:', err);
     }
-  } finally {
-    isRefreshingAllEnabled = false;
+  } catch (err) {
+    console.warn('[UnifiedRefresh] runRefreshForWallet failed:', err);
   }
 }
 
@@ -826,11 +1147,12 @@ async function buildUnifiedPortfolioSnapshot(
 
   const networks = getEnabledNetworksForWallet();
   const inputs: NetworkPortfolioInput[] = [];
+  const walletCache = getActiveWalletCache();
 
   for (const [networkKey, config] of networks) {
     const tokens = walletService.getTokensForNetwork(networkKey);
     const prices = await resolvePricesForNetwork(networkKey, tokens);
-    const cachedForNetwork = balanceCache[networkKey] || {};
+    const cachedForNetwork = walletCache[networkKey] || {};
 
     const balances: NetworkPortfolioInput['balances'] = [];
     for (const token of tokens) {
@@ -975,17 +1297,20 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== POPUP_PORT_NAME) return;
   popupPorts.add(port);
 
-  // Fast-path: if any cached entry is stale, kick off an immediate refresh.
+  // Fast-path: if any cached entry for the *active* wallet is stale, kick off
+  // an immediate refresh. Other wallets' caches are irrelevant here — we only
+  // care about what the popup is about to render.
   if (isUnlocked && walletService) {
     const now = Date.now();
+    const walletCache = getActiveWalletCache();
     let stale = false;
-    for (const net of Object.values(balanceCache)) {
+    for (const net of Object.values(walletCache)) {
       for (const entry of Object.values(net)) {
         if (now - entry.lastUpdated > BALANCE_CACHE_TTL) { stale = true; break; }
       }
       if (stale) break;
     }
-    if (stale || Object.keys(balanceCache).length === 0) {
+    if (stale || Object.keys(walletCache).length === 0) {
       refreshAllEnabledNetworks().catch(() => { /* already logged */ });
     }
   }
@@ -1477,6 +1802,9 @@ async function initializeWalletService(): Promise<void> {
   });
 
   await walletService.initialize();
+  // Preload per-wallet preferences so any early lifecycle handler (e.g.
+  // auto-unlock via persisted session) sees an already-populated map.
+  await loadWalletPreferences();
 }
 
 // ============================================================================
@@ -1728,7 +2056,25 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       currentWalletName = walletName;
       isUnlocked = true;
 
+      // Created wallets are mnemonic (multi-chain) — default them to EVM
+      // mainnet rather than inheriting the previous wallet's network or the
+      // bundled `solana-mainnet` default.
+      await loadWalletPreferences();
+      const createDefaultNetwork = defaultNetworkForImport(
+        'mnemonic',
+        undefined,
+        walletService!.config.network
+      );
+      if (
+        walletService!.config.networks[createDefaultNetwork] &&
+        walletService!.config.network !== createDefaultNetwork
+      ) {
+        await walletService!.setNetwork(createDefaultNetwork);
+      }
+      await setWalletPreferredNetwork(walletName, walletService!.config.network);
+
       broadcastAccountsChanged([newWallet.address]);
+      broadcastWalletContext();
 
       // Initialize transaction history for this wallet
       const createStorage = await ChromeStorageAdapter.create();
@@ -1765,29 +2111,21 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       setSessionPassword(importPassword);
 
       let importedWallet;
+      let importedChainType: PrivateKeyChain | undefined;
       if (payload.privateKey) {
         // Private Key Import
         if (!payload.chainType) {
           throw new Error('Chain type required for private key import');
         }
+        if (!isPrivateKeyChain(payload.chainType)) {
+          throw new Error('Unsupported chain type for private key import');
+        }
+        importedChainType = payload.chainType;
         importedWallet = walletService!.importFromPrivateKey(
           payload.privateKey,
           payload.chainType,
           importPassword
         );
-
-        // Auto-switch to appropriate network for the imported chain type
-        const chainToNetwork: Record<string, string> = {
-          evm: 'mainnet',
-          bitcoin: 'bitcoin-mainnet',
-          solana: 'solana-mainnet',
-          xrp: 'xrp-mainnet',
-          ton: 'ton-mainnet'
-        };
-        const targetNetwork = chainToNetwork[payload.chainType];
-        if (targetNetwork && walletService!.config.network !== targetNetwork) {
-          await walletService!.setNetwork(targetNetwork);
-        }
       } else {
         // Mnemonic Import (Default)
         importedWallet = walletService!.importWallet(
@@ -1801,18 +2139,40 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       currentWalletName = importWalletName;
       isUnlocked = true;
 
+      // Pick the target network for the fresh wallet BEFORE any broadcast. A
+      // previously-stored preference (re-import into an existing name) wins;
+      // otherwise pick a sensible default based on import type so the UI never
+      // inherits the shared `config.network` leaked from the previous wallet
+      // (which, for a fresh install, defaults to `solana-mainnet` from the
+      // bundled config.json — the source of the visible "flash of Solana").
+      await loadWalletPreferences();
+      const importTargetNetwork =
+        getWalletPreferredNetwork(importWalletName) ??
+        defaultNetworkForImport(
+          importedChainType ? 'privateKey' : 'mnemonic',
+          importedChainType,
+          walletService!.config.network
+        );
+      if (walletService!.config.networks[importTargetNetwork] && walletService!.config.network !== importTargetNetwork) {
+        await walletService!.setNetwork(importTargetNetwork);
+      }
+      await setWalletPreferredNetwork(importWalletName, walletService!.config.network);
+
       broadcastAccountsChanged([importedWallet.address]);
+      broadcastWalletContext();
 
       // Initialize transaction history for this wallet
       const importStorage = await ChromeStorageAdapter.create();
       transactionHistory = new TransactionHistoryManager(importStorage, currentWalletName);
 
-      // Kick off a fan-out refresh across every enabled chain so the unified
-      // view populates immediately after import. Mirrors the UNLOCK_WALLET
-      // path — without this, the popup would render empty until the next
-      // popup-port connect (which only triggers a refresh when the cache is
-      // already stale / empty, introducing visible delay).
+      // Restore any persisted per-wallet cache (SW eviction recovery) and then
+      // wipe the import target's slot so the popup cannot see data left over
+      // from a prior same-named wallet (e.g. user re-imports into an existing
+      // wallet name). The per-wallet shape means *other* wallets' caches are
+      // preserved untouched, so switching back to them stays instant.
       await loadBalanceCache();
+      clearBalanceCache({ wallet: importWalletName });
+      await saveBalanceCache();
       refreshAllEnabledNetworks().catch(err => {
         console.warn('[UnifiedRefresh] post-import fan-out failed:', err);
       });
@@ -1821,7 +2181,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       resetAutoLockTimer();
       return {
         success: true,
-        address: walletService!.getAddress()
+        address: walletService!.getAddress(),
+        walletName: currentWalletName
       };
 
     case 'UNLOCK_WALLET':
@@ -1835,7 +2196,21 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       currentWalletName = unlockWalletName;
       isUnlocked = true;
 
+      // Restore this wallet's preferred network before we broadcast any state,
+      // so the UI sees the right chain on first render. Silently no-ops if
+      // the preference is missing or points at a network that's been removed.
+      await loadWalletPreferences();
+      const unlockPreferredNetwork = getWalletPreferredNetwork(unlockWalletName);
+      if (
+        unlockPreferredNetwork &&
+        walletService!.config.networks[unlockPreferredNetwork] &&
+        walletService!.config.network !== unlockPreferredNetwork
+      ) {
+        await walletService!.setNetwork(unlockPreferredNetwork);
+      }
+
       broadcastAccountsChanged([loaded.address]);
+      broadcastWalletContext();
 
       // Initialize transaction history for this wallet
       const storage = await ChromeStorageAdapter.create();
@@ -1878,9 +2253,40 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       currentWalletName = switchWalletName;
       isUnlocked = true;
 
+      // Restore the target wallet's preferred network. Must happen before the
+      // context broadcast so the popup receives one coherent envelope
+      // (walletName + network together), not a flash where network lags the
+      // walletName change by a round-trip.
+      await loadWalletPreferences();
+      const switchPreferredNetwork = getWalletPreferredNetwork(switchWalletName);
+      if (
+        switchPreferredNetwork &&
+        walletService!.config.networks[switchPreferredNetwork] &&
+        walletService!.config.network !== switchPreferredNetwork
+      ) {
+        await walletService!.setNetwork(switchPreferredNetwork);
+      }
+
       // Initialize transaction history for the switched wallet
       const switchStorage = await ChromeStorageAdapter.create();
       transactionHistory = new TransactionHistoryManager(switchStorage, currentWalletName);
+
+      // Notify the popup that the active address changed. The unified hook
+      // refetches on walletName changes via its dep array, so this is
+      // redundant for the portfolio view, but dApp provider consumers still
+      // rely on accountsChanged.
+      broadcastAccountsChanged([switchedWallet.address]);
+      broadcastWalletContext();
+
+      // Kick off a fan-out refresh so this wallet's cache — which may be
+      // empty (first visit) or stale (returning after a long gap) — is
+      // brought up to date. When it lands, broadcastUnifiedPortfolio pushes
+      // the fresh snapshot to the popup. Non-blocking so the switch feels
+      // instant even on slow chains.
+      refreshAllEnabledNetworks().catch(err => {
+        console.warn('[UnifiedRefresh] post-switch fan-out failed:', err);
+      });
+      ensureUnifiedRefreshAlarm();
 
       resetAutoLockTimer();
       return {
@@ -1980,11 +2386,11 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       }
 
     case 'GET_CACHED_BALANCES':
-      // Returns only cached balances for a network
+      // Returns only cached balances for a network (scoped to active wallet)
       if (!isUnlocked) throw new Error('Wallet is locked');
       const cacheNetwork = payload?.network || walletService!.config.network;
       return {
-        balances: balanceCache[cacheNetwork] || {},
+        balances: getActiveWalletCache()[cacheNetwork] || {},
         network: cacheNetwork
       };
 
@@ -2557,8 +2963,15 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'SWITCH_NETWORK':
       await walletService!.setNetwork(payload.network);
       const switchNetworkConfig = walletService!.config.networks[payload.network];
-      // Clear cached balances for the target network to avoid stale data bleed
-      clearBalanceCache(payload.network);
+      // Remember this network as the active wallet's preferred chain so the
+      // next switch/unlock restores it. `currentWalletName` is non-null here
+      // because SWITCH_NETWORK requires an unlocked wallet.
+      if (currentWalletName) {
+        await setWalletPreferredNetwork(currentWalletName, payload.network);
+      }
+      // Clear cached balances for the target network on the active wallet to
+      // avoid stale data bleed while the fresh fetch is in flight.
+      clearBalanceCache({ network: payload.network });
       saveBalanceCache().catch(() => { });
       // Kick off a refresh for the new network (non-blocking)
       refreshBalancesForCurrentNetwork().catch(() => { });
@@ -2567,6 +2980,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         const chainHex = '0x' + switchNetworkConfig.chainId.toString(16);
         broadcastChainChanged(chainHex);
       }
+      broadcastWalletContext();
       return { success: true, network: payload.network };
 
     case 'GET_NETWORKS':
@@ -2801,6 +3215,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       const switchedAccount = walletService!.switchAccount(payload.index);
       walletService!.saveWallet(currentWalletName); // Save the wallet with new active account
       broadcastAccountsChanged([switchedAccount.address]);
+      broadcastWalletContext();
       return { success: true, address: walletService!.getAddress(), index: switchedAccount.accountIndex };
 
     case 'GET_ALL_WALLETS':
@@ -2811,6 +3226,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'DELETE_WALLET':
       if (!isUnlocked) throw new Error('Wallet is locked');
       const deleted = walletService!.deleteWallet(payload.name);
+      if (deleted) {
+        // Reclaim the deleted wallet's balance cache so an unrelated future
+        // wallet created with the same name can't inherit old data.
+        clearBalanceCache({ wallet: payload.name });
+        saveBalanceCache().catch(() => { });
+        // Same concern for the wallet's preferred-network entry.
+        removeWalletPreferences(payload.name).catch(() => { });
+      }
       return { success: deleted };
 
     // dApp provider methods

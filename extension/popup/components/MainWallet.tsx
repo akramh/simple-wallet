@@ -182,6 +182,15 @@ function isValidRecipientAddress(networkKey: string, address: string): boolean {
 interface Props {
   address: string;
   network: string;
+  /**
+   * Active wallet identity propagated from App-level state so the unified
+   * portfolio hook and the account header update in lock-step with `network`
+   * and `address`. When the service worker fires WALLET_CONTEXT_CHANGED, all
+   * three flip together in a single App `setState` and re-render — avoiding
+   * the transient mismatch between new walletName and old network that caused
+   * the visible flash on wallet switch/import.
+   */
+  walletName?: string | null;
   importType?: 'mnemonic' | 'privateKey' | null;
   privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton' | null;
   onLock: () => void;
@@ -213,7 +222,7 @@ interface TokenWithBalance {
  * @param props - Component props
  * @returns Main wallet UI
  */
-function MainWallet({ address, network, importType, privateKeyType, onLock, onStateChange }: Props) {
+function MainWallet({ address, network, walletName, importType, privateKeyType, onLock, onStateChange }: Props) {
   const { showToast } = useToast();
   const notifyStateChange = () => {
     if (onStateChange) {
@@ -228,7 +237,10 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
   const [refreshing, setRefreshing] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [showAddToken, setShowAddToken] = useState(false);
-  const [currentWalletName, setCurrentWalletName] = useState('default');
+  // Fallback for when the prop isn't yet populated (first render before the
+  // SW responds). Once the prop lands it takes precedence via `activeWalletName`.
+  const [localWalletName, setLocalWalletName] = useState('default');
+  const activeWalletName = walletName ?? localWalletName;
   const [currentAccountIndex, setCurrentAccountIndex] = useState(0);
   const [showTestnets, setShowTestnets] = useState(false);
 
@@ -303,10 +315,14 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
   // ============================================================================
 
   /** Unified snapshot driver — suspends when the user has scoped to a single chain. */
-  const unified = useUnifiedPortfolio(viewScope === 'unified', {
-    sort: prefs.tokenSort,
-    showZeroBalances: !prefs.hideZeroBalances,
-  });
+  const unified = useUnifiedPortfolio(
+    viewScope === 'unified',
+    {
+      sort: prefs.tokenSort,
+      showZeroBalances: !prefs.hideZeroBalances,
+    },
+    activeWalletName,
+  );
 
   /** Convert raw snapshot rows into the dumb-component shape `TokenList` expects. */
   const unifiedRows: TokenRow[] = useMemo(() => {
@@ -469,7 +485,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
         setNetworks(networksResponse.networks);
       }
       if (accountsResponse.currentWalletName) {
-        setCurrentWalletName(accountsResponse.currentWalletName);
+        setLocalWalletName(accountsResponse.currentWalletName);
       }
       if (accountsResponse.currentAccountIndex !== undefined) {
         setCurrentAccountIndex(accountsResponse.currentAccountIndex);
@@ -835,7 +851,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
       <Header
         network={network}
         currentAddress={address}
-        currentWalletName={currentWalletName}
+        currentWalletName={activeWalletName}
         currentAccountIndex={currentAccountIndex}
         onAccountMenuClick={() => setShowAccountMenu(true)}
         onOpenSettings={() => setView('settings')}
@@ -846,7 +862,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
       {showAccountMenu && (
         <AccountMenu
           currentAddress={address}
-          currentWalletName={currentWalletName}
+          currentWalletName={activeWalletName}
           currentAccountIndex={currentAccountIndex}
           onClose={() => setShowAccountMenu(false)}
           onAccountSwitch={() => {
@@ -887,7 +903,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
               </div>
               <div className="account-info">
                 <div className="account-name">
-                  {currentWalletName} : Account {currentAccountIndex + 1}
+                  {activeWalletName} : Account {currentAccountIndex + 1}
                 </div>
                 <div className="account-address-row">
                   <button
