@@ -11,7 +11,7 @@
  * - Pure filtering logic; does not access secrets or storage
  */
 
-import type { NetworkConfig } from './types/config.js';
+import type { NetworkConfig, NetworkType } from './types/config.js';
 
 /**
  * Options for filtering visible networks.
@@ -41,4 +41,61 @@ export function getVisibleNetworkEntries(
     if (currentNetwork && key === currentNetwork) return true;
     return showTestnets || !config.isTestnet;
   });
+}
+
+/**
+ * Wallet-import discriminator.
+ *
+ * - `mnemonic`: Seed-phrase import; supports every network type.
+ * - `privateKey`: Raw-key import; supports only networks matching `privateKeyType`.
+ */
+export type WalletImportType = 'mnemonic' | 'privateKey';
+
+/**
+ * Chain-type discriminator for a raw private-key import.
+ */
+export type PrivateKeyType = 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
+
+/**
+ * Context describing how the wallet was created/imported.
+ */
+export interface NetworkUsabilityContext {
+  importType?: WalletImportType | null;
+  privateKeyType?: PrivateKeyType | null;
+}
+
+/**
+ * Resolve the network type for a given key, preferring the explicit
+ * `config.type` and falling back to a key-prefix heuristic for legacy
+ * configs where `type` is undefined (EVM).
+ */
+function resolveNetworkType(networkKey: string, config?: NetworkConfig): NetworkType {
+  if (config && config.type) return config.type;
+  if (networkKey.startsWith('bitcoin-')) return 'bitcoin';
+  if (networkKey.startsWith('solana-')) return 'solana';
+  if (networkKey.startsWith('xrp-')) return 'xrp';
+  if (networkKey.startsWith('ton-')) return 'ton';
+  return 'evm';
+}
+
+/**
+ * Check whether a given network is usable by the current wallet.
+ *
+ * Mnemonic-imported wallets can use every network. Private-key-imported
+ * wallets can only use networks matching the key's chain type — e.g. a
+ * Bitcoin private-key import cannot sign EVM transactions.
+ *
+ * @param networkKey - Network key (e.g. `"mainnet"`, `"bitcoin-mainnet"`).
+ * @param config - Optional network config used for the definitive `type` field.
+ * @param context - Import metadata describing how the wallet was created.
+ * @returns `true` when the network can be used by this wallet.
+ */
+export function isNetworkUsable(
+  networkKey: string,
+  config: NetworkConfig | undefined,
+  context: NetworkUsabilityContext = {}
+): boolean {
+  const { importType, privateKeyType } = context;
+  if (!importType || importType !== 'privateKey' || !privateKeyType) return true;
+  return resolveNetworkType(networkKey, config) === privateKeyType;
 }

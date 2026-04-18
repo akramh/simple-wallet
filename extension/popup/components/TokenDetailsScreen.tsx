@@ -72,15 +72,23 @@ export default function TokenDetailsScreen({
   const { showToast } = useToast();
   const [range, setRange] = useState<TimeRange>('1D');
   const [historyByRange, setHistoryByRange] = useState<Record<string, PriceHistoryResult | null>>({});
-  const [historyStatus, setHistoryStatus] = useState<Record<string, 'idle' | 'loading' | 'error'>>({});
+  // Seed '1D' as loading so the initial paint renders the chart skeleton
+  // instead of "No price history available" → fetching → data. Without this
+  // seed the first frame shows the empty state for a tick before the effect
+  // that calls fetchHistory('1D') flips the status.
+  const [historyStatus, setHistoryStatus] = useState<Record<string, 'idle' | 'loading' | 'error'>>({ '1D': 'loading' });
   const [dailyChange, setDailyChange] = useState<PriceHistoryResult | null>(null);
 
   const [activity, setActivity] = useState<Transaction[]>([]);
-  const [activityLoading, setActivityLoading] = useState(false);
+  // Seed as loading — loadActivity() runs in a post-mount effect, so the first
+  // render would otherwise flash "No transactions yet" before the request lands.
+  const [activityLoading, setActivityLoading] = useState(true);
   const [activityError, setActivityError] = useState<string | null>(null);
   const [activityRefreshing, setActivityRefreshing] = useState(false);
   const [marketDetails, setMarketDetails] = useState<TokenMetadataResult | null>(null);
-  const [marketLoading, setMarketLoading] = useState(false);
+  // Same reason: seed loading so the market-details block shows a skeleton
+  // on first paint instead of its empty row values.
+  const [marketLoading, setMarketLoading] = useState(true);
   const [marketError, setMarketError] = useState<string | null>(null);
 
   const networkConfig = networks[network] || {};
@@ -224,15 +232,29 @@ export default function TokenDetailsScreen({
     }
   }, [range, token.symbol]);
 
+  // Reset + fetch whenever the user switches into a different token/chain.
+  // Without the explicit reset, stale activity rows and stale market values
+  // briefly flash while the new fetch is in flight. Setting them back to
+  // their "empty but loading" shape keeps the screen in a skeleton state
+  // during the transition instead of showing prior-token data.
   useEffect(() => {
+    setHistoryByRange({});
+    setHistoryStatus({ '1D': 'loading' });
+    setDailyChange(null);
     fetchHistory('1D');
   }, [token.symbol]);
 
   useEffect(() => {
+    setActivity([]);
+    setActivityError(null);
+    setActivityLoading(true);
     loadActivity();
   }, [token.symbol, network, address]);
 
   useEffect(() => {
+    setMarketDetails(null);
+    setMarketError(null);
+    setMarketLoading(true);
     fetchMarketDetails();
   }, [token.symbol]);
 

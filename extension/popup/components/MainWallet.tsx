@@ -25,6 +25,16 @@ import NetworkSelector from './ui/NetworkSelector';
 import { Icon } from './ui';
 import BalanceCard from './wallet/BalanceCard';
 import TokenList from './wallet/TokenList';
+import type { TokenRow } from './wallet/TokenList';
+import PortfolioHero from './wallet/PortfolioHero';
+import TokenRowSkeleton from './wallet/TokenRowSkeleton';
+import EmptyPortfolio from './wallet/EmptyPortfolio';
+import PortfolioErrorBanner from './wallet/PortfolioErrorBanner';
+import SortModal from './wallet/SortModal';
+import { useUnifiedPortfolio } from '../hooks/useUnifiedPortfolio';
+import { useUserPreferences } from '../hooks/useUserPreferences';
+import { getChainBadgeIcon } from '../utils/chainBadge';
+import { sendMessageWithRetry } from '../utils/messaging';
 import ethIcon from '../../assets/img/eth_logo.svg';
 import { useToast } from '../context/ToastContext';
 import bnbIcon from '../../assets/img/bnb.svg';
@@ -227,7 +237,25 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
 
   // Send form state
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
-  const [selectedTokenDetails, setSelectedTokenDetails] = useState<{ token: Token; icon: string | null } | null>(null);
+  const [selectedTokenDetails, setSelectedTokenDetails] = useState<{ token: Token; icon: string | null; networkKey?: string } | null>(null);
+
+  /**
+   * `unified` = all-networks aggregated view; any other string = a specific
+   * `networkKey` the user narrowed to. Defaults to unified so first-run users
+   * see the cross-chain hero rather than a single-network slice.
+   */
+  const [viewScope, setViewScope] = useState<'unified' | string>('unified');
+
+  /** Sort modal open/close. */
+  const [showSortModal, setShowSortModal] = useState(false);
+
+  /** `navigator.onLine` mirror for the offline banner. */
+  const [isOffline, setIsOffline] = useState<boolean>(
+    typeof navigator !== 'undefined' && navigator.onLine === false
+  );
+
+  /** Persisted preferences: sort order, hide-zero toggle, privacy mode. */
+  const { prefs, update: updatePrefs } = useUserPreferences();
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [amountInput, setAmountInput] = useState('');
@@ -266,6 +294,83 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
       return { value: key, label: net.name, icon, disabled };
     });
   }, [networks, network, showTestnets, importType, privateKeyType]);
+
+  // ============================================================================
+  // Unified cross-chain portfolio
+  // ============================================================================
+
+  /** Unified snapshot driver — suspends when the user has scoped to a single chain. */
+  const unified = useUnifiedPortfolio(viewScope === 'unified', {
+    sort: prefs.tokenSort,
+    showZeroBalances: !prefs.hideZeroBalances,
+  });
+
+  /** Convert raw snapshot rows into the dumb-component shape `TokenList` expects. */
+  const unifiedRows: TokenRow[] = useMemo(() => {
+    if (!unified.snapshot) return [];
+    return unified.snapshot.rows.map((r) => ({
+      rowKey: r.rowKey,
+      token: r.token,
+      balance: r.balance,
+      error: r.error,
+      chainBadgeIcon: getChainBadgeIcon(r.networkKey),
+      chainBadgeLabel: r.networkLabel,
+      secondaryLabel: `${r.token.symbol} · ${r.networkLabel}`,
+      networkKey: r.networkKey,
+      stale: r.stale,
+      usdFormatted: r.usdFormatted,
+    }));
+  }, [unified.snapshot]);
+
+  /** "All Networks" option prepended to the network selector when a mnemonic wallet can span chains. */
+  const scopeOptions = useMemo(() => {
+    const hasMultipleUsable = networkOptions.filter(o => !o.disabled).length > 1;
+    if (!hasMultipleUsable) return networkOptions;
+    return [
+      { value: '__unified__', label: 'All Networks', icon: undefined, disabled: false },
+      ...networkOptions,
+    ];
+  }, [networkOptions]);
+
+  const scopeSelectorValue = viewScope === 'unified' ? '__unified__' : network;
+
+  /**
+   * Route a scope-selector change:
+   *   - `__unified__` → switch to the cross-chain view (no SWITCH_NETWORK — keeps
+   *     the wallet's current network intact so Send retains a sensible default).
+   *   - any networkKey → narrow to that chain and SWITCH_NETWORK so legacy
+   *     single-chain paths (send, activity) operate on it.
+   */
+  const handleScopeChange = (value: string) => {
+    if (value === '__unified__') {
+      setViewScope('unified');
+      return;
+    }
+    setViewScope(value);
+    handleNetworkChange(value);
+  };
+
+  // Activity doesn't exist in the unified view — if the user was looking at it
+  // and then switched scope to "All Networks", bounce back to the tokens tab
+  // so they don't land on a hidden view.
+  useEffect(() => {
+    if (viewScope === 'unified' && view === 'activity') {
+      setView('tokens');
+    }
+  }, [viewScope, view]);
+
+  // Track online/offline so the unified view can surface a banner when the
+  // user drops connectivity. Cached rows keep rendering regardless.
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Load tokens immediately, then trigger async balance refresh
   useEffect(() => {
@@ -838,27 +943,48 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
             </div>
           </div>
 
-          {/* Balance + Actions always above tabs */}
-          <BalanceCard
-            totalBalance={totalBalance}
-            refreshing={refreshing}
-            pricesLoading={pricesLoading}
-            onRefresh={handleRefresh}
-            onSend={() => setView('send')}
-            onReceive={() => setView('receive')}
-          />
+          {/* Balance + Actions always above tabs.
+           *  Unified view: aggregate USD hero powered by the cross-chain snapshot.
+           *  Per-network view: the legacy single-chain total. */}
+          {viewScope === 'unified' ? (
+            <PortfolioHero
+              totalFormatted={unified.snapshot?.totalUsdFormatted ?? null}
+              updatedAt={unified.snapshot?.updatedAt ?? null}
+              refreshing={unified.refreshing}
+              privacyMode={prefs.privacyMode}
+              onRefresh={unified.refresh}
+              onTogglePrivacy={() => updatePrefs({ privacyMode: !prefs.privacyMode })}
+              onSend={() => setView('send')}
+              onReceive={() => setView('receive')}
+            />
+          ) : (
+            <BalanceCard
+              totalBalance={totalBalance}
+              refreshing={refreshing}
+              pricesLoading={pricesLoading}
+              onRefresh={handleRefresh}
+              onSend={() => setView('send')}
+              onReceive={() => setView('receive')}
+            />
+          )}
 
-          <div className="top-nav">
-            {['tokens', 'activity'].map((tab) => (
-              <button
-                key={tab}
-                className={`nav-item ${view === tab ? 'active' : ''}`}
-                onClick={() => setView(tab as View)}
-              >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </button>
-            ))}
-          </div>
+          {/* Activity tab is hidden in the unified view: a single mixed-chain
+           *  feed is confusing and the per-token activity on TokenDetailsScreen
+           *  already covers the "what just happened to my USDC on Base?" case.
+           *  The tab returns when the user narrows to a specific chain. */}
+          {viewScope !== 'unified' && (
+            <div className="top-nav">
+              {['tokens', 'activity'].map((tab) => (
+                <button
+                  key={tab}
+                  className={`nav-item ${view === tab ? 'active' : ''}`}
+                  onClick={() => setView(tab as View)}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
+          )}
         </>
       )}
 
@@ -874,29 +1000,83 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
           />
         ) : view === 'tokens' ? (
           <>
-            {/* Tokens */}
+            {/* Scope selector ("All Networks" + per-chain options). */}
             <div className="tokens-header" style={{ display: 'block', marginBottom: 12 }}>
               <NetworkSelector
-                value={network}
-                options={networkOptions}
-                onChange={handleNetworkChange}
+                value={scopeSelectorValue}
+                options={scopeOptions}
+                onChange={handleScopeChange}
                 showTestnets={showTestnets}
                 onToggleShowTestnets={handleToggleTestnets}
               />
             </div>
 
-            <TokenList
-              items={portfolio}
-              loading={loading}
-              getIcon={getTokenIcon}
-              getUsdValue={getTokenUsdValue}
-              onSelect={(token, iconSrc) => {
-                setSelectedTokenDetails({ token, icon: iconSrc });
-                setView('tokenDetails');
-              }}
-              showAddToken={isEvmNetwork(network)}
-              onAddToken={() => setShowAddToken(true)}
-            />
+            {viewScope === 'unified' ? (
+              unified.loading && unifiedRows.length === 0 ? (
+                <TokenRowSkeleton count={6} />
+              ) : (
+                <>
+                  <PortfolioErrorBanner
+                    offline={isOffline}
+                    error={unified.error}
+                    onRetry={unified.refresh}
+                  />
+                  <div className="unified-controls" role="toolbar" aria-label="Token list controls">
+                    <label className="unified-controls__toggle">
+                      <input
+                        type="checkbox"
+                        checked={prefs.hideZeroBalances}
+                        onChange={(e) => updatePrefs({ hideZeroBalances: e.target.checked })}
+                      />
+                      <span>Hide zero balances</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="unified-controls__sort"
+                      onClick={() => setShowSortModal(true)}
+                      aria-label="Sort tokens"
+                    >
+                      Sort: {prefs.tokenSort === 'fiat' ? 'USD' : prefs.tokenSort === 'alpha' ? 'A–Z' : 'Chain'}
+                    </button>
+                  </div>
+                  {unifiedRows.length === 0 ? (
+                    <EmptyPortfolio onReceive={() => setView('receive')} />
+                  ) : (
+                    <TokenList
+                      items={unifiedRows}
+                      loading={false}
+                      getIcon={getTokenIcon}
+                      getUsdValue={() => null}
+                      privacyMode={prefs.privacyMode}
+                      onSelect={(token, iconSrc, rowNetworkKey) => {
+                        setSelectedTokenDetails({ token, icon: iconSrc, networkKey: rowNetworkKey });
+                        if (rowNetworkKey && rowNetworkKey !== network) {
+                          // Route Send / details to the tapped row's chain.
+                          sendMessageWithRetry({ type: 'SWITCH_NETWORK', payload: { network: rowNetworkKey } })
+                            .catch(() => { /* silent; user will see error on send if needed */ });
+                        }
+                        setView('tokenDetails');
+                      }}
+                      showAddToken={false}
+                      onAddToken={() => setShowAddToken(true)}
+                    />
+                  )}
+                </>
+              )
+            ) : (
+              <TokenList
+                items={portfolio}
+                loading={loading}
+                getIcon={getTokenIcon}
+                getUsdValue={getTokenUsdValue}
+                onSelect={(token, iconSrc) => {
+                  setSelectedTokenDetails({ token, icon: iconSrc, networkKey: network });
+                  setView('tokenDetails');
+                }}
+                showAddToken={isEvmNetwork(network)}
+                onAddToken={() => setShowAddToken(true)}
+              />
+            )}
 
             {/* Add Token Modal */}
             {isEvmNetwork(network) && (
@@ -907,6 +1087,12 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
                 onTokenAdded={handleRefresh}
               />
             )}
+            <SortModal
+              isOpen={showSortModal}
+              onClose={() => setShowSortModal(false)}
+              value={prefs.tokenSort}
+              onChange={(next) => updatePrefs({ tokenSort: next })}
+            />
           </>
         ) : view === 'activity' ? (
           <ActivityView currentAddress={address} network={network} networks={networks} />
@@ -1170,7 +1356,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
           <TokenDetailsScreen
             token={selectedTokenDetails.token}
             tokenIcon={selectedTokenDetails.icon}
-            network={network}
+            network={selectedTokenDetails.networkKey ?? network}
             address={address}
             networks={networks}
             tokenPrices={tokenPrices}
