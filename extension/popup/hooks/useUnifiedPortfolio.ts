@@ -40,15 +40,23 @@ const DEFAULT_OPTIONS: BuildUnifiedPortfolioOptions = {};
  *   while the wallet is locked or while a different view is active). The hook
  *   still retains the last snapshot so switching back is instant.
  * @param options - Passed through to `buildUnifiedPortfolio` (sort, zero-balance filter, etc.).
+ * @param walletName - Identity of the active wallet. When this changes, the
+ *   hook clears the cached snapshot before the refetch so the UI does not
+ *   render stale rows from the previous wallet during the in-flight fetch.
+ *   Pass `null`/`undefined` if no wallet identity is available yet (e.g. the
+ *   very first render before the service worker has replied) — the hook
+ *   will not reset on subsequent nulls.
  */
 export function useUnifiedPortfolio(
   enabled: boolean,
-  options: BuildUnifiedPortfolioOptions = DEFAULT_OPTIONS
+  options: BuildUnifiedPortfolioOptions = DEFAULT_OPTIONS,
+  walletName?: string | null
 ): UseUnifiedPortfolioResult {
   const [snapshot, setSnapshot] = useState<UnifiedPortfolioSnapshot | null>(null);
   const [loading, setLoading] = useState<boolean>(enabled);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [prevWalletName, setPrevWalletName] = useState<string | null | undefined>(walletName);
   const mountedRef = useRef(true);
 
   // Snapshot options are an object literal at call sites and would churn the
@@ -101,7 +109,33 @@ export function useUnifiedPortfolio(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, optionsKey]);
 
-  // Initial fetch + re-fetch whenever enabled flips back on or options change.
+  // Clear the snapshot synchronously when the active wallet changes so the
+  // old wallet's rows cannot flash on screen while the new snapshot is
+  // in-flight. Follows the React "store information from previous renders"
+  // idiom (calling setState during render is allowed when guarded by a prop
+  // comparison — React short-circuits and re-renders immediately).
+  //
+  // Only reset on *real* changes between defined wallet names. A transient
+  // `undefined → name` during first load must not wipe any snapshot we
+  // already managed to fetch.
+  if (prevWalletName !== walletName) {
+    setPrevWalletName(walletName);
+    if (
+      walletName !== undefined &&
+      walletName !== null &&
+      prevWalletName !== undefined &&
+      prevWalletName !== null
+    ) {
+      setSnapshot(null);
+      setError(null);
+      setLoading(true);
+    }
+  }
+
+  // Initial fetch + re-fetch whenever enabled flips back on, options change,
+  // or the active wallet changes. `walletName` is in the dep array so a
+  // switch always triggers a fresh fetch against the service worker's
+  // per-wallet cache.
   useEffect(() => {
     mountedRef.current = true;
     if (!enabled) {
@@ -115,7 +149,7 @@ export function useUnifiedPortfolio(
     return () => {
       mountedRef.current = false;
     };
-  }, [enabled, fetchSnapshot]);
+  }, [enabled, fetchSnapshot, walletName]);
 
   // Background broadcasts — keep the snapshot hot without a re-request.
   useEffect(() => {

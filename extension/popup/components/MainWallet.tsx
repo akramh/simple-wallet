@@ -303,10 +303,14 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
   // ============================================================================
 
   /** Unified snapshot driver — suspends when the user has scoped to a single chain. */
-  const unified = useUnifiedPortfolio(viewScope === 'unified', {
-    sort: prefs.tokenSort,
-    showZeroBalances: !prefs.hideZeroBalances,
-  });
+  const unified = useUnifiedPortfolio(
+    viewScope === 'unified',
+    {
+      sort: prefs.tokenSort,
+      showZeroBalances: !prefs.hideZeroBalances,
+    },
+    currentWalletName,
+  );
 
   /** Convert raw snapshot rows into the dumb-component shape `TokenList` expects. */
   const unifiedRows: TokenRow[] = useMemo(() => {
