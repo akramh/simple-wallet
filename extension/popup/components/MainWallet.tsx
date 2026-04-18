@@ -43,6 +43,7 @@ import avaxIcon from '../../assets/img/avax-token.svg';
 import arbitrumIcon from '../../assets/img/arbitrum.svg';
 import baseIcon from '../../assets/img/base.svg';
 import lineaIcon from '../../assets/img/linea-logo-mainnet.svg';
+import optimismIcon from '../../assets/img/optimism-logo.svg';
 import usdcIcon from '../../assets/img/icon-usdc.png';
 import usdtIcon from '../../assets/img/usdt.svg';
 import usdtGoldIcon from '../../assets/img/usdt-gold.svg';
@@ -67,6 +68,7 @@ const ICON_ASSETS: Record<string, string> = {
   'arbitrum.svg': arbitrumIcon,
   'base.svg': baseIcon,
   'linea-logo-mainnet.svg': lineaIcon,
+  'optimism-logo.svg': optimismIcon,
   'icon-usdc.png': usdcIcon,
   'usdt.svg': usdtIcon,
   'usdt-gold.svg': usdtGoldIcon,
@@ -277,6 +279,7 @@ function MainWallet({ address, network, importType, privateKeyType, onLock, onSt
       let icon;
       if (key === 'base') icon = ICON_ASSETS['base.svg'];
       else if (key === 'arbitrum') icon = ICON_ASSETS['arbitrum.svg'];
+      else if (key === 'optimism') icon = ICON_ASSETS['optimism-logo.svg'];
       else if (key === 'linea') icon = ICON_ASSETS['linea-logo-mainnet.svg'];
       else if (key.startsWith('solana')) icon = ICON_ASSETS['solana-logo.svg'];
       else if (key.startsWith('bitcoin')) icon = ICON_ASSETS['bitcoin-logo.svg'];

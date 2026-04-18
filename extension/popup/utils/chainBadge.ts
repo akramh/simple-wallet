@@ -14,6 +14,7 @@ import avaxIcon from '../../assets/img/avax-token.svg';
 import arbitrumIcon from '../../assets/img/arbitrum.svg';
 import baseIcon from '../../assets/img/base.svg';
 import lineaIcon from '../../assets/img/linea-logo-mainnet.svg';
+import optimismIcon from '../../assets/img/optimism-logo.svg';
 import polIcon from '../../assets/img/pol-token.svg';
 import bitcoinIcon from '../../assets/img/bitcoin-logo.svg';
 import xrpIcon from '../../assets/img/xrp.svg';
@@ -29,7 +30,7 @@ const BADGE_BY_KEY: Record<string, string> = {
   sepolia: ethBadgeIcon,
   base: baseIcon,
   arbitrum: arbitrumIcon,
-  optimism: ethBadgeIcon,
+  optimism: optimismIcon,
   polygon: polIcon,
   bsc: bnbIcon,
   avalanche: avaxIcon,

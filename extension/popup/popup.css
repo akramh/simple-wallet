@@ -467,8 +467,18 @@
 
 .balance-amount-display {
   font-size: 28px;
-  font-weight: 700;
+  /* Inter ships weights 100–900. 800 (extra-bold) reads as a confident
+   * "headline" number without tipping into 900 (black), which feels shouty
+   * at 40 px. */
+  font-weight: 800;
   color: var(--text-primary);
+  /* Tabular numerals keep each digit the same width, so the hero total
+   * doesn't shift horizontally when it ticks (e.g. $366.38 → $367.12).
+   * Slight negative tracking tightens the numeric run and reinforces the
+   * heavier weight without relying on `-webkit-text-stroke` tricks. */
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 
 .action-row {
@@ -3794,7 +3804,9 @@ div.settings-row {
  * anchor of the popup, not a number squeezed into the card's top-left. */
 .balance-card.portfolio-hero .balance-amount-display {
   font-size: 40px;
+  font-weight: 800;
   line-height: 1.1;
+  letter-spacing: -0.025em;
   text-align: center;
   display: block;
   width: 100%;
