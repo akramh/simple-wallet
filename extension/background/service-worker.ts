@@ -607,12 +607,23 @@ async function refreshViaPortfolioApi(
   }
   if (evmNetworks.length > 0) {
     try {
-      const evmAddress = walletService.getAddress();
+      // Go through the raw wallet (not `walletService.getAddress()`) because
+      // the latter is network-aware — if the wallet's current network is
+      // Solana/Bitcoin/XRP/TON, `walletService.getAddress()` returns THAT
+      // chain's address (base58 / bech32 / r... / EQ...), not the EVM 0x
+      // address we need for the Alchemy Portfolio API call. For a fresh
+      // mnemonic import where `config.network` happens to be the bundled
+      // default (`solana-mainnet`), this bug caused every EVM chain to be
+      // queried with a Solana address — Alchemy returned nothing, and only
+      // the Solana group succeeded.
+      const evmAddress = wallet.getAddress();
       if (evmAddress) {
         groups.push({ address: evmAddress, networkKeys: evmNetworks });
       }
     } catch {
-      // Wallet has no EVM address (e.g. a non-EVM private-key import).
+      // `wallet.getAddress()` throws for non-EVM private-key imports — that's
+      // correct: we can't sign on EVM chains without an EVM key, so skipping
+      // the Portfolio EVM call is the right behavior.
     }
   }
 
@@ -1795,6 +1806,17 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       // Initialize transaction history for this wallet
       const importStorage = await ChromeStorageAdapter.create();
       transactionHistory = new TransactionHistoryManager(importStorage, currentWalletName);
+
+      // Kick off a fan-out refresh across every enabled chain so the unified
+      // view populates immediately after import. Mirrors the UNLOCK_WALLET
+      // path — without this, the popup would render empty until the next
+      // popup-port connect (which only triggers a refresh when the cache is
+      // already stale / empty, introducing visible delay).
+      await loadBalanceCache();
+      refreshAllEnabledNetworks().catch(err => {
+        console.warn('[UnifiedRefresh] post-import fan-out failed:', err);
+      });
+      ensureUnifiedRefreshAlarm();
 
       resetAutoLockTimer();
       return {
