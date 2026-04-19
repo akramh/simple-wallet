@@ -12,7 +12,6 @@ import lockSlashIcon from '../../assets/icons/lock-slash.svg';
 import settingIcon from '../../assets/icons/setting.svg';
 import moonIcon from '../../assets/icons/moon.svg';
 import sunIcon from '../../assets/icons/sun.svg';
-import logoIcon from '../../assets/img/logo.svg';
 import { applyTheme, getStoredTheme, resolveTheme, setStoredTheme, type UiTheme } from '../theme';
 import { useToast } from '../context/ToastContext';
 import { Icon } from './ui/Icon';
@@ -91,7 +90,6 @@ function Header({
       {/* Top row: Logo + Actions */}
       <div className="header-top">
         <div className="logo">
-          <img src={logoIcon} alt="Simple Wallet" className="logo-icon" />
           <span className="logo-text">Simple Wallet</span>
         </div>
         <div className="header-actions">
