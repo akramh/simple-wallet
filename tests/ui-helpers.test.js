@@ -8,6 +8,7 @@ import {
   showError,
   showPortfolioTotal,
   formatRelativeTime,
+  formatUsdPlain,
 } from '../dist/ui-helpers.js';
 
 function stripAnsi(input) {
@@ -159,6 +160,18 @@ test('showPortfolioTotal includes refresh hint when lastRefreshedAt is provided'
   assert.ok(output.includes('Total Portfolio Value:'));
   assert.ok(output.includes('Last refreshed'));
   assert.ok(output.includes('Press r to refresh, q to return.'));
+});
+
+test('formatUsdPlain returns uncolored USD strings', () => {
+  const output = formatUsdPlain(1234);
+  assert.equal(output, '$1,234.00');
+  assert.ok(!/\u001b\[/.test(output), 'formatUsdPlain must not emit ANSI escape codes');
+
+  assert.equal(formatUsdPlain(null), '--');
+  assert.equal(formatUsdPlain(0), '$0.00');
+  assert.equal(formatUsdPlain(0.005), '<$0.01');
+  assert.equal(formatUsdPlain(12.34), '$12.34');
+  assert.equal(formatUsdPlain(2_500_000), '$2.50M');
 });
 
 test('formatRelativeTime produces short past-time strings', () => {

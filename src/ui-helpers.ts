@@ -293,7 +293,33 @@ export function formatAmount(amount: string, currency: string = 'ETH'): string {
 }
 
 /**
- * Formats a USD price value for display.
+ * Formats a USD price value as a plain (uncolored) string. Use this when the
+ * caller wants to wrap the result in its own chalk styling without having to
+ * strip embedded ANSI codes from `formatUsdPrice`.
+ *
+ * @param value - USD value to format (null if unavailable)
+ * @returns Formatted USD string with no ANSI codes ("--" when unavailable)
+ *
+ * @example
+ * ```typescript
+ * formatUsdPlain(1234.56);   // "$1,234.56"
+ * formatUsdPlain(0.005);     // "<$0.01"
+ * formatUsdPlain(null);      // "--"
+ * ```
+ */
+export function formatUsdPlain(value: number | null): string {
+  if (value === null || value === undefined) return '--';
+  if (value === 0) return '$0.00';
+  if (value < 0.01) return '<$0.01';
+  if (value < 1000) return `$${value.toFixed(2)}`;
+  if (value < 1000000) {
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  return `$${(value / 1000000).toFixed(2)}M`;
+}
+
+/**
+ * Formats a USD price value for display with built-in chalk coloring.
  * Handles various value ranges with appropriate formatting.
  *
  * @param value - USD value to format (null if unavailable)
@@ -308,17 +334,11 @@ export function formatAmount(amount: string, currency: string = 'ETH'): string {
  * ```
  */
 export function formatUsdPrice(value: number | null): string {
-  if (value === null || value === undefined) return chalk.gray('--');
-  if (value === 0) return chalk.gray('$0.00');
-  if (value < 0.01) return chalk.gray('<$0.01');
-  if (value < 1000) {
-    return chalk.yellow(`$${value.toFixed(2)}`);
-  }
-  if (value < 1000000) {
-    return chalk.yellow(`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
-  }
-  // Millions
-  return chalk.yellow(`$${(value / 1000000).toFixed(2)}M`);
+  const plain = formatUsdPlain(value);
+  if (value === null || value === undefined) return chalk.gray(plain);
+  if (value === 0) return chalk.gray(plain);
+  if (value < 0.01) return chalk.gray(plain);
+  return chalk.yellow(plain);
 }
 
 /**
@@ -379,10 +399,9 @@ export function showAccountInfo(address: string, balance: string | null = null):
 /**
  * Creates a menu separator for use with inquirer prompts.
  * Displays a horizontal gray line to visually group menu options.
- * 
- * @param label - Optional label (currently unused, reserved for future use)
+ *
  * @returns MenuSeparator object for inquirer
- * 
+ *
  * @example
  * ```typescript
  * const choices = [
@@ -392,7 +411,7 @@ export function showAccountInfo(address: string, balance: string | null = null):
  * ];
  * ```
  */
-export function menuSeparator(label: string = ''): MenuSeparator {
+export function menuSeparator(): MenuSeparator {
   return {
     type: 'separator',
     line: chalk.gray('─'.repeat(60))
@@ -738,7 +757,7 @@ export function showTransactionConfirmation(params: TransactionConfirmationParam
 
   // Total
   if (totalUsd !== null) {
-    console.log(chalk.gray('Total Cost:          ') + chalk.yellow.bold(formatUsdPrice(totalUsd).replace(/\x1b\[[0-9;]*m/g, '')));
+    console.log(chalk.gray('Total Cost:          ') + chalk.yellow.bold(formatUsdPlain(totalUsd)));
   }
 
   console.log(chalk.cyan('═'.repeat(50)) + '\n');
@@ -821,6 +840,7 @@ export default {
   formatAddress,
   formatAmount,
   formatUsdPrice,
+  formatUsdPlain,
   formatBalanceWithUsd,
   formatTxHash,
   showAccountInfo,
