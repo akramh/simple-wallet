@@ -430,24 +430,40 @@ async function selectWalletMenu(existingWallets: Record<string, any>): Promise<v
  * @async
  */
 async function initialMenu(): Promise<void> {
-  ui.showInfo('No wallet loaded. Create a new wallet or import an existing one.');
-  console.log('');
+  const hasExistingWallets = Object.keys(wallet.getAllWallets()).length > 0;
+
+  if (!hasExistingWallets) {
+    ui.showBox(
+      'Welcome',
+      'No wallets found on this device.\n\nChoose how to get started:',
+      'success'
+    );
+  }
+
+  const choices: any[] = [
+    ui.menuChoice('Create a new wallet', 'Generate a fresh 12-word phrase', 'create'),
+    ui.menuChoice('Import from recovery phrase', 'Restore an existing wallet', 'import'),
+    ui.menuChoice('Import from private key', 'Advanced', 'import_pk'),
+  ];
+
+  if (hasExistingWallets) {
+    choices.push(
+      new inquirer.Separator(''),
+      ui.menuChoice('Back to Wallet Selection', '', 'back')
+    );
+  }
+
+  choices.push(
+    new inquirer.Separator(''),
+    ui.menuChoice('Exit', '', 'exit')
+  );
 
   const { action } = await inquirer.prompt<{ action: string }>([
     {
       type: 'list',
       name: 'action',
-      message: 'Select an action:',
-      choices: [
-        ui.menuChoice('Create New Wallet', 'Generate a new wallet', 'create'),
-        ui.menuChoice('Import Existing Wallet', 'Restore from recovery phrase', 'import'),
-        ui.menuChoice('Import Wallet (Private Key)', 'Restore from raw private key', 'import_pk'),
-        ui.menuChoice('Import from Backup', 'Restore from backup file', 'import_backup'),
-        new inquirer.Separator(''),
-        ui.menuChoice('Change Network', 'Switch between networks', 'network'),
-        ui.menuChoice('Back to Wallet Selection', '', 'back'),
-        ui.menuChoice('Exit', '', 'exit')
-      ]
+      message: 'What would you like to do?',
+      choices
     }
   ]);
 
@@ -461,21 +477,15 @@ async function initialMenu(): Promise<void> {
     case 'import_pk':
       await importWalletFromPrivateKey();
       break;
-    case 'import_backup':
-      await importWalletFromBackup();
-      break;
-    case 'network':
-      await changeNetwork();
-      break;
-    case 'back':
+    case 'back': {
       const existingWallets = wallet.getAllWallets();
       if (Object.keys(existingWallets).length > 0) {
         await selectWalletMenu(existingWallets);
       } else {
-        console.log('\n⚠️  No saved wallets found\n');
         await initialMenu();
       }
       break;
+    }
     case 'exit':
       console.log('Goodbye!');
       process.exit(0);
@@ -871,36 +881,28 @@ async function mainMenu(walletName: string | null): Promise<void> {
       loop: false,
       pageSize: 25,
       choices: [
+        ui.menuChoice('Balance', 'View balance on the active network', 'balance'),
+        ui.menuChoice('Send', 'Transfer tokens to an address', 'send'),
+        ui.menuChoice('Receive', 'Show address and QR', 'receive'),
+        ui.menuChoice('Portfolio', 'View balances across chains', 'portfolio_all'),
+        ui.menuChoice('History', 'Recent transactions', 'history'),
         new inquirer.Separator(ui.menuSeparator().line),
-        new inquirer.Separator('  ACCOUNT ACTIONS'),
+        ui.menuChoice('Switch Network', 'Change active blockchain', 'network'),
+        ui.menuChoice('Switch Account', 'Select a different account', 'accounts'),
         new inquirer.Separator(ui.menuSeparator().line),
-        ui.menuChoice('Check Balance', 'View your current balance', 'balance'),
-        ui.menuChoice('Portfolio (All Networks)', 'View balances across networks', 'portfolio_all'),
-        ui.menuChoice('Transaction History', 'View recent transactions', 'history'),
-        ui.menuChoice('Send Transaction', 'Send ETH to another address', 'send'),
-        ui.menuChoice('Receive', 'Show your address & QR code', 'receive'),
-        new inquirer.Separator(''),
-        new inquirer.Separator(ui.menuSeparator().line),
-        new inquirer.Separator('  WALLET MANAGEMENT'),
-        new inquirer.Separator(ui.menuSeparator().line),
-        ui.menuChoice('Manage Accounts', 'Switch or create accounts', 'accounts'),
-        ui.menuChoice('Switch Wallet', 'Load a different wallet', 'switch'),
-        new inquirer.Separator(''),
-        new inquirer.Separator(ui.menuSeparator().line),
-        new inquirer.Separator('  ADVANCED'),
-        new inquirer.Separator(ui.menuSeparator().line),
-        ui.menuChoice('Manage Tokens', 'Add or remove ERC-20 tokens', 'tokens'),
-        ui.menuChoice('Show Secrets', 'View private key & mnemonic', 'secrets'),
-        ui.menuChoice('Export Wallet', 'Backup wallet to file', 'export'),
-        ui.menuChoice('Change Network', 'Switch between networks', 'network'),
-        ui.menuChoice('Delete Wallet', 'Remove current wallet', 'delete'),
-        new inquirer.Separator(''),
-        ui.menuChoice('Exit', '', 'exit')
+        ui.menuChoice('Settings', 'Preferences and security', 'settings'),
+        ui.menuChoice('Exit', 'Close the wallet', 'exit')
       ]
     }
   ]);
 
   switch (action) {
+    case 'send':
+      await sendCrypto(currentWalletName);
+      break;
+    case 'receive':
+      await showReceiveAddress(currentWalletName);
+      break;
     case 'balance':
       await checkBalance(currentWalletName);
       break;
@@ -910,26 +912,64 @@ async function mainMenu(walletName: string | null): Promise<void> {
     case 'history':
       await viewTransactionHistory(currentWalletName);
       break;
-    case 'send':
-      await sendCrypto(currentWalletName);
-      break;
-    case 'receive':
-      await showReceiveAddress(currentWalletName);
+    case 'network':
+      await changeNetwork();
       break;
     case 'accounts':
       await manageAccounts(currentWalletName);
       break;
-    case 'secrets':
-      await showWalletSecrets(currentWalletName);
+    case 'settings':
+      await settingsMenu(currentWalletName);
       break;
+    case 'exit':
+      console.log('Goodbye!');
+      process.exit(0);
+  }
+}
+
+/**
+ * Displays the settings submenu: token management, secret reveal,
+ * wallet export, wallet switching, and deletion. Dispatches to the
+ * same handlers previously reachable directly from the main menu.
+ *
+ * @param walletName - Name of the currently loaded wallet
+ */
+async function settingsMenu(walletName: string | null): Promise<void> {
+  currentWalletName = walletName;
+  const currentAddress = walletService.getAddress();
+  const accountIndex = wallet.currentAccountIndex;
+
+  ui.clearScreen();
+  ui.showHeader(walletName, accountIndex, config.networks[config.network].name, currentAddress);
+
+  const { action } = await inquirer.prompt<{ action: string }>([
+    {
+      type: 'list',
+      name: 'action',
+      message: 'Settings:',
+      loop: false,
+      pageSize: 25,
+      choices: [
+        ui.menuChoice('Manage Tokens', 'Add or remove ERC-20 tokens', 'tokens'),
+        ui.menuChoice('Show Secrets', 'View private key & mnemonic', 'secrets'),
+        ui.menuChoice('Export Wallet', 'Backup wallet to file', 'export'),
+        ui.menuChoice('Switch Wallet', 'Load a different wallet', 'switch'),
+        ui.menuChoice('Delete Wallet', 'Remove current wallet', 'delete'),
+        new inquirer.Separator(ui.menuSeparator().line),
+        ui.menuChoice('Back to Main Menu', '', 'back')
+      ]
+    }
+  ]);
+
+  switch (action) {
     case 'tokens':
       await manageTokens(currentWalletName);
       break;
+    case 'secrets':
+      await showWalletSecrets(currentWalletName);
+      break;
     case 'export':
       await exportWallet(currentWalletName);
-      break;
-    case 'network':
-      await changeNetwork();
       break;
     case 'switch':
       await switchWallet();
@@ -937,9 +977,9 @@ async function mainMenu(walletName: string | null): Promise<void> {
     case 'delete':
       await deleteCurrentWallet(currentWalletName);
       break;
-    case 'exit':
-      console.log('Goodbye!');
-      process.exit(0);
+    case 'back':
+      await mainMenu(currentWalletName);
+      break;
   }
 }
 
