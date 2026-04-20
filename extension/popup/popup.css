@@ -80,11 +80,16 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-base) var(--ease-standard);
 }
 
 .max-btn:hover {
   opacity: 0.85;
+}
+
+.max-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .amount-usd-value {
@@ -142,7 +147,7 @@
   font-family: inherit;
   background: var(--surface);
   color: var(--text-primary);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .form-group select {
@@ -365,7 +370,7 @@
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-standard);
   position: relative;
   overflow: hidden;
 }
@@ -402,7 +407,7 @@
   background: var(--surface-2);
   border-color: var(--primary);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn:disabled {
@@ -465,8 +470,27 @@
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+.refresh-link__inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.refresh-link__spinner {
+  width: 12px;
+  height: 12px;
+  animation: spin var(--duration-slow) linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh-link__spinner {
+    animation: none;
+  }
+}
+
 .balance-amount-display {
-  font-size: 28px;
+  font-size: 36px;
+  line-height: 40px;
   /* Inter ships weights 100–900. 800 (extra-bold) reads as a confident
    * "headline" number without tipping into 900 (black), which feels shouty
    * at 40 px. */
@@ -491,15 +515,17 @@
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: 12px;
+  padding: 14px 8px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
 
 .action-tile:hover {
@@ -599,7 +625,7 @@
   font-size: 14px;
   font-weight: 600;
   color: var(--text-secondary);
-  transition: all 0.2s;
+  transition: all var(--duration-base) var(--ease-standard);
 }
 
 .tab.active {
@@ -1289,7 +1315,7 @@
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
 
 .token-item:hover {
@@ -1727,7 +1753,7 @@ div.settings-row {
   width: 20px;
   height: 20px;
   opacity: 0.8;
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-base) var(--ease-standard);
 }
 
 .icon-btn:hover .header-icon {
@@ -1745,7 +1771,7 @@ div.settings-row {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .icon-btn:hover {
@@ -1795,7 +1821,7 @@ div.settings-row {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  transition: all 0.2s;
+  transition: all var(--duration-base) var(--ease-standard);
 }
 
 .network-button:hover {
@@ -1824,7 +1850,7 @@ div.settings-row {
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md);
   z-index: 1000;
   max-height: 200px;
   overflow-y: auto;
@@ -1853,7 +1879,7 @@ div.settings-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  transition: background 0.2s;
+  transition: background var(--duration-base) var(--ease-standard);
   font-size: 13px;
 }
 
@@ -1878,7 +1904,7 @@ div.settings-row {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--duration-base) var(--ease-standard);
 }
 
 .account-button:hover {
@@ -2056,7 +2082,7 @@ div.settings-row {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  animation: fadeIn 0.15s ease-out;
+  animation: fadeIn var(--duration-fast) var(--ease-out);
 }
 
 @keyframes fadeIn {
@@ -2078,7 +2104,7 @@ div.settings-row {
   flex-direction: column;
   box-shadow: var(--shadow-md);
   overflow: hidden;
-  animation: slideUp 0.2s ease-out;
+  animation: slideUp var(--duration-base) var(--ease-out);
 }
 
 @keyframes slideUp {
@@ -2144,7 +2170,7 @@ div.settings-row {
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  transition: all 0.2s;
+  transition: all var(--duration-base) var(--ease-standard);
 }
 
 .close-btn:hover {
@@ -2254,7 +2280,7 @@ div.settings-row {
   padding: 12px;
   border-radius: 10px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-standard);
   border: 2px solid transparent;
   background: transparent;
 }
@@ -2315,7 +2341,7 @@ div.settings-row {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-standard);
   margin-top: 4px;
 }
 
@@ -2337,7 +2363,7 @@ div.settings-row {
   border-radius: 12px;
   padding: 12px 14px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-standard);
   position: relative;
   overflow: hidden;
 }
@@ -2346,7 +2372,7 @@ div.settings-row {
   background: var(--bg-secondary);
   border-color: var(--border-dark);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .wallet-chip.active {
@@ -2427,7 +2453,7 @@ div.settings-row {
   justify-content: center;
   padding: 20px;
   z-index: 3000;
-  animation: fadeIn 0.15s ease-out;
+  animation: fadeIn var(--duration-fast) var(--ease-out);
 }
 
 .modal {
@@ -2441,8 +2467,8 @@ div.settings-row {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  animation: slideUp 0.2s ease-out;
+  box-shadow: var(--shadow-modal);
+  animation: slideUp var(--duration-base) var(--ease-out);
 }
 
 .modal-header {
@@ -2625,7 +2651,7 @@ div.settings-row {
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
-  transition: background 0.2s;
+  transition: background var(--duration-base) var(--ease-standard);
 }
 
 .copy-icon-btn:hover {
@@ -2642,7 +2668,7 @@ div.settings-row {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--duration-base) var(--ease-standard);
 }
 
 .create-account-btn:hover:not(:disabled) {
@@ -2669,7 +2695,7 @@ div.settings-row {
   font-weight: 600;
   color: var(--text-primary);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--duration-base) var(--ease-standard);
   text-align: left;
 }
 
@@ -2696,7 +2722,7 @@ div.settings-row {
   font-weight: 600;
   border-radius: 10px;
   position: relative;
-  transition: color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  transition: color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .top-nav .nav-item:hover {
@@ -2759,7 +2785,7 @@ div.settings-row {
   background: var(--bg-primary);
   padding: 16px;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
   display: inline-block;
 }
 
@@ -2932,7 +2958,7 @@ div.settings-row {
   cursor: pointer;
   padding: 6px;
   border-radius: 6px;
-  transition: background 0.2s;
+  transition: background var(--duration-base) var(--ease-standard);
 }
 
 .btn-refresh:hover {
@@ -2957,7 +2983,7 @@ div.settings-row {
   font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--duration-base) var(--ease-standard);
   white-space: nowrap;
 }
 
@@ -2990,7 +3016,7 @@ div.settings-row {
   border-radius: 8px;
   margin-bottom: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--duration-fast) var(--ease-standard);
 }
 
 .transaction-item:hover {
@@ -3364,7 +3390,7 @@ div.settings-row {
 /* Token details */
 .token-item-clickable {
   cursor: pointer;
-  transition: transform 0.1s ease;
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
 
 .token-item-clickable:hover {
@@ -3719,6 +3745,11 @@ div.settings-row {
   cursor: not-allowed;
 }
 
+.amount-toggle-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
 /* Send review toggle */
 .tx-amount-toggle {
   display: flex;
@@ -3876,7 +3907,7 @@ div.settings-row {
   border-radius: 999px;
   font-size: 12px;
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition: border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
 .unified-controls__sort:hover {
@@ -3958,7 +3989,7 @@ div.settings-row {
   border-radius: 8px;
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard);
   color: var(--text-primary);
 }
 
