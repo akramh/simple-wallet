@@ -547,16 +547,44 @@ export function showMnemonic(mnemonic: string): void {
  * ```
  */
 export function getBlockExplorerUrl(txHash: string, networkKey: string): string | null {
+  // NOTE: Explorer URLs are also derived in chain-specific modules
+  // (`src/transaction-history.ts`, `src/xrp/explorer.ts`, `src/ton/explorer.ts`,
+  // `src/bitcoin/explorer.ts`) and in `WalletAppService.getBitcoinTransactionUrl`
+  // / `getXrpTransactionUrl` / `getTonTransactionUrl`. A future PR should
+  // consolidate these into a single resolver; for now, keep the CLI's map in
+  // sync with those sources.
   const explorers: Record<string, string> = {
+    // EVM mainnets
     mainnet: `https://etherscan.io/tx/${txHash}`,
-    sepolia: `https://sepolia.etherscan.io/tx/${txHash}`,
-    goerli: `https://goerli.etherscan.io/tx/${txHash}`,
     polygon: `https://polygonscan.com/tx/${txHash}`,
-    mumbai: `https://mumbai.polygonscan.com/tx/${txHash}`,
     bsc: `https://bscscan.com/tx/${txHash}`,
-    bscTestnet: `https://testnet.bscscan.com/tx/${txHash}`,
     arbitrum: `https://arbiscan.io/tx/${txHash}`,
     optimism: `https://optimistic.etherscan.io/tx/${txHash}`,
+    base: `https://basescan.org/tx/${txHash}`,
+    linea: `https://lineascan.build/tx/${txHash}`,
+    avalanche: `https://snowtrace.io/tx/${txHash}`,
+
+    // EVM testnets
+    sepolia: `https://sepolia.etherscan.io/tx/${txHash}`,
+    goerli: `https://goerli.etherscan.io/tx/${txHash}`,
+    mumbai: `https://mumbai.polygonscan.com/tx/${txHash}`,
+    bscTestnet: `https://testnet.bscscan.com/tx/${txHash}`,
+
+    // Solana
+    'solana-mainnet': `https://solscan.io/tx/${txHash}`,
+    'solana-devnet': `https://solscan.io/tx/${txHash}?cluster=devnet`,
+
+    // Bitcoin
+    'bitcoin-mainnet': `https://mempool.space/tx/${txHash}`,
+    'bitcoin-testnet': `https://mempool.space/testnet/tx/${txHash}`,
+
+    // XRP Ledger
+    'xrp-mainnet': `https://livenet.xrpl.org/transactions/${txHash}`,
+    'xrp-testnet': `https://testnet.xrpl.org/transactions/${txHash}`,
+
+    // TON
+    'ton-mainnet': `https://tonscan.org/tx/${txHash}`,
+    'ton-testnet': `https://testnet.tonscan.org/tx/${txHash}`,
   };
 
   return explorers[networkKey] || null;
