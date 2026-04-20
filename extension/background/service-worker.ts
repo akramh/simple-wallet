@@ -64,6 +64,7 @@ import {
   fetchAlchemyPortfolio,
   isPortfolioSupported,
   type PortfolioAddressGroup,
+  type PortfolioEntry,
 } from '../../src/portfolio-api.js';
 import type {
   BuildUnifiedPortfolioOptions,
@@ -327,11 +328,26 @@ function clearSessionOnlyApprovals(): void {
 // ============================================================================
 
 /**
- * Cached token balance entry
+ * Cached token balance entry.
+ *
+ * `token` + `priceUsd` are stored per-entry so discovered tokens — those
+ * returned by the Alchemy Portfolio API but NOT in the static allowlist
+ * (`tokens.json` / `tokens-user.json`) — can still be rendered. The snapshot
+ * builder iterates cache keys rather than the allowlist, and each cached
+ * entry carries enough metadata to draw a row without any extra lookup.
+ *
+ * Optional to stay backward-compatible with caches persisted before the
+ * discovery pivot — legacy entries will be repopulated with full metadata on
+ * the next fan-out refresh; until then the snapshot builder falls back to an
+ * allowlist lookup to render them.
  */
 interface CachedBalance {
   balance: string;
   lastUpdated: number;
+  /** Token metadata captured at write time (symbol, name, decimals, logo, …). */
+  token?: Token;
+  /** USD price at write time; `null` when unknown. */
+  priceUsd?: number | null;
 }
 
 /**
@@ -427,12 +443,19 @@ function getCachedBalance(network: string, token: { type?: string; address?: str
  * currently active — essential for in-flight refreshes that started before
  * the user switched wallets, so A's balances never leak into B's cache.
  * Omitting `walletName` falls back to the active wallet.
+ *
+ * The full `token` object is persisted so discovered tokens (not in the
+ * allowlist) survive a service-worker restart and render immediately from
+ * cache on the next popup open. `priceUsd` is an optional piggyback from the
+ * same refresh, letting the snapshot builder avoid a second price lookup
+ * when Alchemy already provided one.
  */
 function setCachedBalance(
   network: string,
-  token: { type?: string; address?: string },
+  token: Token,
   balance: string,
-  walletName?: string
+  walletName?: string,
+  priceUsd?: number | null
 ): void {
   const walletKey = walletName ?? currentWalletName;
   if (!walletKey) {
@@ -449,7 +472,9 @@ function setCachedBalance(
   const key = getTokenCacheKey(token);
   bucket[network][key] = {
     balance,
-    lastUpdated: Date.now()
+    lastUpdated: Date.now(),
+    token,
+    priceUsd: priceUsd ?? null,
   };
 }
 
@@ -864,6 +889,41 @@ const portfolioPriceCache = new Map<string, number | null>();
  * chain type) are filtered out by `isNetworkUsable` at the group-building
  * stage, so calling this for a BTC-only wallet is a no-op.
  */
+/**
+ * Synthesize a `Token` from an Alchemy Portfolio API entry so that tokens
+ * discovered via the API (not pre-listed in tokens.json / tokens-user.json)
+ * can be cached and rendered end-to-end with accurate symbol / name /
+ * decimals / logo metadata.
+ *
+ * Native entries (`tokenKey === 'native'`) delegate to the walletService's
+ * native-token factory so icons + coingeckoIds stay consistent with the
+ * existing per-chain natives.
+ *
+ * Returns `null` for entries we can't safely render — e.g. a non-native
+ * entry missing a symbol. The snapshot builder tolerates these; next refresh
+ * picks them up when metadata fills in.
+ */
+function tokenFromEntry(entry: PortfolioEntry): Token | null {
+  if (!walletService) return null;
+  if (entry.tokenKey === 'native') {
+    try {
+      return walletService.getNativeToken(entry.networkKey);
+    } catch {
+      return null;
+    }
+  }
+  if (!entry.symbol) return null;
+  const isSolana = entry.networkKey.startsWith('solana-');
+  return {
+    symbol: entry.symbol,
+    name: entry.name || entry.symbol,
+    type: isSolana ? 'spl' : 'erc20',
+    address: entry.tokenKey,
+    decimals: entry.decimals,
+    logoURI: entry.logoUrl,
+  };
+}
+
 async function refreshViaPortfolioApi(
   apiKey: string,
   targetNetworks: Array<[string, any]>,
@@ -944,20 +1004,42 @@ async function refreshViaPortfolioApi(
     bucket.set(entry.tokenKey, entry);
   }
 
-  // For every queried network, fill balanceCache + portfolioPriceCache from
-  // what the API returned. Tokens in our allowlist that the API didn't
-  // return are set to "0" — Alchemy omits zero balances, and rendering them
-  // as 0 keeps the hide-zero toggle correct.
+  // Discovery-first cache population. For every chain the Portfolio API
+  // covers we persist ONE cache entry per token Alchemy returned — not just
+  // the tokens in our allowlist — so SPL tokens like BONK / JitoSOL / WIF
+  // (and any ERC-20 the user holds) render without needing to be pre-listed
+  // in tokens.json. Allowlist tokens Alchemy didn't return are still written
+  // as "0" so pinned tokens stay visible for the hide-zero toggle and for
+  // users who want to see zero-balance reference rows.
   const queriedNetworks = new Set<string>([...evmNetworks, ...solanaNetworks]);
   for (const networkKey of queriedNetworks) {
-    const bucket = byNetwork.get(networkKey) ?? new Map();
+    const bucket = byNetwork.get(networkKey) ?? new Map<string, PortfolioEntry>();
+    const seen = new Set<string>();
+
+    // 1) Write every token Alchemy returned. This is the fix — tokens that
+    //    aren't in the static allowlist now surface in the snapshot with
+    //    correct symbol / decimals / logo / price, sourced from Alchemy's
+    //    tokenMetadata block.
+    for (const [tokenKey, entry] of bucket.entries()) {
+      const token = tokenFromEntry(entry);
+      if (!token) continue;
+      setCachedBalance(networkKey, token, entry.balance, targetWallet, entry.priceUsd);
+      portfolioPriceCache.set(`${networkKey}:${tokenKey}`, entry.priceUsd ?? null);
+      seen.add(tokenKey);
+    }
+
+    // 2) Allowlist tokens Alchemy didn't return get a "0" pin so they stay
+    //    visible when the user disables hide-zero (pinned-reference pattern).
+    //    Includes the native token, which Alchemy sometimes omits for
+    //    zero-balance wallets.
     const allowlist = walletService.getTokensForNetwork(networkKey);
     for (const token of allowlist) {
       const tokenKey = getTokenCacheKey(token);
-      const entry = bucket.get(tokenKey);
-      setCachedBalance(networkKey, token, entry?.balance ?? '0', targetWallet);
-      portfolioPriceCache.set(`${networkKey}:${tokenKey}`, entry?.priceUsd ?? null);
+      if (seen.has(tokenKey)) continue;
+      setCachedBalance(networkKey, token, '0', targetWallet, null);
+      portfolioPriceCache.set(`${networkKey}:${tokenKey}`, null);
     }
+
     covered.add(networkKey);
     // Silence the unused-warn on `now` — kept for future staleness tracking.
     void now;
@@ -1127,6 +1209,13 @@ async function fetchPricesForNetwork(
 /**
  * Build a unified cross-chain snapshot from the current cache.
  *
+ * Iterates the cache keys directly — NOT the allowlist — so tokens
+ * discovered via the Alchemy Portfolio API (e.g. any SPL token the wallet
+ * holds, not just the two on tokens.json) surface in the snapshot. Legacy
+ * cache entries from before the discovery pivot (missing the `token`
+ * metadata field) fall back to an allowlist lookup so the pre-upgrade cache
+ * isn't wiped on first load.
+ *
  * Only tokens with a cached balance are rendered — first-time opens with an
  * empty cache return an empty snapshot, and the UI shows a loading skeleton
  * until the post-unlock refresh populates the cache.
@@ -1150,22 +1239,40 @@ async function buildUnifiedPortfolioSnapshot(
   const walletCache = getActiveWalletCache();
 
   for (const [networkKey, config] of networks) {
-    const tokens = walletService.getTokensForNetwork(networkKey);
-    const prices = await resolvePricesForNetwork(networkKey, tokens);
     const cachedForNetwork = walletCache[networkKey] || {};
-
-    const balances: NetworkPortfolioInput['balances'] = [];
-    for (const token of tokens) {
-      const tokenKey = getTokenCacheKey(token);
-      const cached = cachedForNetwork[tokenKey];
-      if (!cached) continue;
-      balances.push({
-        token,
-        balance: cached.balance,
-        lastUpdated: cached.lastUpdated,
-        priceUsd: prices.get(tokenKey) ?? null,
-      });
+    const allowlist = walletService.getTokensForNetwork(networkKey);
+    // Index the allowlist so legacy cache entries (missing `token` metadata
+    // from before the discovery pivot) can still be rendered by looking up
+    // their Token here until the next refresh rewrites them with metadata.
+    const allowlistByKey = new Map<string, Token>();
+    for (const t of allowlist) {
+      allowlistByKey.set(getTokenCacheKey(t), t);
     }
+
+    // Resolve the Token for every cache entry, preferring the entry's own
+    // `token` field (written by the discovery path) and falling back to the
+    // allowlist lookup for legacy entries. Entries with no resolvable Token
+    // are skipped rather than rendered as a mystery row.
+    const resolved: Array<{ tokenKey: string; token: Token; cached: CachedBalance }> = [];
+    for (const [tokenKey, cached] of Object.entries(cachedForNetwork)) {
+      const token = cached.token ?? allowlistByKey.get(tokenKey);
+      if (!token) continue;
+      resolved.push({ tokenKey, token, cached });
+    }
+
+    // Single price lookup covering everything we resolved. For Portfolio-API
+    // chains this is a near-free hit against `portfolioPriceCache`; only
+    // BTC / XRP / TON or tokens the API didn't return fall back to the
+    // price-provider path.
+    const tokensForPricing = resolved.map(r => r.token);
+    const prices = await resolvePricesForNetwork(networkKey, tokensForPricing);
+
+    const balances: NetworkPortfolioInput['balances'] = resolved.map(({ tokenKey, token, cached }) => ({
+      token,
+      balance: cached.balance,
+      lastUpdated: cached.lastUpdated,
+      priceUsd: cached.priceUsd ?? prices.get(tokenKey) ?? null,
+    }));
 
     inputs.push({
       networkKey,
