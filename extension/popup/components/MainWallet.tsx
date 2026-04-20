@@ -22,6 +22,7 @@ import SendTransactionView from './SendTransactionView';
 import TokenDetailsScreen from './TokenDetailsScreen';
 import Identicon from './ui/Identicon';
 import NetworkSelector from './ui/NetworkSelector';
+import { ScreenHeader } from './ui';
 import BalanceCard from './wallet/BalanceCard';
 import TokenList from './wallet/TokenList';
 import type { TokenRow } from './wallet/TokenList';
@@ -51,7 +52,6 @@ import bitcoinIcon from '../../assets/img/bitcoin-logo.svg';
 import xrpIcon from '../../assets/img/xrp.svg';
 import tonIcon from '../../assets/img/ton_symbol.svg';
 import raydiumIcon from '../../assets/img/raydium-ray-logo.svg';
-import backIcon from '../../assets/icons/arrow-left.svg';
 import { isValidBitcoinAddress } from '../../../src/bitcoin/index.js';
 import { isValidTonAddress } from '../../../src/ton/index.js';
 import { isValidXRPAddress, isXAddress, isValidDestinationTag } from '../../../src/xrp/index.js';
@@ -1034,10 +1034,10 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
           <ActivityView currentAddress={address} network={network} networks={networks} />
         ) : view === 'receive' ? (
           <div className="takeover">
-            <button className="back-button" onClick={() => setView('tokens')}>
-              <img src={backIcon} alt="Back" />
-              <span>Back</span>
-            </button>
+            <ScreenHeader
+              title={`Receive ${networks[network]?.nativeSymbol || ''}`.trim()}
+              onBack={() => setView('tokens')}
+            />
             <ReceiveView address={address} network={network} networks={networks} />
           </div>
         ) : view === 'send' ? (
@@ -1054,10 +1054,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
               />
             ) : (
               <>
-                <button className="back-button" onClick={() => setView('tokens')}>
-                  <img src={backIcon} alt="Back" />
-                  <span>Back</span>
-                </button>
+                <ScreenHeader title="Send" onBack={() => setView('tokens')} />
                 <form onSubmit={handleSend}>
                   <div className="form-group">
                     <label>Token</label>
@@ -1221,7 +1218,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                     isValidRecipientAddress(network, recipient) &&
                     (!isBitcoinNetwork(network) || (amount && amount.trim() !== '')) && (
                     <div className="gas-estimate-box">
-                      <div className="gas-estimate-label">Estimated Network Fee</div>
+                      <div className="gas-estimate-label">Estimated network fee</div>
                       <div className="gas-estimate-value">
                         {gasEstimateLoading ? (
                           <span className="gas-loading">Estimating...</span>

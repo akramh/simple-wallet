@@ -52,12 +52,6 @@ function ReceiveView({ address, network, networks }: Props) {
 
   return (
     <div className="receive-view">
-      {/* Header */}
-      <div className="receive-header">
-        <h2>Receive {nativeSymbol}</h2>
-        <p className="receive-subtitle">Scan QR code or copy address</p>
-      </div>
-
       {/* QR Code */}
       <div className="qr-container">
         <div className="qr-code-wrapper">

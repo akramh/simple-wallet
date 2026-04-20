@@ -113,10 +113,15 @@
 }
 
 .gas-estimate-value {
+  /* Keep the native amount + USD equivalent on one line when they fit so the
+   * fee reads as a single unit ("0.00124 ETH (≈ $4.23)"). XRP reserve + not-
+   * activated variants opt into a column layout via inline style. */
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .gas-amount {
@@ -552,6 +557,19 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.screen-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.screen-header__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .back-button {
@@ -2760,32 +2778,16 @@ div.settings-row {
   align-items: center;
 }
 
-.receive-header {
-  text-align: center;
-  margin-bottom: 24px;
-}
-
-.receive-header h2 {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 8px 0;
-}
-
-.receive-subtitle {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0;
-}
-
 .qr-container {
   margin-bottom: 24px;
 }
 
 .qr-code-wrapper {
-  background: var(--bg-primary);
+  /* Hard white (not tokenized) so the QR stays on a guaranteed white tile in
+   * dark mode — preserves scanner contrast regardless of theme. */
+  background: #FFFFFF;
   padding: 16px;
-  border-radius: 12px;
+  border-radius: 16px;
   box-shadow: var(--shadow-sm);
   display: inline-block;
 }
