@@ -21,6 +21,26 @@
   font-weight: 600;
 }
 
+/* Unlock-screen brand variant: tightens typography + drops an inline
+ * rounded wallet-icon above the "Welcome Back" title. Scoped as a modifier
+ * so the generic .header used by WelcomeScreen stays untouched. */
+.header--brand {
+  padding: 20px 16px;
+  gap: 8px;
+}
+
+.header--brand h1 {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.header--brand__icon {
+  border-radius: 10px;
+  display: block;
+}
+
 .welcome-logo {
   width: 64px;
   height: 64px;

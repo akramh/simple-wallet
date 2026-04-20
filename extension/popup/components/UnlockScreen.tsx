@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import lockIcon from '../../assets/icons/lock.svg';
+import walletIcon from '../../assets/icons/wallet-icon.svg';
 import { PasswordField } from './ui';
 import { detectChain, chainAccentVar } from '../utils/address';
 
@@ -84,7 +85,14 @@ function UnlockScreen({ onUnlocked }: Props) {
 
   return (
     <div className="container">
-      <div className="header">
+      <div className="header header--brand">
+        <img
+          src={walletIcon}
+          alt=""
+          width={44}
+          height={44}
+          className="header--brand__icon"
+        />
         <h1>Welcome Back</h1>
       </div>
       <div className="content">
