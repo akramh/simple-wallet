@@ -194,20 +194,24 @@ export function showSuccess(message: string): void {
 
 /**
  * Displays an error message with optional suggestions for resolution.
- * Shows a red X icon and formats suggestions as a bullet list.
- * 
+ * Shows a red X icon and formats suggestions as a bullet list. An optional
+ * `info` trailer renders beneath the suggestions with a blue ℹ glyph — use it
+ * for factual, non-actionable context (current balance, required amount).
+ *
  * @param message - Error message to display
  * @param suggestions - Optional array of suggestion strings
- * 
+ * @param info - Optional single-line factual context rendered as an ℹ trailer
+ *
  * @example
  * ```typescript
- * showError('Insufficient balance', [
- *   'Check your current balance',
- *   'Try a smaller amount'
- * ]);
+ * showError(
+ *   'Insufficient balance',
+ *   ['Check your current balance', 'Try a smaller amount'],
+ *   'Your balance: 0.05 ETH · required: 0.10 ETH'
+ * );
  * ```
  */
-export function showError(message: string, suggestions: string[] = []): void {
+export function showError(message: string, suggestions: string[] = [], info?: string): void {
   console.log('\n' + chalk.red.bold('✗ Error\n'));
   console.log(chalk.white(message) + '\n');
 
@@ -216,6 +220,11 @@ export function showError(message: string, suggestions: string[] = []): void {
     suggestions.forEach(suggestion => {
       console.log(chalk.gray('  •') + ' ' + chalk.white(suggestion));
     });
+    console.log('');
+  }
+
+  if (info) {
+    console.log(chalk.blue('ℹ') + ' ' + chalk.white(info));
     console.log('');
   }
 }
@@ -736,15 +745,51 @@ export function showTransactionConfirmation(params: TransactionConfirmationParam
 }
 
 /**
- * Displays the total portfolio value.
+ * Formats a past timestamp as a short relative string: "just now", "Xs ago",
+ * "Xm ago", "Xh ago", or "Xd ago". Mirrors the extension's
+ * `PortfolioHero.formatRelativeTime` so surfaces match.
+ *
+ * @param timestampMs - A past timestamp in milliseconds since the epoch
+ * @param nowMs - Current time in ms; defaults to Date.now() (override for tests)
+ * @returns A short relative string
+ */
+export function formatRelativeTime(timestampMs: number, nowMs: number = Date.now()): string {
+  const diffMs = Math.max(0, nowMs - timestampMs);
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+/**
+ * Displays the total portfolio value. When `lastRefreshedAt` is provided,
+ * appends a gray "Last refreshed …" hint line below the closing separator
+ * with the `r` / `q` keystrokes highlighted.
  *
  * @param totalUsd - Total portfolio value in USD
+ * @param lastRefreshedAt - Optional ms timestamp of the most recent refresh
  */
-export function showPortfolioTotal(totalUsd: number): void {
+export function showPortfolioTotal(totalUsd: number, lastRefreshedAt?: number | null): void {
   console.log('');
   showSeparator();
   console.log(chalk.white.bold('Total Portfolio Value: ') + formatUsdPrice(totalUsd));
   showSeparator();
+
+  if (typeof lastRefreshedAt === 'number') {
+    const relative = formatRelativeTime(lastRefreshedAt);
+    console.log(
+      chalk.gray(`Last refreshed ${relative}. Press `) +
+        chalk.cyan('r') +
+        chalk.gray(' to refresh, ') +
+        chalk.cyan('q') +
+        chalk.gray(' to return.')
+    );
+  }
 }
 
 // ============================================================================
@@ -786,5 +831,6 @@ export default {
   getBlockExplorerUrl,
   showTransactionDetails,
   showTransactionConfirmation,
-  showPortfolioTotal
+  showPortfolioTotal,
+  formatRelativeTime
 };

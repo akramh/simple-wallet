@@ -1,7 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatAddress, menuChoice, getBlockExplorerUrl } from '../dist/ui-helpers.js';
+import {
+  formatAddress,
+  menuChoice,
+  getBlockExplorerUrl,
+  showError,
+  showPortfolioTotal,
+  formatRelativeTime,
+} from '../dist/ui-helpers.js';
 
 function stripAnsi(input) {
   return input.replace(/\u001b\[[0-9;]*m/g, '');
@@ -100,4 +107,67 @@ test('getBlockExplorerUrl resolves TON networks', () => {
 test('getBlockExplorerUrl returns null for unknown networks', () => {
   assert.equal(getBlockExplorerUrl('0xabc', 'unknown'), null);
   assert.equal(getBlockExplorerUrl('0xabc', ''), null);
+});
+
+function captureConsoleLog(fn) {
+  const original = console.log;
+  const lines = [];
+  console.log = (...args) => {
+    lines.push(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
+  };
+  try {
+    fn();
+  } finally {
+    console.log = original;
+  }
+  return lines.map(stripAnsi).join('\n');
+}
+
+test('showError omits ℹ trailer when info is not provided', () => {
+  const output = captureConsoleLog(() => {
+    showError('Something went wrong', ['Try again']);
+  });
+  assert.ok(output.includes('Something went wrong'));
+  assert.ok(output.includes('Try again'));
+  assert.ok(!output.includes('ℹ'));
+});
+
+test('showError includes ℹ trailer when info is provided', () => {
+  const output = captureConsoleLog(() => {
+    showError(
+      'Insufficient balance',
+      ['Try a smaller amount'],
+      'Your balance: 0.05 ETH · required: 0.10 ETH'
+    );
+  });
+  assert.ok(output.includes('Insufficient balance'));
+  assert.ok(output.includes('ℹ Your balance: 0.05 ETH · required: 0.10 ETH'));
+});
+
+test('showPortfolioTotal omits refresh hint when lastRefreshedAt is absent', () => {
+  const output = captureConsoleLog(() => {
+    showPortfolioTotal(1234.56);
+  });
+  assert.ok(output.includes('Total Portfolio Value:'));
+  assert.ok(!output.includes('Last refreshed'));
+});
+
+test('showPortfolioTotal includes refresh hint when lastRefreshedAt is provided', () => {
+  const output = captureConsoleLog(() => {
+    showPortfolioTotal(1234.56, Date.now());
+  });
+  assert.ok(output.includes('Total Portfolio Value:'));
+  assert.ok(output.includes('Last refreshed'));
+  assert.ok(output.includes('Press r to refresh, q to return.'));
+});
+
+test('formatRelativeTime produces short past-time strings', () => {
+  const now = 1_700_000_000_000;
+  assert.equal(formatRelativeTime(now - 1_000, now), 'just now');
+  assert.equal(formatRelativeTime(now - 30_000, now), '30s ago');
+  assert.equal(formatRelativeTime(now - 5 * 60_000, now), '5m ago');
+  assert.equal(formatRelativeTime(now - 2 * 3_600_000, now), '2h ago');
+  assert.equal(formatRelativeTime(now - 3 * 86_400_000, now), '3d ago');
+  // Future timestamps clamp to "just now".
+  assert.equal(formatRelativeTime(now + 10_000, now), 'just now');
 });

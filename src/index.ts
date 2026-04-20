@@ -999,6 +999,8 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, config.networks[config.network].name, address);
 
+  const fetchStartedAt = Date.now();
+
   try {
     ui.showLoading('Fetching balance from blockchain...');
     console.log('');
@@ -1083,7 +1085,7 @@ async function checkBalance(currentWalletName: string | null): Promise<void> {
 
     // Show total portfolio value
     if (totalUsd > 0) {
-      ui.showPortfolioTotal(totalUsd);
+      ui.showPortfolioTotal(totalUsd, fetchStartedAt);
     }
 
   } catch (error) {
@@ -1128,6 +1130,8 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
   const address = walletService.getAddress();
   ui.clearScreen();
   ui.showHeader(currentWalletName, wallet.currentAccountIndex, 'All Networks', address);
+
+  const fetchStartedAt = Date.now();
 
   ui.showLoading('Fetching balances and prices across all networks...');
   console.log('');
@@ -1243,6 +1247,15 @@ async function checkPortfolioAllNetworks(currentWalletName: string | null): Prom
     console.log(chalk.cyan('═'.repeat(60)));
     console.log(chalk.white.bold('Grand Total (All Networks): ') + ui.formatUsdPrice(grandTotalUsd));
     console.log(chalk.cyan('═'.repeat(60)));
+
+    const relative = ui.formatRelativeTime(fetchStartedAt);
+    console.log(
+      chalk.gray(`Last refreshed ${relative}. Press `) +
+        chalk.cyan('r') +
+        chalk.gray(' to refresh, ') +
+        chalk.cyan('q') +
+        chalk.gray(' to return.')
+    );
   }
 
   await inquirer.prompt<{ continue: string }>([{
@@ -2410,11 +2423,30 @@ async function sendCrypto(currentWalletName: string | null): Promise<void> {
     }]);
   } catch (error) {
     const err = error as Error;
-    ui.showError(`Transaction failed: ${err.message}`, [
-      'Verify you have sufficient balance for the transaction and gas fees',
-      'Check that the recipient address is valid',
-      'Ensure your network connection is stable'
-    ]);
+    // Detect "Insufficient [TOKEN] balance. You have X [TOKEN] but need Y [TOKEN]"
+    // (thrown from ethereum/provider, xrp/transaction, solana/transaction) and
+    // split the amounts into the ℹ trailer for a tighter primary message.
+    const insufficient = err.message.match(
+      /^Insufficient (?:\S+\s+)?balance\.\s*You have ([\d.]+\s*\S+)\s*but need ([\d.]+\s*\S+)/i
+    );
+
+    if (insufficient) {
+      ui.showError(
+        'Insufficient balance',
+        [
+          'Try a smaller amount',
+          'Receive funds first',
+          'Check your balance with Portfolio'
+        ],
+        `Your balance: ${insufficient[1]} · required: ${insufficient[2]}`
+      );
+    } else {
+      ui.showError(`Transaction failed: ${err.message}`, [
+        'Verify you have sufficient balance for the transaction and gas fees',
+        'Check that the recipient address is valid',
+        'Ensure your network connection is stable'
+      ]);
+    }
 
     await inquirer.prompt<{ continue: string }>([{
       type: 'input',
