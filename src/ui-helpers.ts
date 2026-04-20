@@ -194,20 +194,24 @@ export function showSuccess(message: string): void {
 
 /**
  * Displays an error message with optional suggestions for resolution.
- * Shows a red X icon and formats suggestions as a bullet list.
- * 
+ * Shows a red X icon and formats suggestions as a bullet list. An optional
+ * `info` trailer renders beneath the suggestions with a blue ℹ glyph — use it
+ * for factual, non-actionable context (current balance, required amount).
+ *
  * @param message - Error message to display
  * @param suggestions - Optional array of suggestion strings
- * 
+ * @param info - Optional single-line factual context rendered as an ℹ trailer
+ *
  * @example
  * ```typescript
- * showError('Insufficient balance', [
- *   'Check your current balance',
- *   'Try a smaller amount'
- * ]);
+ * showError(
+ *   'Insufficient balance',
+ *   ['Check your current balance', 'Try a smaller amount'],
+ *   'Your balance: 0.05 ETH · required: 0.10 ETH'
+ * );
  * ```
  */
-export function showError(message: string, suggestions: string[] = []): void {
+export function showError(message: string, suggestions: string[] = [], info?: string): void {
   console.log('\n' + chalk.red.bold('✗ Error\n'));
   console.log(chalk.white(message) + '\n');
 
@@ -216,6 +220,11 @@ export function showError(message: string, suggestions: string[] = []): void {
     suggestions.forEach(suggestion => {
       console.log(chalk.gray('  •') + ' ' + chalk.white(suggestion));
     });
+    console.log('');
+  }
+
+  if (info) {
+    console.log(chalk.blue('ℹ') + ' ' + chalk.white(info));
     console.log('');
   }
 }
@@ -284,7 +293,33 @@ export function formatAmount(amount: string, currency: string = 'ETH'): string {
 }
 
 /**
- * Formats a USD price value for display.
+ * Formats a USD price value as a plain (uncolored) string. Use this when the
+ * caller wants to wrap the result in its own chalk styling without having to
+ * strip embedded ANSI codes from `formatUsdPrice`.
+ *
+ * @param value - USD value to format (null if unavailable)
+ * @returns Formatted USD string with no ANSI codes ("--" when unavailable)
+ *
+ * @example
+ * ```typescript
+ * formatUsdPlain(1234.56);   // "$1,234.56"
+ * formatUsdPlain(0.005);     // "<$0.01"
+ * formatUsdPlain(null);      // "--"
+ * ```
+ */
+export function formatUsdPlain(value: number | null): string {
+  if (value === null || value === undefined) return '--';
+  if (value === 0) return '$0.00';
+  if (value < 0.01) return '<$0.01';
+  if (value < 1000) return `$${value.toFixed(2)}`;
+  if (value < 1000000) {
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  return `$${(value / 1000000).toFixed(2)}M`;
+}
+
+/**
+ * Formats a USD price value for display with built-in chalk coloring.
  * Handles various value ranges with appropriate formatting.
  *
  * @param value - USD value to format (null if unavailable)
@@ -299,17 +334,11 @@ export function formatAmount(amount: string, currency: string = 'ETH'): string {
  * ```
  */
 export function formatUsdPrice(value: number | null): string {
-  if (value === null || value === undefined) return chalk.gray('--');
-  if (value === 0) return chalk.gray('$0.00');
-  if (value < 0.01) return chalk.gray('<$0.01');
-  if (value < 1000) {
-    return chalk.yellow(`$${value.toFixed(2)}`);
-  }
-  if (value < 1000000) {
-    return chalk.yellow(`$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
-  }
-  // Millions
-  return chalk.yellow(`$${(value / 1000000).toFixed(2)}M`);
+  const plain = formatUsdPlain(value);
+  if (value === null || value === undefined) return chalk.gray(plain);
+  if (value === 0) return chalk.gray(plain);
+  if (value < 0.01) return chalk.gray(plain);
+  return chalk.yellow(plain);
 }
 
 /**
@@ -370,10 +399,9 @@ export function showAccountInfo(address: string, balance: string | null = null):
 /**
  * Creates a menu separator for use with inquirer prompts.
  * Displays a horizontal gray line to visually group menu options.
- * 
- * @param label - Optional label (currently unused, reserved for future use)
+ *
  * @returns MenuSeparator object for inquirer
- * 
+ *
  * @example
  * ```typescript
  * const choices = [
@@ -383,7 +411,7 @@ export function showAccountInfo(address: string, balance: string | null = null):
  * ];
  * ```
  */
-export function menuSeparator(label: string = ''): MenuSeparator {
+export function menuSeparator(): MenuSeparator {
   return {
     type: 'separator',
     line: chalk.gray('─'.repeat(60))
@@ -547,16 +575,44 @@ export function showMnemonic(mnemonic: string): void {
  * ```
  */
 export function getBlockExplorerUrl(txHash: string, networkKey: string): string | null {
+  // NOTE: Explorer URLs are also derived in chain-specific modules
+  // (`src/transaction-history.ts`, `src/xrp/explorer.ts`, `src/ton/explorer.ts`,
+  // `src/bitcoin/explorer.ts`) and in `WalletAppService.getBitcoinTransactionUrl`
+  // / `getXrpTransactionUrl` / `getTonTransactionUrl`. A future PR should
+  // consolidate these into a single resolver; for now, keep the CLI's map in
+  // sync with those sources.
   const explorers: Record<string, string> = {
+    // EVM mainnets
     mainnet: `https://etherscan.io/tx/${txHash}`,
-    sepolia: `https://sepolia.etherscan.io/tx/${txHash}`,
-    goerli: `https://goerli.etherscan.io/tx/${txHash}`,
     polygon: `https://polygonscan.com/tx/${txHash}`,
-    mumbai: `https://mumbai.polygonscan.com/tx/${txHash}`,
     bsc: `https://bscscan.com/tx/${txHash}`,
-    bscTestnet: `https://testnet.bscscan.com/tx/${txHash}`,
     arbitrum: `https://arbiscan.io/tx/${txHash}`,
     optimism: `https://optimistic.etherscan.io/tx/${txHash}`,
+    base: `https://basescan.org/tx/${txHash}`,
+    linea: `https://lineascan.build/tx/${txHash}`,
+    avalanche: `https://snowtrace.io/tx/${txHash}`,
+
+    // EVM testnets
+    sepolia: `https://sepolia.etherscan.io/tx/${txHash}`,
+    goerli: `https://goerli.etherscan.io/tx/${txHash}`,
+    mumbai: `https://mumbai.polygonscan.com/tx/${txHash}`,
+    bscTestnet: `https://testnet.bscscan.com/tx/${txHash}`,
+
+    // Solana
+    'solana-mainnet': `https://solscan.io/tx/${txHash}`,
+    'solana-devnet': `https://solscan.io/tx/${txHash}?cluster=devnet`,
+
+    // Bitcoin
+    'bitcoin-mainnet': `https://mempool.space/tx/${txHash}`,
+    'bitcoin-testnet': `https://mempool.space/testnet/tx/${txHash}`,
+
+    // XRP Ledger
+    'xrp-mainnet': `https://livenet.xrpl.org/transactions/${txHash}`,
+    'xrp-testnet': `https://testnet.xrpl.org/transactions/${txHash}`,
+
+    // TON
+    'ton-mainnet': `https://tonscan.org/tx/${txHash}`,
+    'ton-testnet': `https://testnet.tonscan.org/tx/${txHash}`,
   };
 
   return explorers[networkKey] || null;
@@ -701,22 +757,58 @@ export function showTransactionConfirmation(params: TransactionConfirmationParam
 
   // Total
   if (totalUsd !== null) {
-    console.log(chalk.gray('Total Cost:          ') + chalk.yellow.bold(formatUsdPrice(totalUsd).replace(/\x1b\[[0-9;]*m/g, '')));
+    console.log(chalk.gray('Total Cost:          ') + chalk.yellow.bold(formatUsdPlain(totalUsd)));
   }
 
   console.log(chalk.cyan('═'.repeat(50)) + '\n');
 }
 
 /**
- * Displays the total portfolio value.
+ * Formats a past timestamp as a short relative string: "just now", "Xs ago",
+ * "Xm ago", "Xh ago", or "Xd ago". Mirrors the extension's
+ * `PortfolioHero.formatRelativeTime` so surfaces match.
+ *
+ * @param timestampMs - A past timestamp in milliseconds since the epoch
+ * @param nowMs - Current time in ms; defaults to Date.now() (override for tests)
+ * @returns A short relative string
+ */
+export function formatRelativeTime(timestampMs: number, nowMs: number = Date.now()): string {
+  const diffMs = Math.max(0, nowMs - timestampMs);
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+/**
+ * Displays the total portfolio value. When `lastRefreshedAt` is provided,
+ * appends a gray "Last refreshed …" hint line below the closing separator
+ * with the `r` / `q` keystrokes highlighted.
  *
  * @param totalUsd - Total portfolio value in USD
+ * @param lastRefreshedAt - Optional ms timestamp of the most recent refresh
  */
-export function showPortfolioTotal(totalUsd: number): void {
+export function showPortfolioTotal(totalUsd: number, lastRefreshedAt?: number | null): void {
   console.log('');
   showSeparator();
   console.log(chalk.white.bold('Total Portfolio Value: ') + formatUsdPrice(totalUsd));
   showSeparator();
+
+  if (typeof lastRefreshedAt === 'number') {
+    const relative = formatRelativeTime(lastRefreshedAt);
+    console.log(
+      chalk.gray(`Last refreshed ${relative}. Press `) +
+        chalk.cyan('r') +
+        chalk.gray(' to refresh, ') +
+        chalk.cyan('q') +
+        chalk.gray(' to return.')
+    );
+  }
 }
 
 // ============================================================================
@@ -748,6 +840,7 @@ export default {
   formatAddress,
   formatAmount,
   formatUsdPrice,
+  formatUsdPlain,
   formatBalanceWithUsd,
   formatTxHash,
   showAccountInfo,
@@ -758,5 +851,6 @@ export default {
   getBlockExplorerUrl,
   showTransactionDetails,
   showTransactionConfirmation,
-  showPortfolioTotal
+  showPortfolioTotal,
+  formatRelativeTime
 };
