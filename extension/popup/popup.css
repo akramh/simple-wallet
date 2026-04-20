@@ -1165,7 +1165,7 @@
 .token-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .wallets-pane {
@@ -1311,10 +1311,10 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px;
+  padding: 10px 12px;
   background: var(--surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: 10px;
   transition: background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
 
@@ -1347,6 +1347,7 @@
 .token-item--add-cta {
   display: flex;
   width: 100%;
+  padding: 12px;
   justify-content: center;
   align-items: center;
   border: 2px dashed var(--border);
