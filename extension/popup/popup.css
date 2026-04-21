@@ -2801,12 +2801,403 @@ div.settings-row {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+/* =============================================================================
+ * Send screen — cross-chain asset picker
+ * =============================================================================
+ * The chip is the tap target inside the Send form; tapping it opens
+ * AssetPickerModal. When a pick is committed we render badge + symbol/network
+ * + balance in-place so the user always sees what chain the send will run on.
+ */
+.asset-picker-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard);
+}
+
+.asset-picker-chip:hover {
+  border-color: var(--primary);
+}
+
+.asset-picker-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--primary);
+}
+
+.asset-picker-chip__badge {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.asset-picker-chip__badge img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.asset-picker-chip__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.asset-picker-chip__symbol {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.asset-picker-chip__network {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.asset-picker-chip__balance {
+  flex-shrink: 0;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding-left: 8px;
+}
+
+.asset-picker-chip__placeholder {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.asset-picker-chip__caret {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+/* Modal internals */
+.asset-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* The modal itself constrains width; this cap limits list height so very
+   * long holdings stay scrollable within the popup frame. */
+  max-height: 60vh;
+}
+
+.asset-picker__search {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.asset-picker__search:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.asset-picker__state {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.asset-picker__state.is-error {
+  color: var(--error, #cc3344);
+}
+
+.asset-picker__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.asset-picker__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.asset-picker__row:hover {
+  background: var(--bg-secondary);
+}
+
+.asset-picker__row.is-selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--bg-secondary));
+}
+
+.asset-picker__row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--primary);
+}
+
+.asset-picker__badge {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--surface);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.asset-picker__badge img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.asset-picker__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.asset-picker__symbol {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.asset-picker__network {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.asset-picker__balance {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.asset-picker__balance-token {
+  font-family: var(--font-family-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.asset-picker__balance-usd {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
 /* Receive View */
 .receive-view {
   padding: 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+/* Chain picker — horizontally scrollable pill row with edge fade-masks that
+ * signal more pills exist off-screen. The masks are driven by .is-scrolled-*
+ * classes set by the component from scroll position. */
+.receive-chain-picker {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 12px;
+}
+
+.receive-chain-picker__scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.receive-chain-picker__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Fade-masks: pseudo-elements layered over the left/right edges. Opacity is
+ * toggled via .is-scrolled-{left,right} so a mask only appears on the side
+ * the user could still scroll toward. */
+.receive-chain-picker::before,
+.receive-chain-picker::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 4px;
+  width: 24px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.receive-chain-picker::before {
+  left: 0;
+  background: linear-gradient(to right, var(--bg-primary), transparent);
+}
+
+.receive-chain-picker::after {
+  right: 0;
+  background: linear-gradient(to left, var(--bg-primary), transparent);
+}
+
+.receive-chain-picker.is-scrolled-left::before {
+  opacity: 1;
+}
+
+.receive-chain-picker.is-scrolled-right::after {
+  opacity: 1;
+}
+
+.receive-chain-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 12px 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.receive-chain-pill:hover {
+  border-color: var(--primary);
+  transform: scale(1.02);
+}
+
+.receive-chain-pill:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.receive-chain-pill.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  /* Subtle lift on the selected pill, mirroring the source design */
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(15, 15, 23, 0.08));
+}
+
+/* 16px circular chain badge inside the pill. White bg keeps multi-color
+ * token icons legible even when the active pill is filled with --primary. */
+.receive-chain-pill__icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.receive-chain-pill__icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.receive-chain-pill__label {
+  line-height: 1;
+}
+
+/* Context row: chain name on the left, "Receives" + token chips on the right,
+ * separated by a thin rule that flexes to fill. */
+.receive-context-row {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.receive-context-name {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.receive-context-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border-light, var(--border));
+}
+
+.receive-context-label {
+  color: var(--text-secondary);
+}
+
+.receive-asset-chip {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.receive-asset-more {
+  font-size: 10px;
+  color: var(--text-tertiary);
 }
 
 .qr-container {

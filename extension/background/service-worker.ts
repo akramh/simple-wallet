@@ -2717,9 +2717,23 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();
 
-      const fromAddress = walletService!.getAddress();
-      const network = walletService!.config.network;
+      // Allow the popup to target a network other than the wallet's globally
+      // active one (multi-network Send). When omitted, falls back to active.
+      const network = (payload?.networkKey && typeof payload.networkKey === 'string')
+        ? payload.networkKey
+        : walletService!.config.network;
       const sendNetworkConfig = walletService!.config.networks[network];
+      if (!sendNetworkConfig) {
+        throw new Error(`Unknown network: ${network}`);
+      }
+      // From-address is chain-specific, so derive it from the target network.
+      const fromAddress = walletService!.getAddressForChain(
+        isSolanaNetworkConfig(sendNetworkConfig) ? 'solana'
+        : isBitcoinNetworkConfig(sendNetworkConfig) ? 'bitcoin'
+        : isXRPNetworkConfig(sendNetworkConfig) ? 'xrp'
+        : isTonNetworkConfig(sendNetworkConfig) ? 'ton'
+        : 'evm'
+      ) || walletService!.getAddress();
 
       try {
         // Solana send path (broadcast + pending)
@@ -2735,12 +2749,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
               payload.token,
               payload.toAddress,
               payload.amount,
-              solanaPassword
+              solanaPassword,
+              network
             )
             : await walletService!.sendSolanaTransaction(
               payload.toAddress,
               payload.amount,
-              solanaPassword
+              solanaPassword,
+              network
             );
 
           // Track transaction in history as pending
@@ -2782,7 +2798,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
           const result = await walletService!.sendBitcoinTransaction(
             payload.toAddress,
             payload.amount,
-            bitcoinPassword
+            bitcoinPassword,
+            network
           );
 
           // Track transaction in history as pending
@@ -2826,7 +2843,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             payload.toAddress,
             payload.amount,
             xrpPassword,
-            payload.destinationTag
+            payload.destinationTag,
+            network
           );
 
           // Track transaction in history as pending
@@ -2869,7 +2887,8 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
             payload.toAddress,
             payload.amount,
             tonPassword,
-            payload.comment
+            payload.comment,
+            network
           );
 
           if (transactionHistory && result.hash) {
@@ -2898,7 +2917,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         }
 
         // EVM path: call sendToken - this waits for confirmation
-        const result = await walletService!.sendToken(payload.token, payload.toAddress, payload.amount);
+        const result = await walletService!.sendToken(payload.token, payload.toAddress, payload.amount, network);
 
         // Track transaction in history as confirmed
         if (transactionHistory && result.hash) {
@@ -2944,7 +2963,13 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
     case 'GET_NETWORK_CONFIG': {
       if (!walletService) throw new Error('Wallet not initialized');
-      const netConfigNetwork = walletService.config.network;
+      // Optional `payload.networkKey` lets the Send confirmation view display
+      // the chain + explorer for a cross-chain asset without switching the
+      // wallet's active network.
+      const requestedKey = payload?.networkKey;
+      const netConfigNetwork = (typeof requestedKey === 'string' && walletService.config.networks[requestedKey])
+        ? requestedKey
+        : walletService.config.network;
       const netConfigData = walletService.config.networks[netConfigNetwork];
       const isBitcoin = isBitcoinNetworkConfig(netConfigData);
       const isSolana = isSolanaNetworkConfig(netConfigData);
@@ -2970,9 +2995,36 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!walletService) throw new Error('Wallet not initialized');
       resetAutoLockTimer();
 
-      const { token, toAddress, amount } = payload;
-      // Use shared gas estimation from WalletAppService
-      return walletService.getGasEstimate(token, toAddress, amount);
+      const { token, toAddress, amount, networkKey } = payload;
+      // Use shared gas estimation from WalletAppService. `networkKey` lets the
+      // Send form price a fee on a network other than the globally active one.
+      return walletService.getGasEstimate(token, toAddress, amount, networkKey);
+    }
+
+    case 'GET_SENDABLE_ASSETS': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      if (!walletService) throw new Error('Wallet not initialized');
+      resetAutoLockTimer();
+
+      // Reuse the already-cached unified portfolio snapshot. Filter to rows
+      // with a positive balance and no blocking error — those are the assets
+      // the wallet can actually send right now. The result is a flat list
+      // (network, token, balance, usd) so the popup doesn't have to know how
+      // the snapshot was produced.
+      const snapshot = await buildUnifiedPortfolioSnapshot(payload?.options || {});
+      const assets = snapshot.rows
+        .filter(row => !row.error && row.balanceNumber > 0)
+        .map(row => ({
+          networkKey: row.networkKey,
+          networkLabel: row.networkLabel,
+          chainBadgeIcon: row.chainBadgeIcon,
+          token: row.token,
+          balance: row.balance,
+          balanceNumber: row.balanceNumber,
+          usdValue: row.usdValue,
+          usdFormatted: row.usdFormatted,
+        }));
+      return { assets };
     }
 
     case 'SWITCH_NETWORK':
@@ -3167,6 +3219,15 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'GET_ADDRESS':
       if (!isUnlocked) throw new Error('Wallet is locked');
       return { address: walletService!.getAddress() };
+
+    case 'GET_CHAIN_ADDRESS': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      const chain = payload?.chain;
+      if (chain !== 'evm' && chain !== 'solana' && chain !== 'bitcoin' && chain !== 'xrp' && chain !== 'ton') {
+        throw new Error('Invalid chain');
+      }
+      return { address: walletService!.getAddressForChain(chain) };
+    }
 
     case 'GET_SECRET_PHRASE':
       if (!isUnlocked) throw new Error('Wallet is locked');

@@ -449,6 +449,52 @@ export class Wallet {
     return this.ethereumProvider.sendToken(this.wallet, token, toAddress, amount);
   }
 
+  /**
+   * Send an EVM token on a specific network without changing the wallet's
+   * globally-active network. Builds a signer connected to the target RPC,
+   * submits via the shared EthereumProvider send path, then restores the
+   * active-network provider so other callers see the expected chain.
+   *
+   * Required for the cross-chain Send flow in the extension (e.g. the user is
+   * on `mainnet` but picked a USDC-on-Polygon asset).
+   *
+   * @param token - Token to send
+   * @param toAddress - Recipient address
+   * @param amount - Amount in token units
+   * @param networkKey - Target EVM network key (must exist in config.networks)
+   */
+  async sendTokenOnNetwork(
+    token: Token,
+    toAddress: string,
+    amount: string,
+    networkKey: string
+  ): Promise<TransactionReceipt> {
+    const targetProvider = await this.ethereumProvider.ensureProvider(networkKey);
+
+    let signer: ethers.Wallet | ethers.HDNodeWallet;
+    if (this.importType === 'privateKey') {
+      if (!this.privateKey) {
+        throw new Error('No private key available');
+      }
+      signer = new ethers.Wallet(this.privateKey, targetProvider);
+    } else {
+      const derived = this._deriveAccount(this.currentAccountIndex);
+      signer = derived.connect(targetProvider);
+    }
+
+    try {
+      return await this.ethereumProvider.sendToken(signer, token, toAddress, amount);
+    } finally {
+      // Restore the active-network provider so subsequent wallet.provider reads
+      // target the user's selected network rather than the ad-hoc one.
+      try {
+        await this.ethereumProvider.ensureProvider(this.config.network);
+      } catch {
+        // Best-effort restore; swallow so we don't mask the original send error.
+      }
+    }
+  }
+
   // ============================================================================
   // Storage & Management Methods (Generic)
   // ============================================================================
