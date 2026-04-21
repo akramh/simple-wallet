@@ -903,14 +903,54 @@ export class WalletAppService {
   }
 
   /**
-   * Send a token or native currency.
+   * Send a token or native currency on an EVM network.
+   *
+   * When `networkKey` is omitted, the currently active network is used. When it
+   * is provided and refers to an EVM network other than the active one, we
+   * route the send through a provider connected to that network without
+   * mutating the wallet's active-network state.
+   *
    * @param token - Token to send
    * @param toAddress - Recipient address
    * @param amount - Amount to send
+   * @param networkKey - Optional EVM network to send on; defaults to active
    * @returns Transaction receipt
+   * @throws If `networkKey` refers to a non-EVM chain or private-key import
    */
-  async sendToken(token: Token, toAddress: string, amount: string): Promise<{ hash: string; blockNumber: number; gasUsed: string }> {
+  async sendToken(
+    token: Token,
+    toAddress: string,
+    amount: string,
+    networkKey?: string
+  ): Promise<{ hash: string; blockNumber: number; gasUsed: string }> {
+    if (networkKey && networkKey !== this.config.network) {
+      this.assertEvmNetworkForWallet(networkKey);
+      return this.wallet.sendTokenOnNetwork(token, toAddress, amount, networkKey);
+    }
     return this.wallet.sendToken(token, toAddress, amount);
+  }
+
+  /**
+   * Guard: reject when the requested network isn't a valid EVM target for
+   * this wallet. Shared between sendToken and getGasEstimate.
+   * @private
+   */
+  private assertEvmNetworkForWallet(networkKey: string): void {
+    const netConfig = this.config.networks[networkKey];
+    if (!netConfig) {
+      throw new Error(`Unknown network: ${networkKey}`);
+    }
+    const type = (netConfig as { type?: string }).type;
+    if (type && type !== 'evm') {
+      throw new Error(`Network ${networkKey} is not an EVM network`);
+    }
+    if (
+      this.wallet.importType === 'privateKey' &&
+      this.wallet.privateKeyType &&
+      this.wallet.privateKeyType !== 'evm'
+    ) {
+      throw new Error('This wallet does not support EVM sends');
+    }
   }
 
   /**
@@ -922,10 +962,16 @@ export class WalletAppService {
    * @param amount - Amount to send (in token units)
    * @returns Gas estimation with costs in wei and native token
    */
-  async getGasEstimate(token: Token, toAddress: string, amount: string): Promise<GasEstimate> {
+  async getGasEstimate(
+    token: Token,
+    toAddress: string,
+    amount: string,
+    networkKey?: string
+  ): Promise<GasEstimate> {
+    const effective = networkKey ?? this.config.network;
     // Bitcoin networks: estimate fee using Mempool fee rates and UTXO selection.
-    if (this.isCurrentNetworkBitcoin()) {
-      const networkKey = this.config.network;
+    if (this.isNetworkBitcoin(effective)) {
+      const networkKey = effective;
       const netConfig = this.config.networks[networkKey];
       const nativeSymbol = netConfig?.nativeSymbol || (networkKey === 'bitcoin-testnet' ? 'tBTC' : 'BTC');
 
@@ -992,8 +1038,8 @@ export class WalletAppService {
     }
 
     // Solana networks: estimate fee using base fee (5000 lamports per signature)
-    if (this.isCurrentNetworkSolana()) {
-      const networkKey = this.config.network;
+    if (this.isNetworkSolana(effective)) {
+      const networkKey = effective;
       const netConfig = this.config.networks[networkKey];
       const nativeSymbol = netConfig?.nativeSymbol || 'SOL';
 
@@ -1029,8 +1075,8 @@ export class WalletAppService {
     }
 
     // XRP Ledger networks: estimate fee using XRP Ledger fee API
-    if (this.isCurrentNetworkXRP()) {
-      const networkKey = this.config.network;
+    if (this.isNetworkXRP(effective)) {
+      const networkKey = effective;
       const netConfig = this.config.networks[networkKey];
       const nativeSymbol = netConfig?.nativeSymbol || 'XRP';
 
@@ -1066,8 +1112,8 @@ export class WalletAppService {
     }
 
     // TON networks: estimate fee via Toncenter (best-effort)
-    if (this.isCurrentNetworkTon()) {
-      const networkKey = this.config.network;
+    if (this.isNetworkTon(effective)) {
+      const networkKey = effective;
       const netConfig = this.config.networks[networkKey];
       const nativeSymbol = netConfig?.nativeSymbol || 'TON';
 
@@ -1104,10 +1150,32 @@ export class WalletAppService {
       }
     }
 
-    const gasNetwork = this.config.network;
+    // EVM path — default to the wallet's active provider, but when the caller
+    // explicitly targets a different EVM network we build a one-off provider.
+    const gasNetwork = effective;
     const gasNetworkConfig = this.config.networks[gasNetwork];
     const nativeSymbol = gasNetworkConfig?.nativeSymbol || 'ETH';
-    const provider = this.wallet.provider;
+    let provider: ethers.JsonRpcProvider | null;
+    if (networkKey && networkKey !== this.config.network) {
+      try {
+        provider = await this.wallet.ethereumProvider.ensureProvider(networkKey);
+      } catch (err: any) {
+        return {
+          error: err?.message || `No provider for ${networkKey}`,
+          gasLimit: token.type === 'native' ? '21000' : '65000',
+          gasPrice: '0',
+          maxFeePerGas: null,
+          maxPriorityFeePerGas: null,
+          estimatedCostWei: '0',
+          estimatedCostNative: '0',
+          nativeSymbol,
+          supportsEIP1559: false,
+          network: gasNetwork
+        };
+      }
+    } else {
+      provider = this.wallet.provider;
+    }
 
     if (!provider) {
       return {
@@ -1125,7 +1193,10 @@ export class WalletAppService {
     }
 
     try {
-      const fromAddress = this.wallet.getAddress();
+      // When estimating for a non-active EVM network the wallet.getAddress()
+      // returns the active-network address. For EVM that's the same key
+      // material / same 0x address anyway, so this is fine.
+      const fromAddress = this.wallet.getAccountAddress(this.wallet.getCurrentAccountIndex());
 
       // Add timeout to prevent hanging
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -1199,6 +1270,16 @@ export class WalletAppService {
         supportsEIP1559: false,
         network: gasNetwork
       };
+    } finally {
+      // Restore the active-network provider when we temporarily swapped to
+      // estimate against a different EVM network. Cached; cheap.
+      if (networkKey && networkKey !== this.config.network) {
+        try {
+          await this.wallet.ethereumProvider.ensureProvider(this.config.network);
+        } catch {
+          // Best-effort restore.
+        }
+      }
     }
   }
 
@@ -1568,10 +1649,19 @@ export class WalletAppService {
   async sendSolanaTransaction(
     toAddress: string,
     amountSol: string,
-    password: string
+    password: string,
+    networkKey?: string
   ): Promise<SolTransferResult> {
-    if (!this.isCurrentNetworkSolana()) {
-      throw new Error('Not on a Solana network');
+    const effectiveNetworkKey = networkKey ?? this.config.network;
+    if (!this.isNetworkSolana(effectiveNetworkKey)) {
+      throw new Error(`Network ${effectiveNetworkKey} is not a Solana network`);
+    }
+    if (
+      this.wallet.importType === 'privateKey' &&
+      this.wallet.privateKeyType &&
+      this.wallet.privateKeyType !== 'solana'
+    ) {
+      throw new Error('This wallet does not support Solana sends');
     }
 
     // Validate recipient address
@@ -1579,8 +1669,10 @@ export class WalletAppService {
       throw new Error('Invalid Solana recipient address');
     }
 
-    // Get sender info
-    const solInfo = this.getSolanaAddress();
+    // Sender address derived directly from the wallet so we don't gate on the
+    // currently-active network (Receive/Send can target Solana from any chain).
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+    const solInfo = this.wallet.getSolanaAddress(accountIndex);
     if (!solInfo) {
       throw new Error('No Solana address available');
     }
@@ -1598,12 +1690,11 @@ export class WalletAppService {
     } else {
       // Get mnemonic to derive keypair
       const mnemonic = this.wallet.getMnemonic(password);
-      const accountIndex = this.wallet.getCurrentAccountIndex();
       keypair = deriveSolanaKeypair(mnemonic, accountIndex);
     }
 
-    // Get provider for RPC operations
-    const provider = this.getSolanaProviderForNetwork(this.config.network);
+    // Get provider for RPC operations on the target Solana network
+    const provider = this.getSolanaProviderForNetwork(effectiveNetworkKey);
 
     // Get current balance
     const balanceLamports = await provider.getBalanceLamports(solInfo.address);
@@ -1660,10 +1751,19 @@ export class WalletAppService {
     token: Token,
     toAddress: string,
     amount: string,
-    password: string
+    password: string,
+    networkKey?: string
   ): Promise<SolTransferResult> {
-    if (!this.isCurrentNetworkSolana()) {
-      throw new Error('Not on a Solana network');
+    const effectiveNetworkKey = networkKey ?? this.config.network;
+    if (!this.isNetworkSolana(effectiveNetworkKey)) {
+      throw new Error(`Network ${effectiveNetworkKey} is not a Solana network`);
+    }
+    if (
+      this.wallet.importType === 'privateKey' &&
+      this.wallet.privateKeyType &&
+      this.wallet.privateKeyType !== 'solana'
+    ) {
+      throw new Error('This wallet does not support Solana sends');
     }
 
     if (token.type !== 'spl' || !token.address) {
@@ -1677,7 +1777,8 @@ export class WalletAppService {
       throw new Error('Invalid Solana recipient address');
     }
 
-    const solInfo = this.getSolanaAddress();
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+    const solInfo = this.wallet.getSolanaAddress(accountIndex);
     if (!solInfo) {
       throw new Error('No Solana address available');
     }
@@ -1693,11 +1794,10 @@ export class WalletAppService {
       keypair = Keypair.fromSecretKey(secretKey);
     } else {
       const mnemonic = this.wallet.getMnemonic(password);
-      const accountIndex = this.wallet.getCurrentAccountIndex();
       keypair = deriveSolanaKeypair(mnemonic, accountIndex);
     }
 
-    const provider = this.getSolanaProviderForNetwork(this.config.network);
+    const provider = this.getSolanaProviderForNetwork(effectiveNetworkKey);
     const result = await provider.sendSplTokenTransfer(
       keypair,
       toAddress,
@@ -1843,21 +1943,36 @@ export class WalletAppService {
   async sendBitcoinTransaction(
     toAddress: string,
     amountBtc: string,
-    password: string
+    password: string,
+    networkKey?: string
   ): Promise<{ hash: string; feeSats: number; feeBtc: string; vbytes: number }> {
-    if (!this.isCurrentNetworkBitcoin()) {
-      throw new Error('Not on a Bitcoin network');
+    const effectiveNetworkKey = networkKey ?? this.config.network;
+    if (!this.isNetworkBitcoin(effectiveNetworkKey)) {
+      throw new Error(`Network ${effectiveNetworkKey} is not a Bitcoin network`);
+    }
+    if (
+      this.wallet.importType === 'privateKey' &&
+      this.wallet.privateKeyType &&
+      this.wallet.privateKeyType !== 'bitcoin'
+    ) {
+      throw new Error('This wallet does not support Bitcoin sends');
     }
 
-    const networkKey = this.config.network;
-    const btcNetwork = networkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
+    const btcNetwork = effectiveNetworkKey === 'bitcoin-mainnet' ? 'mainnet' : 'testnet';
     if (!isValidBitcoinAddress(toAddress, btcNetwork)) {
       throw new Error('Invalid Bitcoin recipient address');
     }
 
-    const fromAddress = this.getAddress();
+    // Derive the sender address for the target BTC network directly so we don't
+    // depend on the wallet's active network.
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+    const btcInfo = this.wallet.getBitcoinAddress(btcNetwork, accountIndex);
+    if (!btcInfo) {
+      throw new Error('No Bitcoin address available');
+    }
+    const fromAddress = btcInfo.address;
     const wif = this.wallet.getBitcoinPrivateKey(password, btcNetwork);
-    const provider = this.getBitcoinProviderForNetwork(networkKey);
+    const provider = this.getBitcoinProviderForNetwork(effectiveNetworkKey);
 
     const result = await provider.sendTransaction(fromAddress, toAddress, amountBtc, wif);
     return {
@@ -1963,10 +2078,19 @@ export class WalletAppService {
     toAddress: string,
     amountXrp: string,
     password: string,
-    destinationTag?: number
+    destinationTag?: number,
+    networkKey?: string
   ): Promise<{ hash: string; feeDrops: number; feeXrp: string }> {
-    if (!this.isCurrentNetworkXRP()) {
-      throw new Error('Not on an XRP network');
+    const effectiveNetworkKey = networkKey ?? this.config.network;
+    if (!this.isNetworkXRP(effectiveNetworkKey)) {
+      throw new Error(`Network ${effectiveNetworkKey} is not an XRP network`);
+    }
+    if (
+      this.wallet.importType === 'privateKey' &&
+      this.wallet.privateKeyType &&
+      this.wallet.privateKeyType !== 'xrp'
+    ) {
+      throw new Error('This wallet does not support XRP sends');
     }
 
     // Validate recipient address
@@ -1974,7 +2098,8 @@ export class WalletAppService {
       throw new Error('Invalid XRP recipient address');
     }
 
-    const xrpInfo = this.getXRPAddress();
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+    const xrpInfo = this.wallet.getXRPAddress(accountIndex);
     if (!xrpInfo) {
       throw new Error('No XRP address available');
     }
@@ -1988,7 +2113,7 @@ export class WalletAppService {
     }
 
     // Get provider and send transaction
-    const provider = this.getXRPProviderForNetwork(this.config.network);
+    const provider = this.getXRPProviderForNetwork(effectiveNetworkKey);
     const result = await provider.sendTransaction(
       xrpInfo.address,
       toAddress,
@@ -2141,23 +2266,32 @@ export class WalletAppService {
     toAddress: string,
     amountTon: string,
     password: string,
-    comment?: string
+    comment?: string,
+    networkKey?: string
   ): Promise<{ hash: string }> {
-    if (!this.isCurrentNetworkTon()) {
-      throw new Error('Not on a TON network');
+    const effectiveNetworkKey = networkKey ?? this.config.network;
+    if (!this.isNetworkTon(effectiveNetworkKey)) {
+      throw new Error(`Network ${effectiveNetworkKey} is not a TON network`);
+    }
+    if (
+      this.wallet.importType === 'privateKey' &&
+      this.wallet.privateKeyType &&
+      this.wallet.privateKeyType !== 'ton'
+    ) {
+      throw new Error('This wallet does not support TON sends');
     }
 
     if (!isValidTonAddress(toAddress)) {
       throw new Error('Invalid TON recipient address');
     }
 
-    const tonInfo = this.getTonAddress();
+    const accountIndex = this.wallet.getCurrentAccountIndex();
+    const tonInfo = this.wallet.getTonAddress(accountIndex);
     if (!tonInfo) {
       throw new Error('No TON address available');
     }
 
-    const provider = this.getTonProviderForNetwork(this.config.network);
-    const accountIndex = this.wallet.getCurrentAccountIndex();
+    const provider = this.getTonProviderForNetwork(effectiveNetworkKey);
 
     if (this.wallet.importType === 'privateKey') {
       const secretKey = this.wallet.getPrivateKey(password);

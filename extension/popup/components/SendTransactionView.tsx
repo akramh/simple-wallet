@@ -24,6 +24,12 @@ interface SendTransactionViewProps {
   amount: string;
   destinationTag?: number;
   comment?: string;
+  /**
+   * Target network for this send. When omitted, the service worker falls back
+   * to the wallet's globally-active network — but the Send flow passes this
+   * explicitly so a cross-chain asset pick is routed to the right RPC.
+   */
+  networkKey?: string;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -71,6 +77,7 @@ export function SendTransactionView({
   amount,
   destinationTag,
   comment,
+  networkKey,
   onClose,
   onSuccess
 }: SendTransactionViewProps) {
@@ -86,8 +93,14 @@ export function SendTransactionView({
   // Fetch network config, gas estimate, and prices
   useEffect(() => {
     setGasEstimateStatus('loading');
-    // Fetch network config
-    chrome.runtime.sendMessage({ type: 'GET_NETWORK_CONFIG' })
+    // Fetch network config (for block-explorer link + per-chain flags).
+    // NOTE: GET_NETWORK_CONFIG reports the active network; for cross-chain
+    // sends we read `networkKey` when it's available.
+    chrome.runtime.sendMessage(
+      networkKey
+        ? { type: 'GET_NETWORK_CONFIG', payload: { networkKey } }
+        : { type: 'GET_NETWORK_CONFIG' }
+    )
       .then((response) => {
         if (response && !response.error) {
           setNetworkConfig(response);
@@ -95,11 +108,12 @@ export function SendTransactionView({
       })
       .catch(console.error);
 
-    // Fetch gas estimate with timeout
+    // Fetch gas estimate with timeout — scoped to the picked network so the
+    // quoted fee reflects the chain the send will actually run on.
     const gasTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
     const gasPromise = chrome.runtime.sendMessage({
       type: 'GET_GAS_ESTIMATE',
-      payload: { token, toAddress: recipient, amount }
+      payload: { token, toAddress: recipient, amount, networkKey }
     });
     
     Promise.race([gasPromise, gasTimeout])
@@ -127,7 +141,7 @@ export function SendTransactionView({
         }
       })
       .catch(console.error);
-  }, [token, recipient, amount]);
+  }, [token, recipient, amount, networkKey]);
 
   // Calculate USD values using shared function
   const transactionCosts = useMemo(() => {
@@ -163,7 +177,7 @@ export function SendTransactionView({
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'SEND_TRANSACTION',
-        payload: { token, toAddress: recipient, amount, destinationTag, comment }
+        payload: { token, toAddress: recipient, amount, destinationTag, comment, networkKey }
       });
 
       if (response.error) {
@@ -183,7 +197,7 @@ export function SendTransactionView({
     } catch (err: any) {
       setTxState({ status: 'failed', error: err.message || 'Transaction failed' });
     }
-  }, [token, recipient, amount, networkConfig]);
+  }, [token, recipient, amount, networkConfig, networkKey, destinationTag, comment]);
 
   useEffect(() => {
     if (!networkConfig?.isTon) return;

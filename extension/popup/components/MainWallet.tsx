@@ -18,6 +18,7 @@ import AccountMenu from './AccountMenu';
 import ReceiveView from './ReceiveView';
 import ActivityView from './ActivityView';
 import AddTokenModal from './AddTokenModal';
+import AssetPickerModal, { type SendableAsset } from './AssetPickerModal';
 import SendTransactionView from './SendTransactionView';
 import TokenDetailsScreen from './TokenDetailsScreen';
 import Identicon from './ui/Identicon';
@@ -250,6 +251,14 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
 
   // Send form state
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
+  /**
+   * Fully-qualified send target: token + the network it lives on. Drives
+   * validation, gas estimate, and the SEND_TRANSACTION payload so the user
+   * can send on any chain without first switching the global active network.
+   * Null until the user opens the asset picker and makes a choice.
+   */
+  const [selectedAsset, setSelectedAsset] = useState<SendableAsset | null>(null);
+  const [showAssetPicker, setShowAssetPicker] = useState(false);
   const [selectedTokenDetails, setSelectedTokenDetails] = useState<{ token: Token; icon: string | null; networkKey?: string } | null>(null);
 
   /**
@@ -415,14 +424,27 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
     };
   }, [network]);
 
-  // Fetch gas estimate when token/recipient changes
+  // Which network the Send form is currently operating on. Falls back to the
+  // globally-active network until the user picks a cross-chain asset.
+  const sendNetworkKey = selectedAsset?.networkKey ?? network;
+
+  // When the user lands on the Send view without an asset picked, pop the
+  // picker open immediately — selecting chain + token is required to route
+  // the transaction to the right RPC.
   useEffect(() => {
-    if (!selectedToken || !recipient || !isValidRecipientAddress(network, recipient)) {
+    if (view === 'send' && !selectedAsset && !isSending) {
+      setShowAssetPicker(true);
+    }
+  }, [view, selectedAsset, isSending]);
+
+  // Fetch gas estimate when token/recipient/target-network changes
+  useEffect(() => {
+    if (!selectedToken || !recipient || !isValidRecipientAddress(sendNetworkKey, recipient)) {
       setGasEstimate(null);
       return;
     }
     // For Bitcoin, only estimate once amount is present (UTXO selection depends on amount).
-    if (isBitcoinNetwork(network) && (!amount || amount.trim() === '')) {
+    if (isBitcoinNetwork(sendNetworkKey) && (!amount || amount.trim() === '')) {
       setGasEstimate(null);
       return;
     }
@@ -432,14 +454,19 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
       setGasEstimateLoading(true);
       try {
         // Add client-side timeout as backup
-        const timeoutPromise = new Promise<null>((resolve) => 
+        const timeoutPromise = new Promise<null>((resolve) =>
           setTimeout(() => resolve(null), 8000)
         );
         const responsePromise = chrome.runtime.sendMessage({
           type: 'GET_GAS_ESTIMATE',
-          payload: { token: selectedToken, toAddress: recipient, amount: amount || '0' }
+          payload: {
+            token: selectedToken,
+            toAddress: recipient,
+            amount: amount || '0',
+            networkKey: sendNetworkKey,
+          }
         });
-        
+
         const response = await Promise.race([responsePromise, timeoutPromise]);
         if (!cancelled && response && !response.error) {
           setGasEstimate(response);
@@ -459,7 +486,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [selectedToken, recipient, amount]);
+  }, [selectedToken, recipient, amount, sendNetworkKey]);
 
   const loadTokensAndData = async () => {
     setLoading(true);
@@ -654,9 +681,13 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
 
   const handleMaxClick = async () => {
     if (!selectedToken) return;
-    
-    // Find the token's balance
-    const tokenData = portfolio.find(p => p.token.symbol === selectedToken.symbol);
+
+    // Prefer the balance from the cross-chain picked asset (which already
+    // carries the right network). Fall back to the active-network portfolio
+    // for the legacy same-network path.
+    const tokenData =
+      (selectedAsset && { balance: selectedAsset.balance, availableBalance: undefined as string | undefined }) ||
+      portfolio.find(p => p.token.symbol === selectedToken.symbol);
     if (!tokenData || !tokenData.balance) return;
 
     // If it's an ERC20/SPL token, just set the full balance (gas is paid in native)
@@ -670,21 +701,22 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
     try {
       // XRP: if we have availableBalance (already excludes reserve), use that as the starting point.
       const maxBaseBalance =
-        isXrpNetwork(network) && selectedToken.type === 'native' && tokenData.availableBalance
-          ? tokenData.availableBalance
+        isXrpNetwork(sendNetworkKey) && selectedToken.type === 'native' && (tokenData as any).availableBalance
+          ? (tokenData as any).availableBalance
           : tokenData.balance;
 
       // Use the recipient if valid, otherwise use own address (self-send) for estimation
-      const estimateToAddress = (recipient && isValidRecipientAddress(network, recipient)) 
-        ? recipient 
+      const estimateToAddress = (recipient && isValidRecipientAddress(sendNetworkKey, recipient))
+        ? recipient
         : address;
 
       const response = await chrome.runtime.sendMessage({
         type: 'GET_GAS_ESTIMATE',
-        payload: { 
-          token: selectedToken, 
-          toAddress: estimateToAddress, 
-          amount: maxBaseBalance // Estimate for sending max
+        payload: {
+          token: selectedToken,
+          toAddress: estimateToAddress,
+          amount: maxBaseBalance, // Estimate for sending max
+          networkKey: sendNetworkKey,
         }
       });
 
@@ -769,16 +801,18 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
       return;
     }
 
-    // Validate address format
-    if (!isValidRecipientAddress(network, recipient)) {
+    // Validate address format against the SELECTED asset's network, not the
+    // globally-active one — the two can differ when the user picks an asset
+    // on a non-active chain.
+    if (!isValidRecipientAddress(sendNetworkKey, recipient)) {
       setSendError(
-        isBitcoinNetwork(network)
+        isBitcoinNetwork(sendNetworkKey)
           ? 'Invalid Bitcoin address'
-          : isSolanaNetwork(network)
+          : isSolanaNetwork(sendNetworkKey)
             ? 'Invalid Solana address'
-            : isXrpNetwork(network)
+            : isXrpNetwork(sendNetworkKey)
               ? (isXAddress(recipient) ? 'X-address not supported (use classic r... address)' : 'Invalid XRP address')
-              : isTonNetwork(network)
+              : isTonNetwork(sendNetworkKey)
                 ? 'Invalid TON address'
                 : 'Invalid Ethereum address'
       );
@@ -786,7 +820,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
     }
 
     // Validate destination tag if provided (XRP only)
-    if (isXrpNetwork(network) && destinationTag.trim() !== '') {
+    if (isXrpNetwork(sendNetworkKey) && destinationTag.trim() !== '') {
       if (!isValidDestinationTag(destinationTag)) {
         setSendError('Invalid destination tag (must be a uint32: 0 to 4294967295)');
         return;
@@ -813,6 +847,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
     setDestinationTag('');
     setComment('');
     setSelectedToken(null);
+    setSelectedAsset(null);
     setView('tokens');
     handleRefresh();
     notifyStateChange();
@@ -1053,8 +1088,9 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                 token={selectedToken}
                 recipient={recipient}
                 amount={amount}
-                destinationTag={isXrpNetwork(network) && destinationTag.trim() !== '' ? Number(destinationTag) : undefined}
-                comment={isTonNetwork(network) ? comment : undefined}
+                destinationTag={isXrpNetwork(sendNetworkKey) && destinationTag.trim() !== '' ? Number(destinationTag) : undefined}
+                comment={isTonNetwork(sendNetworkKey) ? comment : undefined}
+                networkKey={sendNetworkKey}
                 onClose={handleSendClose}
                 onSuccess={handleSendComplete}
               />
@@ -1063,24 +1099,35 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                 <ScreenHeader title="Send" onBack={() => setView('tokens')} />
                 <form onSubmit={handleSend}>
                   <div className="form-group">
-                    <label>Token</label>
-                    <select
-                      value={selectedToken?.symbol || ''}
-                      onChange={(e) => {
-                        const token = portfolio.find(p => p.token.symbol === e.target.value);
-                        setSelectedToken(token?.token || null);
-                        setAmount('');
-                        setAmountInput('');
-                        setAmountMode('token');
-                      }}
+                    <label>Asset</label>
+                    <button
+                      type="button"
+                      className="asset-picker-chip"
+                      onClick={() => setShowAssetPicker(true)}
                     >
-                      <option value="">Select a token</option>
-                      {portfolio.map((item) => (
-                        <option key={item.token.symbol} value={item.token.symbol}>
-                          {item.token.symbol} ({formatBalance(item.balance)})
-                        </option>
-                      ))}
-                    </select>
+                      {selectedAsset ? (
+                        <>
+                          <span className="asset-picker-chip__badge" aria-hidden>
+                            {(() => {
+                              const badge = selectedAsset.chainBadgeIcon || getChainBadgeIcon(selectedAsset.networkKey);
+                              return badge ? <img src={badge} alt="" /> : null;
+                            })()}
+                          </span>
+                          <span className="asset-picker-chip__main">
+                            <span className="asset-picker-chip__symbol">{selectedAsset.token.symbol}</span>
+                            <span className="asset-picker-chip__network">{selectedAsset.networkLabel}</span>
+                          </span>
+                          <span className="asset-picker-chip__balance">
+                            {formatBalance(selectedAsset.balance)}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="asset-picker-chip__placeholder">Select an asset…</span>
+                          <span className="asset-picker-chip__caret" aria-hidden>▾</span>
+                        </>
+                      )}
+                    </button>
                   </div>
 
                   <div className="form-group">
@@ -1092,13 +1139,13 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                           value={recipient}
                           onChange={(e) => setRecipient(e.target.value)}
                           placeholder={
-                            isBitcoinNetwork(network)
-                              ? (network === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
-                              : isSolanaNetwork(network)
+                            isBitcoinNetwork(sendNetworkKey)
+                              ? (sendNetworkKey === 'bitcoin-testnet' ? 'tb1...' : 'bc1...')
+                              : isSolanaNetwork(sendNetworkKey)
                                 ? 'Base58 address...'
-                                : isXrpNetwork(network)
+                                : isXrpNetwork(sendNetworkKey)
                                   ? 'r...'
-                                  : isTonNetwork(network)
+                                  : isTonNetwork(sendNetworkKey)
                                     ? 'EQ... or UQ...'
                                     : '0x...'
                           }
@@ -1128,7 +1175,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                   </div>
 
                   {/* XRP destination tag (optional) */}
-                  {isXrpNetwork(network) && selectedToken?.type === 'native' && (
+                  {isXrpNetwork(sendNetworkKey) && selectedToken?.type === 'native' && (
                     <div className="form-group">
                       <label>Destination Tag (optional)</label>
                       <input
@@ -1144,7 +1191,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                     </div>
                   )}
 
-                  {isTonNetwork(network) && selectedToken?.type === 'native' && (
+                  {isTonNetwork(sendNetworkKey) && selectedToken?.type === 'native' && (
                     <div className="form-group">
                       <label>Comment (optional)</label>
                       <input
@@ -1221,8 +1268,8 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                   {/* Network Fee Estimate Display */}
                   {selectedToken &&
                     recipient &&
-                    isValidRecipientAddress(network, recipient) &&
-                    (!isBitcoinNetwork(network) || (amount && amount.trim() !== '')) && (
+                    isValidRecipientAddress(sendNetworkKey, recipient) &&
+                    (!isBitcoinNetwork(sendNetworkKey) || (amount && amount.trim() !== '')) && (
                     <div className="gas-estimate-box">
                       <div className="gas-estimate-label">Estimated network fee</div>
                       <div className="gas-estimate-value">
@@ -1232,9 +1279,9 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                           <>
                             <span className="gas-amount">
                               ~{parseFloat(gasEstimate.estimatedCostNative).toFixed(
-                                isBitcoinNetwork(network)
+                                isBitcoinNetwork(sendNetworkKey)
                                   ? 8
-                                  : (isSolanaNetwork(network) || isTonNetwork(network))
+                                  : (isSolanaNetwork(sendNetworkKey) || isTonNetwork(sendNetworkKey))
                                     ? 9
                                     : 6
                               )} {gasEstimate.nativeSymbol}
@@ -1251,7 +1298,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                   )}
 
                   {/* Reserve hint for XRP (available vs reserved) */}
-                  {isXrpNetwork(network) && selectedToken?.type === 'native' && selectedToken && (
+                  {isXrpNetwork(sendNetworkKey) && selectedToken?.type === 'native' && selectedToken && (
                     (() => {
                       const tokenData = portfolio.find(p => p.token.symbol === selectedToken.symbol);
                       if (!tokenData) return null;
@@ -1290,6 +1337,36 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                 </form>
               </>
             )}
+            <AssetPickerModal
+              isOpen={showAssetPicker}
+              onClose={() => setShowAssetPicker(false)}
+              restrictToChain={
+                importType === 'privateKey' && privateKeyType ? privateKeyType : undefined
+              }
+              selectedRowKey={
+                selectedAsset
+                  ? `${selectedAsset.networkKey}:${selectedAsset.token.type === 'native' ? 'native' : (selectedAsset.token.address || selectedAsset.token.symbol).toLowerCase()}`
+                  : undefined
+              }
+              onSelect={(asset) => {
+                setSelectedAsset(asset);
+                setSelectedToken(asset.token);
+                // Fresh pick ⇒ blank out amount/recipient state that could be
+                // invalid on the new chain. Recipient is left intact only when
+                // the previous selection was on the same network.
+                setAmount('');
+                setAmountInput('');
+                setAmountMode('token');
+                setDestinationTag('');
+                setComment('');
+                if (
+                  !recipient ||
+                  !isValidRecipientAddress(asset.networkKey, recipient)
+                ) {
+                  setRecipient('');
+                }
+              }}
+            />
           </div>
         ) : view === 'tokenDetails' && selectedTokenDetails ? (
           <TokenDetailsScreen
