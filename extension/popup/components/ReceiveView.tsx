@@ -16,9 +16,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useToast } from '../context/ToastContext';
+import { getChainBadgeIcon } from '../utils/chainBadge';
 import { Icon } from './ui';
 
 type ChainGroup = 'evm' | 'solana' | 'bitcoin' | 'xrp' | 'ton';
+
+// Representative network key per group — used only to resolve the chain icon
+// via the existing badge resolver. The actual address derivation path is
+// chain-level (not network-level) so testnet chains share the icon.
+const CHAIN_ICON_KEY: Record<ChainGroup, string> = {
+  evm: 'mainnet',
+  solana: 'solana-mainnet',
+  bitcoin: 'bitcoin-mainnet',
+  xrp: 'xrp-mainnet',
+  ton: 'ton-mainnet',
+};
 
 interface ChainGroupDef {
   key: ChainGroup;
@@ -207,6 +219,7 @@ function ReceiveView({ address, network, networks, importType, privateKeyType }:
           <div className="receive-chain-picker__scroll" ref={scrollRef}>
             {pills.map(p => {
               const selected = p.key === selectedChain;
+              const iconSrc = getChainBadgeIcon(CHAIN_ICON_KEY[p.key]);
               return (
                 <button
                   key={p.key}
@@ -215,7 +228,12 @@ function ReceiveView({ address, network, networks, importType, privateKeyType }:
                   onClick={() => setSelectedChain(p.key)}
                   aria-pressed={selected}
                 >
-                  {p.label}
+                  {iconSrc && (
+                    <span className="receive-chain-pill__icon" aria-hidden>
+                      <img src={iconSrc} alt="" />
+                    </span>
+                  )}
+                  <span className="receive-chain-pill__label">{p.label}</span>
                 </button>
               );
             })}
