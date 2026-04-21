@@ -22,7 +22,7 @@ import SendTransactionView from './SendTransactionView';
 import TokenDetailsScreen from './TokenDetailsScreen';
 import Identicon from './ui/Identicon';
 import NetworkSelector from './ui/NetworkSelector';
-import { Icon } from './ui';
+import { ScreenHeader } from './ui';
 import BalanceCard from './wallet/BalanceCard';
 import TokenList from './wallet/TokenList';
 import type { TokenRow } from './wallet/TokenList';
@@ -52,7 +52,6 @@ import bitcoinIcon from '../../assets/img/bitcoin-logo.svg';
 import xrpIcon from '../../assets/img/xrp.svg';
 import tonIcon from '../../assets/img/ton_symbol.svg';
 import raydiumIcon from '../../assets/img/raydium-ray-logo.svg';
-import backIcon from '../../assets/icons/arrow-left.svg';
 import { isValidBitcoinAddress } from '../../../src/bitcoin/index.js';
 import { isValidTonAddress } from '../../../src/ton/index.js';
 import { isValidXRPAddress, isXAddress, isValidDestinationTag } from '../../../src/xrp/index.js';
@@ -856,7 +855,6 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
         onAccountMenuClick={() => setShowAccountMenu(true)}
         onOpenSettings={() => setView('settings')}
         onLock={handleLock}
-        showAccountButton={false}
       />
 
       {showAccountMenu && (
@@ -878,90 +876,9 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
         />
       )}
 
-      {/* Account selector and (for main tabs) balance + navigation */}
+      {/* Balance + tabs block (account chip lives in Header, unified source). */}
       {view !== 'settings' && view !== 'send' && view !== 'receive' && view !== 'tokenDetails' && (
         <>
-          <div className="account-row">
-            <div
-              className="account-button wide account-selector"
-              role="button"
-              tabIndex={0}
-              onClick={() => setShowAccountMenu(true)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  setShowAccountMenu(true);
-                }
-              }}
-              aria-label="Open account menu"
-            >
-              <div className="account-avatar">
-                {/* Bitcoin addresses start with bc1/tb1, Ethereum with 0x */}
-                {isBitcoinNetwork(network)
-                  ? address.substring(0, 2).toUpperCase()
-                  : address.substring(2, 4).toUpperCase()}
-              </div>
-              <div className="account-info">
-                <div className="account-name">
-                  {activeWalletName} : Account {currentAccountIndex + 1}
-                </div>
-                <div className="account-address-row">
-                  <button
-                    type="button"
-                    className="account-address-link"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      try {
-                        await navigator.clipboard.writeText(address);
-                        showToast('Address copied!');
-                      } catch {
-                        showToast('Failed to copy address');
-                      }
-                    }}
-                    title="Copy address"
-                  >
-                    {/* Bitcoin addresses are longer, show more characters */}
-                    {isBitcoinNetwork(network)
-                      ? `${address.substring(0, 8)}...${address.substring(address.length - 6)}`
-                      : `${address.substring(0, 6)}...${address.substring(address.length - 4)}`}
-                  </button>
-                  <button
-                    type="button"
-                    className="account-copy-btn"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      try {
-                        await navigator.clipboard.writeText(address);
-                        showToast('Address copied!');
-                      } catch {
-                        showToast('Failed to copy address');
-                      }
-                    }}
-                    aria-label="Copy address"
-                    title="Copy address"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="account-chevron-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowAccountMenu(true);
-                }}
-                aria-label="Open account menu"
-                title="Open account menu"
-              >
-                <Icon name="chevron-down" size={14} decorative className="dropdown-arrow" />
-              </button>
-            </div>
-          </div>
-
           {/* Balance + Actions always above tabs.
            *  Unified view: aggregate USD hero powered by the cross-chain snapshot.
            *  Per-network view: the legacy single-chain total. */}
@@ -1117,10 +1034,10 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
           <ActivityView currentAddress={address} network={network} networks={networks} />
         ) : view === 'receive' ? (
           <div className="takeover">
-            <button className="back-button" onClick={() => setView('tokens')}>
-              <img src={backIcon} alt="Back" />
-              <span>Back</span>
-            </button>
+            <ScreenHeader
+              title={`Receive ${networks[network]?.nativeSymbol || ''}`.trim()}
+              onBack={() => setView('tokens')}
+            />
             <ReceiveView address={address} network={network} networks={networks} />
           </div>
         ) : view === 'send' ? (
@@ -1137,10 +1054,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
               />
             ) : (
               <>
-                <button className="back-button" onClick={() => setView('tokens')}>
-                  <img src={backIcon} alt="Back" />
-                  <span>Back</span>
-                </button>
+                <ScreenHeader title="Send" onBack={() => setView('tokens')} />
                 <form onSubmit={handleSend}>
                   <div className="form-group">
                     <label>Token</label>
@@ -1304,7 +1218,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
                     isValidRecipientAddress(network, recipient) &&
                     (!isBitcoinNetwork(network) || (amount && amount.trim() !== '')) && (
                     <div className="gas-estimate-box">
-                      <div className="gas-estimate-label">Estimated Network Fee</div>
+                      <div className="gas-estimate-label">Estimated network fee</div>
                       <div className="gas-estimate-value">
                         {gasEstimateLoading ? (
                           <span className="gas-loading">Estimating...</span>

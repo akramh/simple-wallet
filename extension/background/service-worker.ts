@@ -948,9 +948,24 @@ async function refreshViaPortfolioApi(
   // what the API returned. Tokens in our allowlist that the API didn't
   // return are set to "0" — Alchemy omits zero balances, and rendering them
   // as 0 keeps the hide-zero toggle correct.
+  //
+  // CRITICAL: if Alchemy returned zero entries for a specific network, we
+  // do NOT mark it `covered`. This lets the orchestrator's stage-2 fallback
+  // re-query that network via the legacy per-chain path — the same path
+  // the per-network view uses successfully. Previously we'd stamp zeros
+  // for every allowlist token and mark the network covered, which hid
+  // real balances (notably on Solana, where the Portfolio API sometimes
+  // returns empty sets for wallets that the native RPC happily reports
+  // tokens for). Skipping `covered.add` here means a second, authoritative
+  // fetch runs and writes real balances into the same cache.
   const queriedNetworks = new Set<string>([...evmNetworks, ...solanaNetworks]);
   for (const networkKey of queriedNetworks) {
     const bucket = byNetwork.get(networkKey) ?? new Map();
+    if (bucket.size === 0) {
+      // Portfolio API returned nothing for this network — don't cache zeros
+      // and don't mark it covered; defer to the per-chain fallback.
+      continue;
+    }
     const allowlist = walletService.getTokensForNetwork(networkKey);
     for (const token of allowlist) {
       const tokenKey = getTokenCacheKey(token);

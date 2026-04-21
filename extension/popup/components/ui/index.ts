@@ -10,3 +10,4 @@ export { Skeleton } from './Skeleton';
 export { Icon, type IconName } from './Icon';
 export { PasswordField, scorePassword } from './PasswordField';
 export { EmptyState } from './EmptyState';
+export { ScreenHeader } from './ScreenHeader';

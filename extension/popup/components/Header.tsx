@@ -25,7 +25,6 @@ interface Props {
   onAccountMenuClick: () => void;
   onOpenSettings?: () => void;
   onLock: () => void;
-  showAccountButton?: boolean;
 }
 
 function Header({
@@ -36,7 +35,6 @@ function Header({
   onAccountMenuClick,
   onOpenSettings,
   onLock,
-  showAccountButton = true
 }: Props) {
   const [uiTheme, setUiTheme] = useState<UiTheme>('auto');
   const { showToast } = useToast();
@@ -123,8 +121,7 @@ function Header({
       </div>
 
       {/* Controls row */}
-      {showAccountButton && (
-        <div className="header-controls">
+      <div className="header-controls">
           {/* Account Button */}
           <div
             className="account-button account-selector"
@@ -202,7 +199,6 @@ function Header({
             </button>
           </div>
         </div>
-      )}
     </div>
   );
 }

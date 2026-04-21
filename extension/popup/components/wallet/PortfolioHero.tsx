@@ -56,14 +56,17 @@ export function PortfolioHero({
     <div className="balance-row">
       <div className="balance-card portfolio-hero">
         <div className="balance-header">
-          <div className="balance-label">Total Balance</div>
+          <div className="balance-label">Total balance</div>
           <button
             className="refresh-link"
             onClick={onRefresh}
             disabled={refreshing}
             aria-label="Refresh portfolio"
           >
-            {refreshing ? 'Refreshing…' : 'Refresh'}
+            <span className="refresh-link__inner">
+              {refreshing && <RefreshSpinner />}
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </span>
           </button>
         </div>
         <button
@@ -89,6 +92,24 @@ export function PortfolioHero({
         </div>
       </div>
     </div>
+  );
+}
+
+function RefreshSpinner() {
+  return (
+    <svg
+      className="refresh-link__spinner"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
+      <path d="M13.5 2v3h-3" />
+    </svg>
   );
 }
 
