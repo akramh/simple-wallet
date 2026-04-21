@@ -2809,6 +2809,138 @@ div.settings-row {
   align-items: center;
 }
 
+/* Chain picker — horizontally scrollable pill row with edge fade-masks that
+ * signal more pills exist off-screen. The masks are driven by .is-scrolled-*
+ * classes set by the component from scroll position. */
+.receive-chain-picker {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 12px;
+}
+
+.receive-chain-picker__scroll {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.receive-chain-picker__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Fade-masks: pseudo-elements layered over the left/right edges. Opacity is
+ * toggled via .is-scrolled-{left,right} so a mask only appears on the side
+ * the user could still scroll toward. */
+.receive-chain-picker::before,
+.receive-chain-picker::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 4px;
+  width: 24px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.receive-chain-picker::before {
+  left: 0;
+  background: linear-gradient(to right, var(--bg-primary), transparent);
+}
+
+.receive-chain-picker::after {
+  right: 0;
+  background: linear-gradient(to left, var(--bg-primary), transparent);
+}
+
+.receive-chain-picker.is-scrolled-left::before {
+  opacity: 1;
+}
+
+.receive-chain-picker.is-scrolled-right::after {
+  opacity: 1;
+}
+
+.receive-chain-pill {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.receive-chain-pill:hover {
+  border-color: var(--primary);
+}
+
+.receive-chain-pill:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.receive-chain-pill.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/* Context row: chain name on the left, "Receives" + token chips on the right,
+ * separated by a thin rule that flexes to fill. */
+.receive-context-row {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.receive-context-name {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.receive-context-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border-light, var(--border));
+}
+
+.receive-context-label {
+  color: var(--text-secondary);
+}
+
+.receive-asset-chip {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.receive-asset-more {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
 .qr-container {
   margin-bottom: 24px;
 }

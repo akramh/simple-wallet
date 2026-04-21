@@ -3168,6 +3168,15 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!isUnlocked) throw new Error('Wallet is locked');
       return { address: walletService!.getAddress() };
 
+    case 'GET_CHAIN_ADDRESS': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      const chain = payload?.chain;
+      if (chain !== 'evm' && chain !== 'solana' && chain !== 'bitcoin' && chain !== 'xrp' && chain !== 'ton') {
+        throw new Error('Invalid chain');
+      }
+      return { address: walletService!.getAddressForChain(chain) };
+    }
+
     case 'GET_SECRET_PHRASE':
       if (!isUnlocked) throw new Error('Wallet is locked');
       resetAutoLockTimer();

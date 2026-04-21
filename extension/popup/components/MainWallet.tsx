@@ -1038,7 +1038,13 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
               title={`Receive ${networks[network]?.nativeSymbol || ''}`.trim()}
               onBack={() => setView('tokens')}
             />
-            <ReceiveView address={address} network={network} networks={networks} />
+            <ReceiveView
+              address={address}
+              network={network}
+              networks={networks}
+              importType={importType}
+              privateKeyType={privateKeyType}
+            />
           </div>
         ) : view === 'send' ? (
           <div className="takeover">

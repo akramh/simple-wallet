@@ -670,6 +670,47 @@ export class WalletAppService {
   }
 
   /**
+   * Derive the receive address for a given chain group without switching
+   * the active network. Used by the Receive screen's chain picker.
+   *
+   * Returns null when the wallet can't satisfy the request (e.g. a private-key
+   * import whose `privateKeyType` doesn't match the requested chain).
+   *
+   * @param chain - Target chain group
+   * @returns Address string, or null if unsupported for this wallet
+   */
+  getAddressForChain(chain: PrivateKeyChain): string | null {
+    if (
+      this.wallet.importType === 'privateKey' &&
+      this.wallet.privateKeyType &&
+      this.wallet.privateKeyType !== chain
+    ) {
+      return null;
+    }
+
+    const idx = this.wallet.getCurrentAccountIndex();
+    try {
+      switch (chain) {
+        case 'evm':
+          return this.wallet.getAccountAddress(idx);
+        case 'solana':
+          return this.wallet.getSolanaAddress(idx)?.address ?? null;
+        case 'bitcoin': {
+          const btcNet = this.config.network === 'bitcoin-testnet' ? 'testnet' : 'mainnet';
+          return this.wallet.getBitcoinAddress(btcNet, idx)?.address ?? null;
+        }
+        case 'xrp':
+          return this.wallet.getXRPAddress(idx)?.address ?? null;
+        case 'ton':
+          return this.wallet.getTonAddress(idx)?.address ?? null;
+      }
+    } catch (error) {
+      console.warn(`[WalletAppService] Failed to derive ${chain} address:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Get the current JSON-RPC provider.
    * @returns Active ethers JsonRpcProvider instance
    */
