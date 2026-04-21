@@ -52,7 +52,13 @@ export const NETWORK_KEY_TO_PORTFOLIO_SLUG: Record<string, string> = {
   bsc: 'bnb-mainnet',
   avalanche: 'avax-mainnet',
   linea: 'linea-mainnet',
-  'solana-mainnet': 'sol-mainnet',
+  // Alchemy's docs list 'sol-mainnet' but the actual Portfolio API endpoint
+  // rejects that with `{"error": {"message": "Unsupported network: sol-mainnet"}}`
+  // and accepts the full 'solana-mainnet' slug instead. Verified by direct
+  // curl against api.g.alchemy.com/data/v1/.../assets/tokens/by-address on
+  // 2026-04-20. Any future doc correction can revert this safely — keep the
+  // response-side parser in sync via PORTFOLIO_SLUG_TO_NETWORK_KEY.
+  'solana-mainnet': 'solana-mainnet',
 };
 
 const PORTFOLIO_SLUG_TO_NETWORK_KEY: Record<string, string> = Object.fromEntries(

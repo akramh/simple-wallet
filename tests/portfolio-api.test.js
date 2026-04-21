@@ -25,10 +25,37 @@ test('isPortfolioSupported returns false for BTC / XRP / TON', () => {
   }
 });
 
-test('slug map uses Alchemy naming (eth-mainnet, bnb-mainnet, sol-mainnet)', () => {
+test('slug map uses Alchemy naming (eth-mainnet, bnb-mainnet, solana-mainnet)', () => {
   assert.equal(NETWORK_KEY_TO_PORTFOLIO_SLUG.mainnet, 'eth-mainnet');
   assert.equal(NETWORK_KEY_TO_PORTFOLIO_SLUG.bsc, 'bnb-mainnet');
-  assert.equal(NETWORK_KEY_TO_PORTFOLIO_SLUG['solana-mainnet'], 'sol-mainnet');
+  // Regression guard: Alchemy's docs say 'sol-mainnet' but the live API
+  // rejects that slug and requires the full 'solana-mainnet'. Verified via
+  // direct curl on 2026-04-20; see comment in src/portfolio-api.ts.
+  assert.equal(NETWORK_KEY_TO_PORTFOLIO_SLUG['solana-mainnet'], 'solana-mainnet');
+  assert.notEqual(
+    NETWORK_KEY_TO_PORTFOLIO_SLUG['solana-mainnet'],
+    'sol-mainnet',
+    'Portfolio API rejects "sol-mainnet" with {"error":"Unsupported network"}; do not revert'
+  );
+});
+
+test('parsePortfolioResponse: round-trips our solana-mainnet slug', () => {
+  // Whichever slug we send in NETWORK_KEY_TO_PORTFOLIO_SLUG, Alchemy echoes
+  // back in the response's `network` field — so the parser must map that
+  // exact slug back to our networkKey. This guards against the two maps
+  // drifting apart (request uses one slug, response parser expects another).
+  const slug = NETWORK_KEY_TO_PORTFOLIO_SLUG['solana-mainnet'];
+  const entries = parsePortfolioResponse({
+    data: {
+      tokens: [{
+        network: slug,
+        tokenAddress: null,
+        tokenBalance: '0x0',
+      }]
+    }
+  });
+  assert.equal(entries.length, 1, `expected parser to accept "${slug}"`);
+  assert.equal(entries[0].networkKey, 'solana-mainnet');
 });
 
 // ---------------------------------------------------------------------------
@@ -118,7 +145,7 @@ test('buildRequestBodies: EVM (8 nets) + Solana address → 2 chunks EVM + 1 chu
   assert.equal(bodies.length, 2);
   assert.equal(bodies[0].addresses.length, 2);
   assert.equal(bodies[1].addresses.length, 1);
-  assert.deepEqual(bodies[1].addresses[0].networks, ['sol-mainnet']);
+  assert.deepEqual(bodies[1].addresses[0].networks, ['solana-mainnet']);
 });
 
 test('buildRequestBodies: drops unsupported networks silently', () => {
@@ -260,7 +287,7 @@ test('parsePortfolioResponse: solana native decimals default to 9', () => {
   const entries = parsePortfolioResponse({
     data: {
       tokens: [{
-        network: 'sol-mainnet',
+        network: 'solana-mainnet',
         tokenAddress: null,
         tokenBalance: '0x3b9aca00' // 10^9 lamports = 1 SOL
       }]
