@@ -38,10 +38,18 @@ export { SolanaExplorer, getSolanaExplorer, clearSolanaExplorerCache } from './e
 export type { SolTransferParams, SignedSolTransfer, SolTransferResult } from './transaction.js';
 export {
   BASE_FEE_LAMPORTS,
+  DEFAULT_SOL_TRANSFER_CU_LIMIT,
   isValidSolanaAddress,
   buildSolTransfer,
   signSolTransfer,
   buildAndSignSolTransfer,
   estimateTransferFee,
   validateSufficientBalance,
+  pickPriorityFeePercentile,
+  priorityFeeLamports,
 } from './transaction.js';
+
+// Fee-estimate params: optional tx context that upgrades estimateFee() from
+// the flat 5000-lamport base fee to a getFeeForMessage + priority-fee-sample
+// result. `SolanaFeeEstimate` itself is already re-exported above.
+export type { SolanaFeeEstimateParams } from './provider.js';

@@ -15,7 +15,15 @@
  * @module solana/provider
  */
 
-import { Connection, PublicKey, Keypair, Transaction, type SignatureStatus } from '@solana/web3.js';
+import {
+  Connection,
+  PublicKey,
+  Keypair,
+  Transaction,
+  SystemProgram,
+  ComputeBudgetProgram,
+  type SignatureStatus,
+} from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
@@ -24,7 +32,12 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID
 } from '@solana/spl-token';
 import { lamportsToSol } from './types.js';
-import { BASE_FEE_LAMPORTS } from './transaction.js';
+import {
+  BASE_FEE_LAMPORTS,
+  DEFAULT_SOL_TRANSFER_CU_LIMIT,
+  pickPriorityFeePercentile,
+  priorityFeeLamports as computePriorityFeeLamports,
+} from './transaction.js';
 
 export interface SolanaProviderConfig {
   networkKey: string;
@@ -40,8 +53,40 @@ export interface BlockhashInfo {
 
 /** Fee estimate result */
 export interface SolanaFeeEstimate {
+  /** Total fee (base fee + priority-fee cost) in lamports */
   feeLamports: number;
+  /** Total fee formatted in SOL */
   feeSol: string;
+  /**
+   * Protocol base fee in lamports (signatures × BASE_FEE_LAMPORTS on legacy,
+   * or whatever `getFeeForMessage` returns for a compiled message). Always
+   * present — equals `feeLamports` when no priority fee is sampled.
+   */
+  baseFeeLamports: number;
+  /** Additional fee from the priority-fee bid, in lamports. 0 when not applied. */
+  priorityFeeLamports: number;
+  /** Sampled priority-fee rate (micro-lamports per CU). 0 when unavailable. */
+  priorityFeeMicroLamports: number;
+  /** Compute-unit limit this estimate assumes. 0 when priority fee is 0. */
+  computeUnitLimit: number;
+}
+
+/**
+ * Optional hints to make a Solana fee estimate more accurate. When provided,
+ * `estimateFee` will compile a SystemProgram.transfer message and call
+ * `getFeeForMessage` for the authoritative base fee, and sample
+ * `getRecentPrioritizationFees` (locked on the fee payer) to pick a priority
+ * fee. Without these the function falls back to the fixed BASE_FEE_LAMPORTS
+ * constant — same behavior as before.
+ */
+export interface SolanaFeeEstimateParams {
+  fromAddress: string;
+  toAddress: string;
+  lamports: number;
+  /** Percentile of recent prioritization fees to pick (default 75). */
+  priorityFeePercentile?: number;
+  /** Compute-unit limit to assume (default DEFAULT_SOL_TRANSFER_CU_LIMIT). */
+  computeUnitLimit?: number;
 }
 
 /** Transaction confirmation result */
@@ -301,20 +346,153 @@ export class SolanaProvider {
   }
 
   /**
-   * Estimate the fee for a SOL transfer transaction.
-   * For simple transfers, this is the base fee (5000 lamports per signature).
+   * Estimate the fee for a SOL transfer.
    *
-   * @param _transaction - Optional transaction to estimate (unused for simple transfers)
-   * @returns Fee estimate in lamports and SOL
+   * When called without params — same shape as before — returns the protocol
+   * base fee (5000 lamports × 1 signature). This keeps callers that don't yet
+   * know their recipient/amount (e.g. an initial render) working.
+   *
+   * When called with `SolanaFeeEstimateParams`, builds a dry-run
+   * SystemProgram.transfer message and calls two standard Solana RPC methods
+   * (available through any compliant RPC provider, including Alchemy):
+   *
+   *   - `getFeeForMessage(compiledMessage)` — authoritative base fee for the
+   *     actual message we'll sign. Accounts for signature count and any
+   *     protocol changes.
+   *   - `getRecentPrioritizationFees({ lockedWritableAccounts: [fromPubkey] })`
+   *     — sample of per-CU priority fees recently paid to land writes on the
+   *     fee-payer account. We pick the 75th percentile by default.
+   *
+   * Both RPC paths are best-effort: any failure falls back to the fixed base
+   * fee. The returned `priorityFeeMicroLamports` / `computeUnitLimit` are what
+   * the caller should plumb into `buildSolTransfer` so the *actual* sent tx
+   * matches the *estimated* fee.
+   *
+   * @param params - Optional transfer context for an accurate on-chain estimate
+   * @returns Fee estimate broken out by base + priority components
    */
-  async estimateFee(_transaction?: Transaction): Promise<SolanaFeeEstimate> {
-    // For simple SOL transfers, the fee is fixed at 5000 lamports per signature
-    // In the future, we could use getFeeForMessage for more accurate estimates
-    const feeLamports = BASE_FEE_LAMPORTS;
-    return {
-      feeLamports,
-      feeSol: lamportsToSol(feeLamports),
+  async estimateFee(params?: SolanaFeeEstimateParams): Promise<SolanaFeeEstimate> {
+    const fallback = (reason?: string): SolanaFeeEstimate => {
+      if (reason) {
+        // Visibility without leaking anything sensitive. Helps diagnose why a
+        // Solana estimate is showing the flat 5000 lamports in the UI.
+        console.warn(`[SolanaProvider.estimateFee] fallback to base fee: ${reason}`);
+      }
+      return {
+        feeLamports: BASE_FEE_LAMPORTS,
+        feeSol: lamportsToSol(BASE_FEE_LAMPORTS),
+        baseFeeLamports: BASE_FEE_LAMPORTS,
+        priorityFeeLamports: 0,
+        priorityFeeMicroLamports: 0,
+        computeUnitLimit: 0,
+      };
     };
+
+    // No context ⇒ return the constant. Existing CLI/UI paths that call
+    // `estimateFee()` with no args keep their current semantics.
+    if (!params) return fallback();
+
+    const { fromAddress, toAddress, lamports } = params;
+    const percentile = params.priorityFeePercentile ?? 75;
+    const cuLimit = params.computeUnitLimit ?? DEFAULT_SOL_TRANSFER_CU_LIMIT;
+
+    let fromPubkey: PublicKey;
+    let toPubkey: PublicKey;
+    try {
+      fromPubkey = new PublicKey(fromAddress);
+      toPubkey = new PublicKey(toAddress);
+    } catch {
+      return fallback('invalid address');
+    }
+    if (!Number.isFinite(lamports) || lamports <= 0) {
+      return fallback('invalid lamports');
+    }
+
+    // Iterate the endpoint list so RPC failover applies to fee estimation too.
+    let lastError: Error | undefined;
+    for (const connection of this.connections) {
+      try {
+        // --- priority fee sample ---
+        // Lock on the fee payer so the result reflects fees paid to land
+        // writes on this specific account recently, not global noise.
+        let priorityFeeMicroLamports = 0;
+        try {
+          const recent = await connection.getRecentPrioritizationFees({
+            lockedWritableAccounts: [fromPubkey],
+          });
+          priorityFeeMicroLamports = pickPriorityFeePercentile(
+            recent.map((r) => r.prioritizationFee),
+            percentile
+          );
+        } catch {
+          // Priority-fee sampling is optional. Proceed with 0 (i.e. no
+          // priority) and still try `getFeeForMessage` for the base fee.
+          priorityFeeMicroLamports = 0;
+        }
+
+        // --- authoritative base fee via getFeeForMessage ---
+        // Build the exact shape of instructions we'd sign: compute budget
+        // instructions (only if priority fee is non-zero) + SystemProgram
+        // transfer. A recent blockhash is required so the message can be
+        // compiled; expiring mid-estimate would cause a null response, in
+        // which case we fall back to the constant.
+        const blockhash = await connection.getLatestBlockhash(
+          this.config.commitment ?? 'confirmed'
+        );
+        const tx = new Transaction({
+          feePayer: fromPubkey,
+          blockhash: blockhash.blockhash,
+          lastValidBlockHeight: blockhash.lastValidBlockHeight,
+        });
+        if (priorityFeeMicroLamports > 0) {
+          tx.add(
+            ComputeBudgetProgram.setComputeUnitLimit({ units: cuLimit }),
+            ComputeBudgetProgram.setComputeUnitPrice({
+              microLamports: priorityFeeMicroLamports,
+            })
+          );
+        }
+        tx.add(
+          SystemProgram.transfer({
+            fromPubkey,
+            toPubkey,
+            lamports,
+          })
+        );
+        const message = tx.compileMessage();
+        const feeResponse = await connection.getFeeForMessage(
+          message,
+          this.config.commitment ?? 'confirmed'
+        );
+
+        // getFeeForMessage returns null when the blockhash has expired or the
+        // message is malformed. Either way, fall back rather than guess.
+        const baseFeeLamports = feeResponse?.value ?? null;
+        if (typeof baseFeeLamports !== 'number') {
+          return fallback('getFeeForMessage returned null');
+        }
+
+        const priorityCost =
+          priorityFeeMicroLamports > 0
+            ? computePriorityFeeLamports(priorityFeeMicroLamports, cuLimit)
+            : 0;
+        const totalLamports = baseFeeLamports + priorityCost;
+
+        return {
+          feeLamports: totalLamports,
+          feeSol: lamportsToSol(totalLamports),
+          baseFeeLamports,
+          priorityFeeLamports: priorityCost,
+          priorityFeeMicroLamports,
+          computeUnitLimit: priorityFeeMicroLamports > 0 ? cuLimit : 0,
+        };
+      } catch (err) {
+        lastError = err as Error;
+        // Try the next RPC endpoint.
+      }
+    }
+
+    return fallback(lastError?.message || 'all Solana RPC endpoints failed for fee estimation');
   }
 
   /**

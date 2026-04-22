@@ -1037,7 +1037,13 @@ export class WalletAppService {
       }
     }
 
-    // Solana networks: estimate fee using base fee (5000 lamports per signature)
+    // Solana networks: fee = base (getFeeForMessage) + priority (CU price ×
+    // CU limit). When the recipient/amount are known we pass them through so
+    // the provider can build a dry-run message and sample real on-chain
+    // prioritization fees; otherwise it falls back to the 5000-lamport
+    // constant. The EIP-1559-shaped return fields are repurposed to carry the
+    // priority-fee breakdown so UIs that already format
+    // maxPriorityFeePerGas can show the Solana priority component too.
     if (this.isNetworkSolana(effective)) {
       const networkKey = effective;
       const netConfig = this.config.networks[networkKey];
@@ -1045,13 +1051,35 @@ export class WalletAppService {
 
       try {
         const provider = this.getSolanaProviderForNetwork(networkKey);
-        const feeEstimate = await provider.estimateFee();
+
+        // Only plumb params when we actually have a valid recipient + amount.
+        // An empty address/amount during the initial render should still get
+        // a cheap base-fee-only quote.
+        const fromAddress = this.getAddress();
+        let lamportsFromAmount = 0;
+        if (amount && /^\d+(\.\d+)?$/.test(amount.trim())) {
+          // Defer to the same solToLamports routine the send path uses so the
+          // estimate and the send can't disagree on rounding.
+          try {
+            lamportsFromAmount = solToLamports(amount.trim());
+          } catch {
+            lamportsFromAmount = 0;
+          }
+        }
+        const estimateParams =
+          toAddress && fromAddress && lamportsFromAmount > 0
+            ? { fromAddress, toAddress, lamports: lamportsFromAmount }
+            : undefined;
+
+        const feeEstimate = await provider.estimateFee(estimateParams);
 
         return {
-          gasLimit: '1', // 1 signature for simple transfers
-          gasPrice: feeEstimate.feeLamports.toString(), // lamports per signature
-          maxFeePerGas: null,
-          maxPriorityFeePerGas: null,
+          gasLimit: (feeEstimate.computeUnitLimit || 1).toString(),
+          gasPrice: feeEstimate.feeLamports.toString(), // lamports total (kept for backward compatibility)
+          maxFeePerGas: feeEstimate.feeLamports.toString(),
+          maxPriorityFeePerGas: feeEstimate.priorityFeeMicroLamports
+            ? feeEstimate.priorityFeeMicroLamports.toString()
+            : null,
           estimatedCostWei: feeEstimate.feeLamports.toString(), // lamports
           estimatedCostNative: feeEstimate.feeSol,
           nativeSymbol,
@@ -1150,31 +1178,35 @@ export class WalletAppService {
       }
     }
 
-    // EVM path — default to the wallet's active provider, but when the caller
-    // explicitly targets a different EVM network we build a one-off provider.
+    // EVM path — always resolve the provider by the target network key rather
+    // than reading `wallet.provider`. `wallet.provider` is backed by
+    // `EthereumProvider.this.provider`, which is mutated by every
+    // `ensureProvider(...)` call across the class (including unified
+    // portfolio refreshes). Reading it here races: if a cross-chain portfolio
+    // refresh has parked a different chain's provider in that slot, gas
+    // estimation would run against the wrong network and, for chainId 137,
+    // trigger ethers' built-in Polygon gas-station plugin — causing the
+    // baffling "polygon gas station" SERVER_ERROR during sepolia sends.
+    // `ensureProvider` is cached per-networkKey so this is cheap.
     const gasNetwork = effective;
     const gasNetworkConfig = this.config.networks[gasNetwork];
     const nativeSymbol = gasNetworkConfig?.nativeSymbol || 'ETH';
     let provider: ethers.JsonRpcProvider | null;
-    if (networkKey && networkKey !== this.config.network) {
-      try {
-        provider = await this.wallet.ethereumProvider.ensureProvider(networkKey);
-      } catch (err: any) {
-        return {
-          error: err?.message || `No provider for ${networkKey}`,
-          gasLimit: token.type === 'native' ? '21000' : '65000',
-          gasPrice: '0',
-          maxFeePerGas: null,
-          maxPriorityFeePerGas: null,
-          estimatedCostWei: '0',
-          estimatedCostNative: '0',
-          nativeSymbol,
-          supportsEIP1559: false,
-          network: gasNetwork
-        };
-      }
-    } else {
-      provider = this.wallet.provider;
+    try {
+      provider = await this.wallet.ethereumProvider.ensureProvider(gasNetwork);
+    } catch (err: any) {
+      return {
+        error: err?.message || `No provider for ${gasNetwork}`,
+        gasLimit: token.type === 'native' ? '21000' : '65000',
+        gasPrice: '0',
+        maxFeePerGas: null,
+        maxPriorityFeePerGas: null,
+        estimatedCostWei: '0',
+        estimatedCostNative: '0',
+        nativeSymbol,
+        supportsEIP1559: false,
+        network: gasNetwork
+      };
     }
 
     if (!provider) {
@@ -1271,11 +1303,21 @@ export class WalletAppService {
         network: gasNetwork
       };
     } finally {
-      // Restore the active-network provider when we temporarily swapped to
-      // estimate against a different EVM network. Cached; cheap.
-      if (networkKey && networkKey !== this.config.network) {
+      // `ensureProvider(gasNetwork)` above mutated EthereumProvider's shared
+      // `this.provider` pointer as a side effect. If the gas estimate ran
+      // against a different chain than the active one, restore the pointer so
+      // later callers that still read `wallet.provider` (sendToken, balance
+      // reads, etc.) don't find the wrong chain parked there. Best-effort and
+      // cheap — the active-network provider is cached.
+      if (gasNetwork !== this.config.network) {
         try {
-          await this.wallet.ethereumProvider.ensureProvider(this.config.network);
+          const activeConfig = this.config.networks[this.config.network];
+          // Only restore if the active network is EVM — ensureProvider throws
+          // on non-EVM networks and there's nothing to restore for them.
+          const activeType = (activeConfig as { type?: string })?.type;
+          if (!activeType || activeType === 'evm') {
+            await this.wallet.ethereumProvider.ensureProvider(this.config.network);
+          }
         } catch {
           // Best-effort restore.
         }
@@ -1705,8 +1747,14 @@ export class WalletAppService {
       throw new Error('Amount must be greater than 0');
     }
 
-    // Estimate fee
-    const feeEstimate = await provider.estimateFee();
+    // Estimate fee — passes full tx context so the provider can call
+    // getFeeForMessage (authoritative base fee) + getRecentPrioritizationFees
+    // (priority-fee sample). Fall-back is the flat 5000-lamport base fee.
+    const feeEstimate = await provider.estimateFee({
+      fromAddress: solInfo.address,
+      toAddress,
+      lamports: amountLamports,
+    });
     const feeLamports = feeEstimate.feeLamports;
 
     // Validate sufficient balance
@@ -1715,7 +1763,8 @@ export class WalletAppService {
     // Get recent blockhash
     const blockhashInfo = await provider.getRecentBlockhash();
 
-    // Build and sign transaction
+    // Build and sign transaction. Plumb the same priority-fee rate / CU limit
+    // the estimate used so the tx we *send* matches the tx we *quoted*.
     const signedTx = buildAndSignSolTransfer(
       {
         fromPubkey: keypair.publicKey,
@@ -1723,6 +1772,8 @@ export class WalletAppService {
         lamports: amountLamports,
         recentBlockhash: blockhashInfo.blockhash,
         lastValidBlockHeight: blockhashInfo.lastValidBlockHeight,
+        priorityFeeMicroLamports: feeEstimate.priorityFeeMicroLamports || undefined,
+        computeUnitLimit: feeEstimate.computeUnitLimit || undefined,
       },
       keypair
     );

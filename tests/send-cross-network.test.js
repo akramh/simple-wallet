@@ -19,6 +19,7 @@ function buildConfig(network = 'mainnet') {
     network,
     networks: {
       mainnet: { chainId: 1, rpcUrl: 'https://rpc.mainnet.example', nativeSymbol: 'ETH', nativeName: 'Ether' },
+      sepolia: { chainId: 11155111, rpcUrl: 'https://rpc.sepolia.example', nativeSymbol: 'ETH', nativeName: 'Sepolia Ether', isTestnet: true },
       polygon: { chainId: 137, rpcUrl: 'https://rpc.polygon.example', nativeSymbol: 'POL', nativeName: 'Polygon' },
       'solana-mainnet': { type: 'solana', rpcUrl: 'https://sol.example', nativeSymbol: 'SOL', nativeName: 'Solana' },
       'solana-devnet': { type: 'solana', rpcUrl: 'https://sol-devnet.example', nativeSymbol: 'SOL', nativeName: 'Solana Devnet' },
@@ -84,6 +85,35 @@ test('getGasEstimate(networkKey) restores the active-network provider after swap
   // should still resolve to chainId 1 (mainnet) so subsequent same-network
   // reads aren't silently rerouted.
   assert.equal(wallet.provider.chainId, 1, 'active-network provider restored after cross-network estimate');
+});
+
+test('getGasEstimate uses the target-network provider even when another chain is parked in the shared slot', async () => {
+  // Regression: when active === networkKey, getGasEstimate used to read the
+  // shared `wallet.provider` pointer. A concurrent portfolio refresh that
+  // called ensureProvider('polygon') first would leave the polygon provider
+  // in that slot, so a sepolia send would run getFeeData() against the
+  // polygon JsonRpcProvider — hitting ethers' built-in polygon gas station.
+  const calls = [];
+  const { svc, wallet, config } = await buildService('sepolia', { mockFactory: makeEvmMockFactory(calls) });
+
+  // Simulate the portfolio refresh stomping `this.provider` with the polygon
+  // provider just before the send view fires its gas estimate.
+  await wallet.ethereumProvider.ensureProvider('polygon');
+  assert.equal(wallet.provider.chainId, 137, 'setup: polygon is parked in the shared slot');
+
+  // networkKey matches the active network (sepolia). The old code took the
+  // else branch and read `wallet.provider`, which is now polygon — wrong.
+  const native = { symbol: 'ETH', type: 'native', decimals: 18, name: 'Sepolia Ether' };
+  const estimate = await svc.getGasEstimate(native, '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0', '0.01', 'sepolia');
+
+  assert.equal(estimate.network, 'sepolia');
+  const gasOp = calls.find(c => c.op === 'getFeeData' && c.chainId === 11155111);
+  assert.ok(gasOp, 'getFeeData must run on chainId 11155111 (sepolia), not whichever chain was parked in wallet.provider');
+  assert.ok(
+    !calls.some(c => c.op === 'getFeeData' && c.chainId === 137),
+    'getFeeData must NOT run on chainId 137 (polygon) — that is the exact regression'
+  );
+  assert.equal(config.network, 'sepolia', 'active network unchanged');
 });
 
 test('sendSolanaTransaction with explicit networkKey routes to the requested Solana cluster', async () => {

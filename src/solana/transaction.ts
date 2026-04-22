@@ -19,6 +19,7 @@
 import {
   Transaction,
   SystemProgram,
+  ComputeBudgetProgram,
   PublicKey,
   Keypair,
   type Blockhash,
@@ -28,6 +29,16 @@ import { lamportsToSol } from './types.js';
 /** Base fee per signature in lamports (fixed by Solana protocol) */
 export const BASE_FEE_LAMPORTS = 5000;
 
+/**
+ * Default compute-unit limit for a simple System-Program SOL transfer that
+ * also includes the two Compute Budget instructions. A SystemProgram.transfer
+ * runs ~150 CU and each Compute Budget instruction runs ~150 CU — 1000 CU is
+ * a generous ceiling that keeps the priority-fee cost bounded.
+ *
+ * Priority-fee cost = (microLamportsPerCU × computeUnitLimit) / 1_000_000
+ */
+export const DEFAULT_SOL_TRANSFER_CU_LIMIT = 1000;
+
 /** Result of building a SOL transfer transaction */
 export interface SolTransferParams {
   fromPubkey: PublicKey;
@@ -35,6 +46,16 @@ export interface SolTransferParams {
   lamports: number;
   recentBlockhash: Blockhash;
   lastValidBlockHeight: number;
+  /**
+   * Optional priority fee in micro-lamports per compute unit. When provided
+   * (along with `computeUnitLimit`), the transaction prepends
+   * ComputeBudgetProgram.setComputeUnitPrice + setComputeUnitLimit instructions
+   * so Solana validators prioritize the tx under congestion. Leave undefined
+   * to build a bare transfer at the base fee.
+   */
+  priorityFeeMicroLamports?: number;
+  /** Compute-unit limit to request. Defaults to DEFAULT_SOL_TRANSFER_CU_LIMIT when priority fee is set. */
+  computeUnitLimit?: number;
 }
 
 /** Signed transaction ready to send */
@@ -79,7 +100,15 @@ export function isValidSolanaAddress(address: string): boolean {
  * @returns Unsigned transaction
  */
 export function buildSolTransfer(params: SolTransferParams): Transaction {
-  const { fromPubkey, toPubkey, lamports, recentBlockhash, lastValidBlockHeight } = params;
+  const {
+    fromPubkey,
+    toPubkey,
+    lamports,
+    recentBlockhash,
+    lastValidBlockHeight,
+    priorityFeeMicroLamports,
+    computeUnitLimit,
+  } = params;
 
   if (lamports <= 0) {
     throw new Error('Transfer amount must be greater than 0');
@@ -90,6 +119,17 @@ export function buildSolTransfer(params: SolTransferParams): Transaction {
     blockhash: recentBlockhash,
     lastValidBlockHeight,
   });
+
+  // Priority-fee instructions must come before the transfer. Both are only
+  // added when the caller has opted in via `priorityFeeMicroLamports` — a bare
+  // transfer stays cheap (base fee only) when no priority is requested.
+  if (typeof priorityFeeMicroLamports === 'number' && priorityFeeMicroLamports > 0) {
+    const cuLimit = computeUnitLimit ?? DEFAULT_SOL_TRANSFER_CU_LIMIT;
+    transaction.add(
+      ComputeBudgetProgram.setComputeUnitLimit({ units: cuLimit }),
+      ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFeeMicroLamports })
+    );
+  }
 
   transaction.add(
     SystemProgram.transfer({
@@ -155,6 +195,46 @@ export function estimateTransferFee(_numSignatures: number = 1): number {
   // Simple SOL transfers have 1 signature
   // Base fee is 5000 lamports per signature
   return BASE_FEE_LAMPORTS * _numSignatures;
+}
+
+/**
+ * Convert a priority-fee rate (micro-lamports per compute unit) and the
+ * requested compute-unit limit into the additional lamports the fee payer
+ * will be charged on top of the base fee. Rounded up: the protocol charges
+ * `ceil(microLamports × units / 1_000_000)` lamports, so displaying a smaller
+ * value would under-report the actual cost.
+ *
+ * @param microLamportsPerCU - Priority-fee rate (see ComputeBudgetProgram.setComputeUnitPrice)
+ * @param computeUnitLimit - Compute-unit ceiling requested in the tx
+ * @returns Priority-fee cost in lamports
+ */
+export function priorityFeeLamports(microLamportsPerCU: number, computeUnitLimit: number): number {
+  if (microLamportsPerCU <= 0 || computeUnitLimit <= 0) return 0;
+  // Use BigInt for the intermediate so large percentiles × large CU limits
+  // don't overflow JS Number precision before the divide.
+  const product = BigInt(Math.floor(microLamportsPerCU)) * BigInt(Math.floor(computeUnitLimit));
+  const oneMillion = 1_000_000n;
+  // ceil division
+  const ceilLamports = (product + oneMillion - 1n) / oneMillion;
+  return Number(ceilLamports);
+}
+
+/**
+ * Pick a percentile from an array of observed prioritization fees.
+ * The Solana RPC returns recent fees per-slot; taking a percentile smooths
+ * over single-slot outliers while still reflecting current congestion.
+ *
+ * @param fees - RPC-returned prioritization fees (lamports-per-CU values; despite the field name being `prioritizationFee`, Solana docs specify the unit as micro-lamports per compute unit)
+ * @param percentile - Percentile in [0, 100]; defaults to 75 (moderately aggressive)
+ * @returns Suggested micro-lamports per CU; 0 if the array is empty
+ */
+export function pickPriorityFeePercentile(fees: number[], percentile: number = 75): number {
+  if (!fees.length) return 0;
+  const clamped = Math.min(100, Math.max(0, percentile));
+  const sorted = [...fees].sort((a, b) => a - b);
+  // Nearest-rank method: rank = ceil(p/100 × n), 1-indexed.
+  const rank = Math.max(1, Math.ceil((clamped / 100) * sorted.length));
+  return sorted[rank - 1] ?? 0;
 }
 
 /**
