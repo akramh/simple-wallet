@@ -355,6 +355,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
       secondaryLabel: `${r.token.symbol} · ${r.networkLabel}`,
       networkKey: r.networkKey,
       stale: r.stale,
+      isTestnet: r.isTestnet,
       usdFormatted: r.usdFormatted,
     }));
   }, [unified.snapshot]);

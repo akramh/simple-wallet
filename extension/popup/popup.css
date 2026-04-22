@@ -4255,6 +4255,17 @@ div.settings-row {
   vertical-align: middle;
 }
 
+/* Testnet row — balances with no market value. Mirror the stale dim so the
+ * row reads as "informational, not counted", consistent with the `—` in the
+ * USD column. Sepolia used to get this look accidentally (via .token-item--stale
+ * because testnet refreshes were slow); now every testnet chain does, including
+ * solana-devnet and bitcoin-testnet. Stale + testnet stack — stacking opacities
+ * multiply (0.7 × 0.7 ≈ 0.49), which is the right visual cue that the row is
+ * both old and worthless. */
+.token-item--testnet {
+  opacity: 0.7;
+}
+
 /* Portfolio hero — reuses .balance-card but restyles the total + meta line
  * as a centered hero block. Bigger type so the aggregate number is the
  * anchor of the popup, not a number squeezed into the card's top-left. */

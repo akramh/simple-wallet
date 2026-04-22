@@ -159,6 +159,7 @@ function buildRow(
     usdFormatted: usdValue !== null ? formatUsd(usdValue) : null,
     lastUpdated: entry.lastUpdated,
     stale: staleness > ttlMs,
+    isTestnet: net.isTestnet ?? false,
     error: entry.error,
   };
 }

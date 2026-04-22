@@ -52,6 +52,14 @@ export interface UnifiedTokenRow {
   lastUpdated: number;
   /** True when `now - lastUpdated > balanceCacheTtlMs`. */
   stale: boolean;
+  /**
+   * True when this row belongs to a testnet/devnet. UIs use it to apply the
+   * faded-row treatment (matching the visual weight of testnet balances, which
+   * have no USD value) consistently across chains — so Sepolia and
+   * solana-devnet get the same styling rather than only whichever one happens
+   * to also be `stale`.
+   */
+  isTestnet: boolean;
   /** Optional error captured during balance fetch for this token. */
   error?: string;
 }
@@ -85,6 +93,13 @@ export interface NetworkPortfolioInput {
   networkLabel: string;
   /** Optional chain badge icon asset name or URI. */
   chainBadgeIcon?: string;
+  /**
+   * Whether this network is a testnet/devnet. Carried here (rather than
+   * re-derived in the aggregator from `config.isTestnet`) so the pure
+   * builder stays free of config lookups — testnet status is a property of
+   * the input, not a side-channel global.
+   */
+  isTestnet?: boolean;
   /** Per-token cached balance + price entries for this network. */
   balances: NetworkPortfolioEntry[];
 }

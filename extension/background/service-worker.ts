@@ -810,9 +810,17 @@ async function refreshBalancesForCurrentNetwork(): Promise<void> {
 }
 
 /**
- * Return the list of networks the current wallet can both see (testnet
- * visibility respected, current-network always included) and use (chain
- * type matches any private-key import restriction).
+ * Return the list of networks the current wallet can both see and use.
+ *
+ * - Visibility: respects `showTestnets` (overridable per-call).
+ * - Anti-lockout: by default always includes `config.network` even if it's a
+ *   hidden testnet. This matters for the network-selector dropdown (the user
+ *   must be able to see "where they are" and switch away) but is WRONG for
+ *   the unified cross-chain view — when the user says "hide testnets", the
+ *   solana-devnet balance row shouldn't linger just because solana-devnet
+ *   happens to be the last chain they viewed. The unified snapshot caller
+ *   therefore passes `includeCurrentNetwork: false`.
+ * - Usability: chain type matches any private-key import restriction.
  *
  * @param overrides - Optional per-call overrides. When the caller knows the
  *   exact filter the *user* is looking at right now (e.g. the popup passing
@@ -822,15 +830,19 @@ async function refreshBalancesForCurrentNetwork(): Promise<void> {
  *   timers, etc.) should omit `overrides` and rely on the persisted config.
  */
 function getEnabledNetworksForWallet(
-  overrides: { showTestnets?: boolean } = {}
+  overrides: { showTestnets?: boolean; includeCurrentNetwork?: boolean } = {}
 ): Array<[string, any]> {
   if (!walletService) return [];
   const wallet = walletService.wallet;
   const showTestnets =
     overrides.showTestnets ?? walletService.config.showTestnets ?? false;
+  const includeCurrentNetwork = overrides.includeCurrentNetwork ?? true;
   const visible = getVisibleNetworkEntries(walletService.config.networks, {
     showTestnets,
-    currentNetwork: walletService.config.network,
+    // Intentionally omit `currentNetwork` when the caller opts out of the
+    // anti-lockout rule — otherwise an active testnet chain would slip past
+    // the showTestnets filter.
+    currentNetwork: includeCurrentNetwork ? walletService.config.network : undefined,
   });
   return visible.filter(([key, config]) =>
     isNetworkUsable(key, config, {
@@ -1188,7 +1200,15 @@ async function buildUnifiedPortfolioSnapshot(
   // whatever filter the user is currently looking at. Background callers that
   // don't supply the option fall back to the persisted default, so scheduled
   // refreshes still respect the saved value.
-  const networks = getEnabledNetworksForWallet({ showTestnets: options.showTestnets });
+  //
+  // `includeCurrentNetwork: false` disables the anti-lockout rule here —
+  // that guard is for the network-selector dropdown (so an active testnet
+  // chain stays visible + switchable), but in the unified view it lets a
+  // lingering active testnet bypass the user's hide-testnets preference.
+  const networks = getEnabledNetworksForWallet({
+    showTestnets: options.showTestnets,
+    includeCurrentNetwork: false,
+  });
   const inputs: NetworkPortfolioInput[] = [];
   const walletCache = getActiveWalletCache();
 
@@ -1213,6 +1233,7 @@ async function buildUnifiedPortfolioSnapshot(
     inputs.push({
       networkKey,
       networkLabel: config.name || networkKey,
+      isTestnet: Boolean(config.isTestnet),
       balances,
     });
   }

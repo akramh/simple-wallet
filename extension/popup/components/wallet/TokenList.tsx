@@ -39,6 +39,13 @@ export interface TokenRow {
   networkKey?: string;
   /** True when the cached balance is older than the freshness threshold. */
   stale?: boolean;
+  /**
+   * True when the row belongs to a testnet/devnet. Renders with the same
+   * faded treatment Sepolia already got (it used to be coincidental — Sepolia
+   * balances were usually stale enough to trip `token-item--stale`). Lifting
+   * it to an explicit flag makes solana-devnet / bitcoin-testnet / etc. match.
+   */
+  isTestnet?: boolean;
   /** Pre-formatted USD value; when provided, takes precedence over `getUsdValue`. */
   usdFormatted?: string | null;
 }
@@ -119,6 +126,7 @@ export function TokenList({
           'token-item',
           'token-item-clickable',
           item.stale ? 'token-item--stale' : '',
+          item.isTestnet ? 'token-item--testnet' : '',
         ].filter(Boolean).join(' ');
         return (
           <div

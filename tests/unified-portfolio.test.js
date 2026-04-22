@@ -375,3 +375,31 @@ test('toggling testnets on/off only changes row count, never totalUsd', () => {
     'showing testnets should add rows'
   );
 });
+
+test('isTestnet flag propagates from input to row for UI styling', () => {
+  // The UI conditions `.token-item--testnet` faded styling on `row.isTestnet`.
+  // Without this propagation, solana-devnet and other testnets would only
+  // render faded when their balance also happened to be stale — which is how
+  // Sepolia accidentally got the look in the old code.
+  const testnetInput = {
+    ...SEPOLIA_TESTNET_INPUT,
+    isTestnet: true,
+  };
+  const mainnetExplicit = { ...MAINNET_INPUT, isTestnet: false };
+
+  const snap = buildUnifiedPortfolio([mainnetExplicit, testnetInput], { now: NOW });
+  const sepoliaRow = snap.rows.find((r) => r.networkKey === 'sepolia');
+  const mainnetRow = snap.rows.find((r) => r.networkKey === 'mainnet');
+
+  assert.equal(sepoliaRow?.isTestnet, true, 'testnet input yields isTestnet row');
+  assert.equal(mainnetRow?.isTestnet, false, 'mainnet input yields non-testnet row');
+});
+
+test('isTestnet defaults to false when input omits the flag', () => {
+  // Back-compat: older input producers that don't set isTestnet shouldn't
+  // suddenly render every row as testnet.
+  const snap = buildUnifiedPortfolio([MAINNET_INPUT], { now: NOW });
+  for (const row of snap.rows) {
+    assert.equal(row.isTestnet, false, `row ${row.rowKey} should default isTestnet=false`);
+  }
+});
