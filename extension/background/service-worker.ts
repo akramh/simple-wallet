@@ -58,7 +58,7 @@ import { explorerAPI } from '../../src/explorer-api.js';
 import { getTokenPrices, getTokenPriceBySymbol, calculateTotalValue, formatUSDValue, getBitcoinPrice, getSolanaPrice, getXRPPrice, getTonPrice, getPriceHistory, getTokenMetadata, isBitcoinNetworkKey, isSolanaNetworkKey, isXRPNetworkKey, isTonNetworkKey, type TokenInfo } from '../../src/price-service.js';
 import { isBitcoinNetworkConfig, isEVMNetworkConfig, isSolanaNetworkConfig, isXRPNetworkConfig, isTonNetworkConfig } from '../../src/types/config.js';
 import { applyExplorerApiKeys } from '../../src/config-utils.js';
-import { getVisibleNetworkEntries, isNetworkUsable } from '../../src/network-visibility.js';
+import { getVisibleNetworkEntries, isNetworkUsable, pricesAvailableForNetwork } from '../../src/network-visibility.js';
 import { buildUnifiedPortfolio } from '../../src/unified-portfolio.js';
 import {
   fetchAlchemyPortfolio,
@@ -813,12 +813,23 @@ async function refreshBalancesForCurrentNetwork(): Promise<void> {
  * Return the list of networks the current wallet can both see (testnet
  * visibility respected, current-network always included) and use (chain
  * type matches any private-key import restriction).
+ *
+ * @param overrides - Optional per-call overrides. When the caller knows the
+ *   exact filter the *user* is looking at right now (e.g. the popup passing
+ *   `showTestnets` through snapshot options), they should override the
+ *   persisted default so the render matches the live toggle. Background
+ *   callers that operate on long-running state (scheduled refreshes, lock
+ *   timers, etc.) should omit `overrides` and rely on the persisted config.
  */
-function getEnabledNetworksForWallet(): Array<[string, any]> {
+function getEnabledNetworksForWallet(
+  overrides: { showTestnets?: boolean } = {}
+): Array<[string, any]> {
   if (!walletService) return [];
   const wallet = walletService.wallet;
+  const showTestnets =
+    overrides.showTestnets ?? walletService.config.showTestnets ?? false;
   const visible = getVisibleNetworkEntries(walletService.config.networks, {
-    showTestnets: walletService.config.showTestnets ?? false,
+    showTestnets,
     currentNetwork: walletService.config.network,
   });
   return visible.filter(([key, config]) =>
@@ -967,11 +978,19 @@ async function refreshViaPortfolioApi(
       continue;
     }
     const allowlist = walletService.getTokensForNetwork(networkKey);
+    const networkConfig = walletService.config.networks[networkKey];
+    const allowPrices = pricesAvailableForNetwork(networkConfig);
     for (const token of allowlist) {
       const tokenKey = getTokenCacheKey(token);
       const entry = bucket.get(tokenKey);
       setCachedBalance(networkKey, token, entry?.balance ?? '0', targetWallet);
-      portfolioPriceCache.set(`${networkKey}:${tokenKey}`, entry?.priceUsd ?? null);
+      // For testnets, cache a null price even if Alchemy returned a value —
+      // the Portfolio API sometimes quotes testnet assets at their mainnet
+      // counterpart's ticker, which is meaningless for the user's balance.
+      portfolioPriceCache.set(
+        `${networkKey}:${tokenKey}`,
+        allowPrices ? (entry?.priceUsd ?? null) : null
+      );
     }
     covered.add(networkKey);
     // Silence the unused-warn on `now` — kept for future staleness tracking.
@@ -1097,6 +1116,11 @@ async function fetchPricesForNetwork(
   const networkConfig = walletService.config.networks[networkKey];
   if (!networkConfig) return result;
 
+  // Testnet tokens have no market price. Short-circuit so the callers that
+  // reach fetchPricesForNetwork directly (bypassing resolvePricesForNetwork's
+  // portfolio-cache path) still get the right answer.
+  if (!pricesAvailableForNetwork(networkConfig)) return result;
+
   try {
     if (isBitcoinNetworkConfig(networkConfig)) {
       result.set('native', await getBitcoinPrice().catch(() => null));
@@ -1160,7 +1184,11 @@ async function buildUnifiedPortfolioSnapshot(
     };
   }
 
-  const networks = getEnabledNetworksForWallet();
+  // Pass the caller's showTestnets preference through so the snapshot matches
+  // whatever filter the user is currently looking at. Background callers that
+  // don't supply the option fall back to the persisted default, so scheduled
+  // refreshes still respect the saved value.
+  const networks = getEnabledNetworksForWallet({ showTestnets: options.showTestnets });
   const inputs: NetworkPortfolioInput[] = [];
   const walletCache = getActiveWalletCache();
 
@@ -1200,12 +1228,24 @@ async function buildUnifiedPortfolioSnapshot(
  * prices come bundled with the batched balance fetch and are re-used for
  * every snapshot build until the next refresh. For BTC / XRP / TON, the
  * existing per-chain provider path runs unchanged.
+ *
+ * Testnets short-circuit to an empty map so testnet rows render with
+ * `usdValue: null` and don't contribute to `totalUsd`.
  */
 async function resolvePricesForNetwork(
   networkKey: string,
   tokens: Token[]
 ): Promise<Map<string, number | null>> {
   const prices = new Map<string, number | null>();
+
+  const networkConfig = walletService?.config.networks[networkKey];
+  if (!pricesAvailableForNetwork(networkConfig)) {
+    // Testnet / unknown network: no prices. Returning an empty map makes
+    // `buildRow` fall through to `priceUsd: null`, which the aggregator sums
+    // as 0 (not "unknown"), so the row renders "—" and totalUsd stays clean.
+    return prices;
+  }
+
   const missing: Token[] = [];
 
   for (const token of tokens) {
@@ -2465,6 +2505,20 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
 
       const priceNetwork = walletService!.config.network;
       const networkConfig = walletService!.config.networks[priceNetwork];
+
+      // Testnet short-circuit: return null prices / $0 total. Mirrors the
+      // data-layer guard in resolvePricesForNetwork so the single-network
+      // view agrees with the unified view about what testnet balances are
+      // worth (nothing).
+      if (!pricesAvailableForNetwork(networkConfig)) {
+        return {
+          prices: {},
+          totalValue: 0,
+          formattedTotal: '$0.00',
+          network: priceNetwork,
+          isTestnet: true,
+        };
+      }
 
       // Handle Bitcoin networks differently
       if (isBitcoinNetworkKey(priceNetwork)) {

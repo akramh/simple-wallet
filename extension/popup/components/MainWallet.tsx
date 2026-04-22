@@ -322,12 +322,22 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
   // Unified cross-chain portfolio
   // ============================================================================
 
-  /** Unified snapshot driver — suspends when the user has scoped to a single chain. */
+  /**
+   * Unified snapshot driver — suspends when the user has scoped to a single chain.
+   *
+   * `showTestnets` is threaded through as a snapshot option (not read from
+   * service-worker config at snapshot build time) so the hook's
+   * `optionsKey`-driven refetch machinery kicks in the moment the user
+   * toggles the switch. Without this, flipping "show test networks" would
+   * update the dropdown but leave the cached snapshot — and its total —
+   * stale until the next scheduled refresh ran.
+   */
   const unified = useUnifiedPortfolio(
     viewScope === 'unified',
     {
       sort: prefs.tokenSort,
       showZeroBalances: !prefs.hideZeroBalances,
+      showTestnets,
     },
     activeWalletName,
   );

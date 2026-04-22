@@ -105,7 +105,13 @@ export interface NetworkPortfolioEntry {
 }
 
 /**
- * Options controlling aggregation and sort.
+ * Options controlling aggregation, sort, and network filtering.
+ *
+ * These are the knobs that define a snapshot's identity: any change that
+ * affects what the snapshot contains or how it's sorted must live here (not
+ * in hidden global state) so that UI dep-array machinery can invalidate the
+ * snapshot automatically when the user flips a toggle. The popup stringifies
+ * this object into a cache key — see `useUnifiedPortfolio.optionsKey`.
  */
 export interface BuildUnifiedPortfolioOptions {
   /** When false (default), rows with a zero balance are hidden — except native tokens. */
@@ -116,4 +122,16 @@ export interface BuildUnifiedPortfolioOptions {
   balanceCacheTtlMs?: number;
   /** Override current time for deterministic tests. */
   now?: number;
+  /**
+   * Include testnet networks in the snapshot. When omitted, the snapshot
+   * builder falls back to the persisted user preference
+   * (`walletService.config.showTestnets`) — so background refreshes pick up
+   * the saved default while the popup, which reads the preference on mount,
+   * stays authoritative about the *currently visible* filter.
+   *
+   * Testnet rows always render with `usdValue: null` regardless of this flag
+   * (see the price-resolver guard in the service worker) so `totalUsd` never
+   * double-counts mainnet + testnet balances for tokens sharing a symbol.
+   */
+  showTestnets?: boolean;
 }

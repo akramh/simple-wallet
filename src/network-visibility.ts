@@ -99,3 +99,26 @@ export function isNetworkUsable(
   if (!importType || importType !== 'privateKey' || !privateKeyType) return true;
   return resolveNetworkType(networkKey, config) === privateKeyType;
 }
+
+/**
+ * Whether a network's tokens should be priced against mainnet markets.
+ *
+ * Testnet tokens (sepolia ETH, bitcoin-testnet tBTC, solana-devnet SOL, etc.)
+ * share a symbol with their mainnet counterparts but have no market value.
+ * Pricing them via the mainnet ticker would inflate portfolio totals with
+ * fake USD whenever the "show test networks" toggle is on — and would leave
+ * stale mainnet-priced entries in the cache long after the user toggled
+ * testnets back off.
+ *
+ * This predicate lives at the *data layer* so every price-resolver caller
+ * (unified snapshot, single-network view, Portfolio API cache writes, Send
+ * preview) gets the same answer. A missing/unknown config returns `false`
+ * defensively — an unknown network shouldn't confidently quote a USD value.
+ *
+ * @param config - Network config entry (or `undefined` when key isn't registered).
+ * @returns `true` when prices make sense for this network's tokens.
+ */
+export function pricesAvailableForNetwork(config: NetworkConfig | undefined): boolean {
+  if (!config) return false;
+  return !config.isTestnet;
+}

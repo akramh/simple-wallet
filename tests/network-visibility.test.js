@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getVisibleNetworkEntries, isNetworkUsable } from '../dist/network-visibility.js';
+import { getVisibleNetworkEntries, isNetworkUsable, pricesAvailableForNetwork } from '../dist/network-visibility.js';
 
 const networks = {
   mainnet: { name: 'Ethereum Mainnet', nativeSymbol: 'ETH', nativeName: 'Ether' },
@@ -97,4 +97,40 @@ test('isNetworkUsable: undefined config still resolves from key prefix', () => {
   const solCtx = { importType: 'privateKey', privateKeyType: 'solana' };
   assert.equal(isNetworkUsable('solana-devnet', undefined, solCtx), true);
   assert.equal(isNetworkUsable('xrp-mainnet', undefined, solCtx), false);
+});
+
+// ---------------------------------------------------------------------------
+// pricesAvailableForNetwork — the guard that keeps testnet balances out of
+// fiat totals. If this predicate ever answers `true` for a testnet the
+// unified-portfolio total will silently inflate whenever the "show test
+// networks" toggle is on, because the price providers happily return the
+// mainnet counterpart's USD value for sepolia ETH / tBTC / etc.
+// ---------------------------------------------------------------------------
+
+test('pricesAvailableForNetwork: mainnet configs allow pricing', () => {
+  assert.equal(pricesAvailableForNetwork({ name: 'Ethereum', nativeSymbol: 'ETH' }), true);
+  assert.equal(pricesAvailableForNetwork({ name: 'Base', nativeSymbol: 'ETH', isTestnet: false }), true);
+});
+
+test('pricesAvailableForNetwork: testnet configs disallow pricing', () => {
+  assert.equal(
+    pricesAvailableForNetwork({ name: 'Sepolia', nativeSymbol: 'ETH', isTestnet: true }),
+    false,
+    'sepolia ETH must not be priced like mainnet ETH'
+  );
+  assert.equal(
+    pricesAvailableForNetwork({ type: 'bitcoin', isTestnet: true }),
+    false,
+    'bitcoin testnet tBTC must not be priced like BTC'
+  );
+  assert.equal(
+    pricesAvailableForNetwork({ type: 'solana', isTestnet: true }),
+    false,
+    'solana devnet SOL must not be priced like mainnet SOL'
+  );
+});
+
+test('pricesAvailableForNetwork: undefined / missing config defaults to false (safe)', () => {
+  assert.equal(pricesAvailableForNetwork(undefined), false);
+  assert.equal(pricesAvailableForNetwork(null), false);
 });

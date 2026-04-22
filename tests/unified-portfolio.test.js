@@ -314,3 +314,64 @@ test('empty input yields empty snapshot', () => {
   assert.equal(snap.totalUsdFormatted, '$0.00');
   assert.deepEqual(snap.networkStaleness, {});
 });
+
+// ---------------------------------------------------------------------------
+// Testnet pricing invariant
+//
+// The service-worker's `pricesAvailableForNetwork` guard ensures testnet
+// tokens arrive here with `priceUsd: null`. These tests pin the aggregator's
+// side of the contract: a null price must mean "no USD contribution", so
+// toggling test-networks visibility only adds/removes rows — it cannot
+// inflate or deflate the fiat total.
+// ---------------------------------------------------------------------------
+
+const SEPOLIA_TESTNET_INPUT = {
+  networkKey: 'sepolia',
+  networkLabel: 'Sepolia',
+  chainBadgeIcon: 'eth.svg',
+  balances: [
+    // Sepolia ETH with priceUsd=null — the shape the service-worker produces
+    // once the testnet price guard short-circuits resolvePricesForNetwork.
+    entry(NATIVE_ETH, '0.75', null),
+  ],
+};
+
+test('testnet rows (null-priced) are rendered but contribute zero to totalUsd', () => {
+  const snap = buildUnifiedPortfolio([MAINNET_INPUT, SEPOLIA_TESTNET_INPUT], {
+    now: NOW,
+    showZeroBalances: false,
+  });
+
+  const sepoliaRow = snap.rows.find((r) => r.networkKey === 'sepolia');
+  assert.ok(sepoliaRow, 'sepolia row should render when user opted in to testnets');
+  assert.equal(sepoliaRow.usdValue, null, 'testnet row has no USD value');
+  assert.equal(sepoliaRow.usdFormatted, null, 'testnet row renders "—" in the UI');
+
+  // totalUsd should equal JUST the mainnet ETH contribution — 0.5760 × 3645.83
+  // rounded via normal number math. The sepolia balance (0.75 ETH × whatever
+  // mainnet ETH happens to be worth) must NOT be added in.
+  const expectedMainnetOnly = 0.576 * 3645.83;
+  assert.ok(
+    Math.abs(snap.totalUsd - expectedMainnetOnly) < 0.01,
+    `totalUsd (${snap.totalUsd}) must exclude the testnet row (expected ~${expectedMainnetOnly})`
+  );
+});
+
+test('toggling testnets on/off only changes row count, never totalUsd', () => {
+  // Simulates the user flipping "show test networks" — the service-worker
+  // changes the input set but the already-cached balances are identical. The
+  // totalUsd must be stable across the two calls because testnet priceUsd
+  // stays null either way.
+  const withoutTestnets = buildUnifiedPortfolio([MAINNET_INPUT], { now: NOW });
+  const withTestnets = buildUnifiedPortfolio([MAINNET_INPUT, SEPOLIA_TESTNET_INPUT], { now: NOW });
+
+  assert.equal(
+    withoutTestnets.totalUsd,
+    withTestnets.totalUsd,
+    'testnet visibility must not move the fiat total'
+  );
+  assert.ok(
+    withTestnets.rows.length > withoutTestnets.rows.length,
+    'showing testnets should add rows'
+  );
+});
