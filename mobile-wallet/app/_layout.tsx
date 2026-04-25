@@ -21,6 +21,9 @@ import { useWalletStore } from '../store';
 import { ToastProvider } from '../contexts';
 import { useBackgroundRefresh } from '../hooks';
 import { BackgroundNotificationService } from '../services/BackgroundNotificationService';
+import { perfMark, perfSummary } from '../utils/perf';
+
+perfMark('rootLayout:moduleEval');
 
 import '../global.css';
 
@@ -55,9 +58,19 @@ export default function RootLayout() {
   useBackgroundRefresh();
 
   useEffect(() => {
+    perfMark('rootLayout:firstEffect');
     // Initialize wallet on app start
-    initialize();
+    initialize().finally(() => {
+      perfMark('walletStore:initialized');
+    });
   }, [initialize]);
+
+  useEffect(() => {
+    if (isInitialized) {
+      perfMark('rootLayout:isInitialized');
+      perfSummary();
+    }
+  }, [isInitialized]);
 
   useEffect(() => {
     // Setup notifications
