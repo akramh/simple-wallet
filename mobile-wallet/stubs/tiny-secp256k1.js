@@ -11,12 +11,11 @@ const secp = secpModule.default ?? secpModule;
 const { sha256 } = require('@noble/hashes/sha256');
 const { hmac } = require('@noble/hashes/hmac');
 
-// Configure noble/secp256k1 to use noble/hashes for sync operations
-secp.etc.hmacSha256Sync = (key, ...msgs) => {
-  const h = hmac.create(sha256, key);
-  msgs.forEach(m => h.update(m));
-  return h.digest();
-};
+// Configure noble/secp256k1 v3 with the hashes it needs for sync ops.
+// v3 moved hash injection from `etc.hmacSha256Sync` (frozen in v3) to the
+// mutable `hashes` slot — see the @noble/secp256k1 v2→v3 migration notes.
+// Under Bridgeless the legacy `etc.*` assignment throws; under the old
+// bridge it failed silently. Either way, only `hashes.*` matters.
 secp.hashes.sha256 = (msg) => sha256(msg);
 secp.hashes.hmacSha256 = (key, msg) => hmac(sha256, key, msg);
 
