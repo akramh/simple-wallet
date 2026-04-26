@@ -60,7 +60,6 @@ Bundle-size deltas are within noise — expected. The win from Phase 1 is at
   from `asyncRoutes` deferring screen module init plus Fabric reducing bridge
   serialization. Capture against the `[perf]` table in
   [baseline.md](./baseline.md).
-- Tab-switch frame drops should hit 0 with `enableFreeze(true)` in place.
 - Confirm New Architecture is actually active at runtime
   (`global.RN$Bridgeless === true` or check `console.log` in dev). This
   requires `expo prebuild --clean` and a fresh native build.
@@ -76,9 +75,23 @@ Bundle-size deltas are within noise — expected. The win from Phase 1 is at
   in memory so Suspense resolves on the next microtask — perceived flash
   should be < 1 frame. If it's visible, switch to a per-platform
   `asyncRoutes` config that keeps the initial route eager.
-- `enableFreeze(true)` can mask state-update bugs in components that assume
-  they re-render every tick. None expected in this codebase, but worth eyeing
-  the activity feed (the only screen with constant timer-driven updates).
+
+### Reverted: `enableFreeze(true)` (2026-04-26)
+
+The Phase 1 freeze opt-in had to be backed out. On Expo Go SDK 54 with Fabric
++ asyncRoutes, `react-native-screens` `NativeStackView` dispatches a setState
+from an Animated event listener during the freeze→unfreeze transition cycle.
+React 19 then logs *"Can't perform a React state update on a component that
+hasn't mounted yet"* with `AuthLayout` / `TabsLayout` in the trace, even
+though both are bare render-only components. The error is cosmetic in this
+codebase but spams the dev log enough to drown real signal.
+
+`enableScreens(true)` stays (it's the SDK 54 default — keeping the explicit
+call is just defensive). `asyncRoutes` and `newArchEnabled` stay; they are
+the bigger Phase 1 wins and are not implicated in this specific listener
+race. Re-introduce the freeze when `react-native-screens` upstream guards
+the NativeStackView listener with a mounted-check, or behind a runtime
+toggle once a device session confirms a measurable tab-switch delta.
 
 ---
 

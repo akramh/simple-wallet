@@ -16,14 +16,20 @@ perfMark('index.js:start');
 import './services/crypto-polyfill';
 perfMark('cryptoPolyfill:loaded');
 
-// react-native-screens: native screens are on by default for iOS/Android, but
-// `enableFreeze(true)` is opt-in. Freezing pauses off-screen stack re-renders —
-// the meaningful win for tab nav and modal stacks. Must run before any
-// navigator initializes (i.e. before expo-router/entry below).
-import { enableScreens, enableFreeze } from 'react-native-screens';
+// react-native-screens: native screens are on by default for iOS/Android in
+// SDK 54, so `enableScreens(true)` is just defensive/explicit.
+//
+// `enableFreeze(true)` was tried as a Phase 1 win (off-screen stacks pause
+// re-rendering) but interacts badly with React 19 + Fabric + asyncRoutes:
+// `react-native-screens` `NativeStackView` dispatches a setState from an
+// Animated event listener during the freeze→unfreeze transition, which
+// React flags as "state update on a component that hasn't mounted yet" and
+// throws an error in dev (cosmetic, but it spams the log). Until the
+// upstream library guards that listener with a mounted-check, leave freeze
+// off — we still get the bulk of the Phase 1 win from `asyncRoutes`.
+import { enableScreens } from 'react-native-screens';
 enableScreens(true);
-enableFreeze(true);
-perfMark('screensFreeze:enabled');
+perfMark('screens:enabled');
 
 // Apply security network guard (blocks unauthorized connections)
 // Note: We access the source file directly, assuming Metro resolves shared code correctly via config
