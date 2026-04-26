@@ -79,3 +79,100 @@ Bundle-size deltas are within noise — expected. The win from Phase 1 is at
 - `enableFreeze(true)` can mask state-update bugs in components that assume
   they re-render every tick. None expected in this codebase, but worth eyeing
   the activity feed (the only screen with constant timer-driven updates).
+
+---
+
+## Phase 2 — Render hygiene
+
+Captured 2026-04-26.
+
+### Changes
+
+- **Send screen** ([app/send.tsx](../app/send.tsx))
+  - Added `useDebouncedValue<T>` hook
+    ([hooks/useDebouncedValue.ts](../hooks/useDebouncedValue.ts)) and
+    rewired the gas-estimation effect to debounce `recipient` and `amount`
+    instead of debouncing the callback with a per-keystroke `setTimeout`.
+    Same 500 ms window, but the closure no longer rebuilds per keystroke
+    and the effect dependency graph is smaller.
+  - Switched from the broad `useSendScreenSelector` (which dragged the
+    full `prices: Record<string, number>` map through) to the narrow
+    `usePrice(symbol)` selector for the active token's price. Background
+    price ticks for unrelated tokens no longer re-render Send.
+- **Manage Tokens** ([app/manage-tokens.tsx](../app/manage-tokens.tsx))
+  - Replaced the broad `useWalletStore()` destructure with a `useShallow`
+    selector picking only the seven fields the screen needs.
+  - Extracted the row body into a top-level `TokenRow` wrapped with
+    `React.memo` — search-keystroke renders no longer re-render every
+    row.
+  - Pulled `filteredBalances` into `useMemo`, and the `renderItem` /
+    `keyExtractor` into stable `useCallback`s. FlatList row props are now
+    reference-equal across keystrokes when the underlying balance is
+    unchanged.
+  - Tuned FlatList virtualization with `removeClippedSubviews`,
+    `initialNumToRender={12}`, `windowSize={5}`.
+- **Wallet tab** ([app/(tabs)/wallet.tsx](../app/(tabs)/wallet.tsx))
+  - Memoized the local `TokenRow`. Threaded the row's `item` through props
+    so the parent can keep a single stable `onPress(item)` callback, which
+    lets `memo`'s default shallow compare actually skip work.
+  - `visibleBalances` now `useMemo`'d; `renderItem` and `keyExtractor`
+    via `useCallback`.
+- **Account / Wallet management** ([app/account-manage.tsx](../app/account-manage.tsx),
+  [app/wallet-manage.tsx](../app/wallet-manage.tsx))
+  - `useShallow` selectors instead of broad `useWalletStore()` destructure.
+  - Stable `renderItem` / `keyExtractor` via `useCallback`. Lists are
+    small (≤ 10 typical), so the row component is left inline rather than
+    paying for a separate `memo` wrapper.
+- **Store** ([store/selectors.ts](../store/selectors.ts),
+  [store/index.ts](../store/index.ts))
+  - Added per-token narrow selectors: `useBalance(symbol)` and
+    `usePrice(symbol)`. Documented that `useSendScreenSelector` no longer
+    carries the prices map.
+- **Tests** ([__tests__/send-screen.test.tsx](../__tests__/send-screen.test.tsx))
+  - Mock for `../store` updated to include `usePrice`. No new tests; the
+    refactor is a re-render-shape change with no API surface impact.
+
+### Bundle size delta
+
+| Platform | Hermes .hbc raw | Hermes .hbc gzipped | vs. Phase 1 |
+| --- | --- | --- | --- |
+| iOS | 11,624,048 B | 4,829,584 B | +3.9 KB raw / +2.2 KB gzipped (≈ noise) |
+| Android | 11,623,373 B | 4,829,059 B | +4.6 KB raw / +3.4 KB gzipped (≈ noise) |
+
+Bundle size moves are within noise. Phase 2 wins are entirely runtime —
+fewer renders per store tick, fewer closures created per keystroke, and
+fewer FlatList row reconciliations per scroll.
+
+### Verification
+
+- `npm run typecheck` clean.
+- `npm test` — 4 suites / 25 tests fail. Identical to Phase 1 baseline
+  (pre-existing `@ton/ton` axios fetch-adapter clash); the new send-screen
+  mock keeps that test passing.
+- `expo export` succeeded for both platforms; `"lazy"` still in the
+  bytecode, confirming asyncRoutes is still in effect.
+
+### What still needs a device to confirm
+
+- p95 keystroke → render in the Send amount field. Capture a React DevTools
+  Profiler trace while typing and look at the Send screen wrapper render
+  count vs. the typed-character count. Target: render count ≈ 1 per
+  keystroke for the input field, near-zero for unrelated rows.
+- Manage-Tokens search-input typing should now leave inactive rows
+  un-rendered. Watch the Profiler "what rendered and why" view.
+- Wallet tab should not re-render TokenRow rows on price ticks unless that
+  specific token's price changed. Force a price refresh and observe.
+
+### Deliberately deferred
+
+- **Full split of [send.tsx](../app/send.tsx) into per-field
+  subcomponents** (`<AmountField>`, `<RecipientField>`, `<GasSummary>`,
+  `<TokenPicker>`). This was on the original plan but is a 1000+ LOC
+  refactor with high regression risk in a flow that handles signing.
+  Should land on its own with focused testing. The narrow-subscription
+  + debounced-input changes here capture most of the perceived-speed win
+  without touching the form structure.
+- **`@shopify/flash-list` migration**. New native dep + different
+  reconciliation semantics. Land it after the device session confirms
+  Phase 1 + Phase 2 actually feel better; if so, FlashList is mostly
+  upside on long lists. If it adds incompatibilities, it's avoidable.

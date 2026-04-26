@@ -2,7 +2,7 @@
  * @fileoverview Main wallet screen - shows balances and quick actions.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useWalletScreenSelector } from '../../store';
 import { useClipboard } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
+import type { TokenBalance } from '../../services';
 
 export default function WalletScreen() {
   const router = useRouter();
@@ -79,47 +80,72 @@ export default function WalletScreen() {
   const addressCopied = address ? isCopied(address) : false;
   const hasMultipleAccounts = accounts.length > 1;
 
+  // Memoize the visible-tokens slice — recomputed only when balances change.
+  const visibleBalances = useMemo(
+    () => balances.filter((b) => b.isVisible !== false),
+    [balances],
+  );
+
+  // Stable per-row tap handler. Calling pattern is `handleTokenPress(item)` —
+  // identity stays the same across renders so a memoized TokenRow can skip
+  // re-rendering when its data hasn't changed.
+  const handleTokenPress = useCallback(
+    (item: typeof balances[number]) => {
+      const isNative = item.token.address === 'native' || !item.token.address;
+      navigateOnce(() => {
+        router.push({
+          pathname: '/token-detail',
+          params: {
+            symbol: item.token.symbol,
+            name: item.token.name,
+            network: network,
+            balance: item.balance || '0',
+            contractAddress: isNative ? undefined : item.token.address,
+            isNative: isNative ? 'true' : 'false',
+            decimals: item.token.decimals?.toString() || '18',
+          },
+        });
+      });
+    },
+    [router, navigateOnce, network],
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: typeof balances[number] }) => {
+      const price = prices[item.token.symbol] ?? null;
+      const balance = parseFloat(item.balance || '0');
+      const usdValue = price !== null ? balance * price : null;
+      return (
+        <View className="px-5 bg-gray-900/50">
+          <TokenRow
+            symbol={item.token.symbol}
+            name={item.token.name}
+            balance={item.balance || '0'}
+            usdValue={usdValue}
+            isLoading={item.isLoading}
+            item={item}
+            onPress={handleTokenPress}
+          />
+        </View>
+      );
+    },
+    [prices, handleTokenPress],
+  );
+
+  const keyExtractor = useCallback(
+    (item: typeof balances[number], index: number) => `${item.token.symbol}-${index}`,
+    [],
+  );
+
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       <FlatList
-        data={balances.filter(b => b.isVisible !== false)}
-        keyExtractor={(item, index) => `${item.token.symbol}-${index}`}
-        renderItem={({ item }) => {
-          const price = prices[item.token.symbol] ?? null;
-          const balance = parseFloat(item.balance || '0');
-          const usdValue = price !== null ? balance * price : null;
-          const isNative = item.token.address === 'native' || !item.token.address;
-
-          const handleTokenPress = () => {
-            navigateOnce(() => {
-              router.push({
-                pathname: '/token-detail',
-                params: {
-                  symbol: item.token.symbol,
-                  name: item.token.name,
-                  network: network,
-                  balance: item.balance || '0',
-                  contractAddress: isNative ? undefined : item.token.address,
-                  isNative: isNative ? 'true' : 'false',
-                  decimals: item.token.decimals?.toString() || '18',
-                },
-              });
-            });
-          };
-
-          return (
-            <View className="px-5 bg-gray-900/50">
-              <TokenRow
-                symbol={item.token.symbol}
-                name={item.token.name}
-                balance={item.balance || '0'}
-                usdValue={usdValue}
-                isLoading={item.isLoading}
-                onPress={handleTokenPress}
-              />
-            </View>
-          );
-        }}
+        data={visibleBalances}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        removeClippedSubviews
+        initialNumToRender={8}
+        windowSize={5}
         ListHeaderComponent={() => (
           <>
             {/* Header */}
@@ -259,26 +285,34 @@ function QuickActionButton({
   );
 }
 
-function TokenRow({
-  symbol,
-  name,
-  balance,
-  usdValue,
-  isLoading,
-  onPress,
-}: {
+interface TokenRowProps {
   symbol: string;
   name: string;
   balance: string;
   usdValue: number | null;
   isLoading: boolean;
-  onPress: () => void;
-}) {
+  item: TokenBalance;
+  onPress: (item: TokenBalance) => void;
+}
+
+// Memoized to skip rendering when none of this token's props changed.
+// `onPress` takes the row's `item` so the parent can keep a single stable
+// callback rather than producing a fresh closure per row each render.
+const TokenRow = memo(function TokenRow({
+  symbol,
+  name,
+  balance,
+  usdValue,
+  isLoading,
+  item,
+  onPress,
+}: TokenRowProps) {
   const tokenIcon = getTokenIcon(symbol);
+  const handlePress = useCallback(() => onPress(item), [onPress, item]);
 
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={handlePress}
       activeOpacity={0.7}
       className="flex-row items-center py-4 border-b border-gray-800"
     >
@@ -321,4 +355,4 @@ function TokenRow({
       <Ionicons name="chevron-forward" size={16} color="#6b7280" style={{ marginLeft: 8 }} />
     </TouchableOpacity>
   );
-}
+});
