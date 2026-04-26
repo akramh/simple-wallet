@@ -113,6 +113,78 @@ Re-enable when one of:
 
 ---
 
+## Phase 3 — Crypto + background work off the JS thread
+
+Captured 2026-04-26.
+
+### Changes
+
+- **Native AES-GCM via `react-native-quick-crypto`**
+  ([services/MobileCryptoAdapter.ts](../services/MobileCryptoAdapter.ts))
+  - `createCipheriv` and `createDecipheriv` now delegate to quick-crypto's
+    Node-compatible cipher when the native module is loaded. The existing
+    `asmcrypto.js`-based `CipherWrapper` / `DecipherWrapper` classes stay
+    as the fallback for Jest and Expo Go (where the JSI native module
+    isn't available).
+  - AES-256-GCM is deterministic, so the swap is byte-for-byte
+    compatible — **no migration needed for existing wallets**. The unlock
+    `decryptDataAsync` path on a dev build will run through OpenSSL via
+    JSI instead of pure-JS asmcrypto.
+  - Cross-implementation regression test added: encrypt with Node's
+    `crypto.createCipheriv` (the API quick-crypto exposes on device),
+    decrypt through the adapter's fallback wrapper, and vice versa.
+    Round-trips a JSON fixture both directions to prove the two impls
+    agree on the wire format.
+
+- **Off-tick auto-refresh** ([hooks/useAfterInteraction.ts](../hooks/useAfterInteraction.ts))
+  - New hook wraps `InteractionManager.runAfterInteractions` in a
+    `useEffect` so screens can launch their auto-refresh fan-out without
+    blocking the navigation transition that just brought them into view.
+  - Applied to the three tab screens that auto-refresh on mount:
+    - [app/(tabs)/wallet.tsx](../app/(tabs)/wallet.tsx) — balances + prices
+    - [app/(tabs)/activity.tsx](../app/(tabs)/activity.tsx) — transaction history
+    - [app/(tabs)/portfolio.tsx](../app/(tabs)/portfolio.tsx) — all-network portfolio (also drops the prior `setTimeout(..., 0)` ad-hoc deferral)
+  - Pull-to-refresh handlers stay synchronous — those are user-initiated
+    and want to react immediately with their own loading indicator.
+
+### Bundle size delta
+
+| Platform | Hermes .hbc raw | Hermes .hbc gzipped | vs. Phase 2 |
+| --- | --- | --- | --- |
+| iOS | 11,625,958 B | 4,830,761 B | +1.9 KB raw / +1.2 KB gzipped (≈ noise) |
+| Android | 11,625,190 B | 4,827,332 B | +1.8 KB raw / -1.7 KB gzipped (≈ noise) |
+
+Bundle size again within noise — the AES-GCM swap doesn't add code (the
+quick-crypto module was already in the bundle for PBKDF2), and
+`useAfterInteraction` is a 30-line hook.
+
+### Verification
+
+- `npm run typecheck` clean.
+- `npm test` — 4 suites / 25 tests fail. **One new passing test** in the
+  cipher suite (cross-impl roundtrip), bringing pass count to 95 from 94.
+  Pre-existing `@ton/ton` jest fetch-adapter clash unchanged.
+- Targeted `npx jest MobileCryptoAdapter.test.ts` → 10/10 green.
+
+### Why this matters
+
+Under Expo Go, `react-native-quick-crypto` isn't present, so the AES-GCM
+swap is a no-op (still asmcrypto on the JS thread). On a dev build
+(`expo prebuild --clean && npm run ios`), the swap activates and unlock's
+AES-GCM step drops from ~JS-thread-time to native-OpenSSL time. Combined
+with PBKDF2 already being native (since Phase 0), the full unlock path
+runs entirely off-JS — which is the only way to actually hit the Phase 0
+KPI of unlock ≤ 250 ms.
+
+### Deliberately deferred
+
+- WalletBridge sync-work audit (Phase 3 task #3) — punted until a device
+  profiler trace identifies a specific bottleneck. Speculative
+  refactoring of crypto-adjacent code is exactly the kind of change
+  CLAUDE.md asks us to be cautious about.
+
+---
+
 ## Phase 2 — Render hygiene
 
 Captured 2026-04-26.

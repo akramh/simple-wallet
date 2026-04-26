@@ -17,7 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletScreenSelector } from '../../store';
-import { useClipboard } from '../../hooks';
+import { useAfterInteraction, useClipboard } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
 import type { TokenBalance } from '../../services';
 
@@ -43,9 +43,11 @@ export default function WalletScreen() {
   const isNavigatingRef = useRef(false);
   const { copy, isCopied } = useClipboard();
 
-  // Refresh balances on mount (silent - don't show loading indicator for automatic refresh)
-  useEffect(() => {
-    // Avoid spamming refreshes when we already have recent cached data.
+  // Refresh balances on mount (silent — don't show a loading indicator for
+  // automatic refresh). Deferred until the navigation animation that brought
+  // this tab into view has finished; the RPC fan-out otherwise blocks the
+  // JS thread mid-transition and drops frames.
+  useAfterInteraction(() => {
     if (!balancesLastUpdated || Date.now() - balancesLastUpdated > 30_000) {
       refreshBalancesAndPrices({ silent: true });
     }

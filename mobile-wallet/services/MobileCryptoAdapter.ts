@@ -34,6 +34,8 @@ import { AES_GCM } from 'asmcrypto.js';
 let QuickCrypto: {
   pbkdf2Sync: (password: ArrayBuffer, salt: ArrayBuffer, iterations: number, keylen: number, digest: string) => ArrayBuffer;
   randomBytes: (size: number) => ArrayBuffer;
+  createCipheriv?: (algorithm: string, key: any, iv: any) => any;
+  createDecipheriv?: (algorithm: string, key: any, iv: any) => any;
 } | null = null;
 
 try {
@@ -47,6 +49,11 @@ try {
 } catch (e) {
   console.log('[MobileCryptoAdapter] react-native-quick-crypto not available');
 }
+
+// quick-crypto's createCipheriv/createDecipheriv return Node-compatible
+// Cipher/Decipher instances. We can hand them out directly — no wrapper.
+const HAS_NATIVE_CIPHER =
+  !!(QuickCrypto && typeof QuickCrypto.createCipheriv === 'function');
 
 // Fallback to @noble/hashes for Jest tests (pure JS, works in Node.js)
 let noblePbkdf2: ((hash: unknown, password: string, salt: Uint8Array, opts: { c: number; dkLen: number }) => Uint8Array) | null = null;
@@ -251,25 +258,40 @@ export class MobileCryptoAdapter implements AsyncCryptoAdapter {
 
   /**
    * Create AES-GCM cipher for encryption.
+   *
+   * Prefers `react-native-quick-crypto` (native, OpenSSL-backed) when it's
+   * available — it returns a Node-compatible Cipher object so we can hand
+   * it out directly. Falls back to the pure-JS `asmcrypto.js` wrapper for
+   * Jest and Expo Go (where the native module isn't loaded).
+   *
+   * AES-256-GCM is deterministic for a fixed key/iv/plaintext, so the swap
+   * is byte-for-byte compatible with existing on-device wallets.
    */
   createCipheriv(
-    _algorithm: string,
+    algorithm: string,
     key: Buffer | Uint8Array,
     iv: Buffer | Uint8Array
   ): CipherLike {
+    if (HAS_NATIVE_CIPHER && QuickCrypto?.createCipheriv) {
+      return QuickCrypto.createCipheriv(algorithm, key, iv) as CipherLike;
+    }
     const keyBytes = toUint8Array(key);
     const ivBytes = toUint8Array(iv);
     return new CipherWrapper(keyBytes, ivBytes);
   }
 
   /**
-   * Create AES-GCM decipher for decryption.
+   * Create AES-GCM decipher for decryption. See `createCipheriv` for the
+   * native-vs-fallback selection rationale.
    */
   createDecipheriv(
-    _algorithm: string,
+    algorithm: string,
     key: Buffer | Uint8Array,
     iv: Buffer | Uint8Array
   ): DecipherLike {
+    if (HAS_NATIVE_CIPHER && QuickCrypto?.createDecipheriv) {
+      return QuickCrypto.createDecipheriv(algorithm, key, iv) as DecipherLike;
+    }
     const keyBytes = toUint8Array(key);
     const ivBytes = toUint8Array(iv);
     return new DecipherWrapper(keyBytes, ivBytes);

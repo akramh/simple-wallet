@@ -6,12 +6,13 @@
  * - Refresh in the background when data is stale
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePortfolioScreenSelector } from '../../store';
+import { useAfterInteraction } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
 
 export default function PortfolioScreen() {
@@ -32,13 +33,15 @@ export default function PortfolioScreen() {
   } = usePortfolioScreenSelector();
   const isNavigatingRef = useRef(false);
 
-  useEffect(() => {
-    // Hydrate cached snapshot immediately on tab visit, then revalidate silently if stale.
+  // Hydrate cached snapshot immediately on tab visit, then revalidate
+  // silently if stale. Hydration is fast and stays inline; the revalidation
+  // RPC fan-out is deferred until the tab transition finishes so it doesn't
+  // drop frames mid-animation. Replaces the previous `setTimeout(..., 0)`
+  // ad-hoc deferral.
+  useAfterInteraction(() => {
     const cachedAt = hydrateAllNetworksFromCache();
     if (!cachedAt || Date.now() - cachedAt > 30_000) {
-      setTimeout(() => {
-        refreshAllNetworks({ silent: true });
-      }, 0);
+      refreshAllNetworks({ silent: true });
     }
   }, [hydrateAllNetworksFromCache, refreshAllNetworks]);
 
