@@ -12,3 +12,5 @@ export { useBiometrics } from './useBiometrics';
 export { useClipboard } from './useClipboard';
 export { usePriceHistory } from './usePriceHistory';
 export { useBackgroundRefresh } from './useBackgroundRefresh';
+export { useDebouncedValue } from './useDebouncedValue';
+export { useAfterInteraction } from './useAfterInteraction';

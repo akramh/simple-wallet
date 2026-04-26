@@ -6,13 +6,16 @@
  * - Refresh in the background when data is stale
  */
 
-import { useCallback, useEffect, useRef } from 'react';
-import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator, Image } from 'react-native';
+import { useCallback, useRef } from 'react';
+import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePortfolioScreenSelector } from '../../store';
+import { useAfterInteraction } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
+import { Skeleton } from '../../components';
 
 export default function PortfolioScreen() {
   const router = useRouter();
@@ -32,13 +35,15 @@ export default function PortfolioScreen() {
   } = usePortfolioScreenSelector();
   const isNavigatingRef = useRef(false);
 
-  useEffect(() => {
-    // Hydrate cached snapshot immediately on tab visit, then revalidate silently if stale.
+  // Hydrate cached snapshot immediately on tab visit, then revalidate
+  // silently if stale. Hydration is fast and stays inline; the revalidation
+  // RPC fan-out is deferred until the tab transition finishes so it doesn't
+  // drop frames mid-animation. Replaces the previous `setTimeout(..., 0)`
+  // ad-hoc deferral.
+  useAfterInteraction(() => {
     const cachedAt = hydrateAllNetworksFromCache();
     if (!cachedAt || Date.now() - cachedAt > 30_000) {
-      setTimeout(() => {
-        refreshAllNetworks({ silent: true });
-      }, 0);
+      refreshAllNetworks({ silent: true });
     }
   }, [hydrateAllNetworksFromCache, refreshAllNetworks]);
 
@@ -101,13 +106,43 @@ export default function PortfolioScreen() {
             const val = parseFloat(b.balance || '0');
             return Number.isFinite(val) && val > 0;
           }).length === 0 ? (
-            <View className="items-center py-12">
-              <Ionicons name="pie-chart-outline" size={48} color="#4b5563" />
-              <Text className="text-gray-500 mt-4">No holdings yet</Text>
-              <Text className="text-gray-600 text-sm mt-1 text-center px-8">
-                Your portfolio breakdown will appear here once you have tokens.
-              </Text>
-            </View>
+            isRefreshingAllNetworks ? (
+              // Cold cache + refreshing: skeleton rows beat the misleading
+              // "No holdings yet" copy that otherwise flashes on cold start.
+              <View>
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <View key={`portfolio-skel-${i}`} className="mb-4">
+                    <Skeleton width={120} height={14} style={{ marginBottom: 8 }} />
+                    {Array.from({ length: 2 }).map((__, j) => (
+                      <View
+                        key={`portfolio-skel-${i}-${j}`}
+                        className="flex-row items-center py-3 border-b border-gray-800"
+                      >
+                        <Skeleton
+                          width={40}
+                          height={40}
+                          borderRadius={20}
+                          style={{ marginRight: 12 }}
+                        />
+                        <View className="flex-1">
+                          <Skeleton width={140} height={14} style={{ marginBottom: 6 }} />
+                          <Skeleton width={60} height={12} />
+                        </View>
+                        <Skeleton width={70} height={14} />
+                      </View>
+                    ))}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View className="items-center py-12">
+                <Ionicons name="pie-chart-outline" size={48} color="#4b5563" />
+                <Text className="text-gray-500 mt-4">No holdings yet</Text>
+                <Text className="text-gray-600 text-sm mt-1 text-center px-8">
+                  Your portfolio breakdown will appear here once you have tokens.
+                </Text>
+              </View>
+            )
           ) : (
             Object.entries(networks)
               .filter(([key]) => allNetworkHoldings.some(h => h.networkKey === key))
@@ -202,7 +237,12 @@ function HoldingRow({
       {/* Token Icon */}
       <View className="w-12 h-12 rounded-full bg-gray-800 items-center justify-center mr-3 overflow-hidden">
         {icon ? (
-          <Image source={icon} style={{ width: 40, height: 40, resizeMode: 'contain' }} />
+          <Image
+            source={icon}
+            style={{ width: 40, height: 40 }}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+          />
         ) : (
           <Text className="text-white font-bold text-lg">{symbol.charAt(0)}</Text>
         )}

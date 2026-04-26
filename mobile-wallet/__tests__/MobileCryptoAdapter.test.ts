@@ -121,6 +121,73 @@ describe('MobileCryptoAdapter', () => {
 
       expect(() => decipher.final('utf8')).toThrow();
     });
+
+    // Cross-implementation regression test for the Phase 3 cipher swap.
+    //
+    // On device, `MobileCryptoAdapter` uses `react-native-quick-crypto` —
+    // a JSI binding over OpenSSL, so its AES-GCM is functionally identical
+    // to Node's built-in `crypto.createCipheriv('aes-256-gcm', ...)`.
+    // Under Jest there's no native module, so the adapter falls back to the
+    // pure-JS `asmcrypto.js` wrapper.
+    //
+    // To prove the swap is byte-compatible (no re-encryption migration
+    // needed for existing wallets), we encrypt with Node's cipher — the
+    // exact API quick-crypto exposes on device — and decrypt through the
+    // adapter's fallback wrapper, and vice versa. Round-trip success means
+    // the two implementations agree on the wire format.
+    test('asmcrypto wrapper round-trips with Node createCipheriv', () => {
+      // Use require() so the test file stays runnable even if a future
+      // env removes the global crypto symbol.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const nodeCrypto = require('crypto');
+      const adapter = new MobileCryptoAdapter();
+
+      const key = Buffer.from(
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        'hex',
+      );
+      const iv = Buffer.from('a1b2c3d4e5f6a7b8c9d0e1f2', 'hex'); // 12-byte GCM IV
+      const plaintext = JSON.stringify({
+        msg: 'fixture for the cipher swap',
+        n: 42,
+        nested: { a: [1, 2, 3] },
+      });
+
+      // 1. Encrypt with Node (the API quick-crypto mirrors on device),
+      //    decrypt with the adapter's fallback (the path used in Jest /
+      //    Expo Go).
+      {
+        const cipher = nodeCrypto.createCipheriv('aes-256-gcm', key, iv);
+        const ciphertext = Buffer.concat([
+          cipher.update(plaintext, 'utf8'),
+          cipher.final(),
+        ]);
+        const tag: Buffer = cipher.getAuthTag();
+
+        const decipher = adapter.createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(tag);
+        decipher.update(ciphertext.toString('hex'), 'hex', 'utf8');
+        const out = decipher.final('utf8');
+        expect(out).toBe(plaintext);
+      }
+
+      // 2. The reverse: encrypt with the adapter (fallback path),
+      //    decrypt with Node.
+      {
+        const cipher = adapter.createCipheriv('aes-256-gcm', key, iv);
+        cipher.update(plaintext, 'utf8');
+        const ciphertextHex = cipher.final('hex') as string;
+        const tag = cipher.getAuthTag();
+
+        const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(Buffer.from(tag));
+        const decrypted = Buffer.concat([
+          decipher.update(Buffer.from(ciphertextHex, 'hex')),
+          decipher.final(),
+        ]).toString('utf8');
+        expect(decrypted).toBe(plaintext);
+      }
+    });
   });
 
   describe('randomBytes', () => {

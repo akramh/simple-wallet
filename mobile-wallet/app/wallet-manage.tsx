@@ -2,7 +2,7 @@
  * @fileoverview Wallet management screen - list, add, switch wallets.
  */
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -15,11 +15,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useShallow } from 'zustand/react/shallow';
 import { useWalletStore } from '../store';
 import { safeGoBack } from '../utils/navigation';
 
+type WalletListItem = { name: string; address: string };
+
 export default function WalletManageScreen() {
   const router = useRouter();
+  // Shallow selector — broad `useWalletStore()` re-rendered this screen on
+  // every store mutation, including unrelated balance/price ticks.
   const {
     walletList,
     currentWalletName,
@@ -29,7 +34,18 @@ export default function WalletManageScreen() {
     isLoading,
     error,
     clearError,
-  } = useWalletStore();
+  } = useWalletStore(
+    useShallow((state) => ({
+      walletList: state.walletList,
+      currentWalletName: state.currentWalletName,
+      loadWalletList: state.loadWalletList,
+      switchWallet: state.switchWallet,
+      canSwitchWalletWithoutPassword: state.canSwitchWalletWithoutPassword,
+      isLoading: state.isLoading,
+      error: state.error,
+      clearError: state.clearError,
+    })),
+  );
 
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showAddWalletModal, setShowAddWalletModal] = useState(false);
@@ -41,26 +57,69 @@ export default function WalletManageScreen() {
     loadWalletList();
   }, []);
 
-  const handleWalletPress = async (walletName: string) => {
-    if (walletName === currentWalletName) {
-      // Already active
-      return;
-    }
-    if (canSwitchWalletWithoutPassword()) {
-      try {
-        await switchWallet(walletName);
-        safeGoBack(router);
-      } catch (err) {
-        setSelectedWalletToSwitch(walletName);
-        setPassword('');
-        setShowPasswordModal(true);
+  const handleWalletPress = useCallback(
+    async (walletName: string) => {
+      if (walletName === currentWalletName) return;
+      if (canSwitchWalletWithoutPassword()) {
+        try {
+          await switchWallet(walletName);
+          safeGoBack(router);
+        } catch (err) {
+          setSelectedWalletToSwitch(walletName);
+          setPassword('');
+          setShowPasswordModal(true);
+        }
+        return;
       }
-      return;
-    }
-    setSelectedWalletToSwitch(walletName);
-    setPassword('');
-    setShowPasswordModal(true);
-  };
+      setSelectedWalletToSwitch(walletName);
+      setPassword('');
+      setShowPasswordModal(true);
+    },
+    [currentWalletName, canSwitchWalletWithoutPassword, switchWallet, router],
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: WalletListItem }) => {
+      const isActive = item.name === currentWalletName;
+      return (
+        <TouchableOpacity
+          onPress={() => handleWalletPress(item.name)}
+          className={`mb-3 p-4 rounded-2xl flex-row items-center ${
+            isActive ? 'bg-purple-600/20 border border-purple-600' : 'bg-gray-900'
+          }`}
+        >
+          <View
+            className={`w-12 h-12 rounded-full items-center justify-center mr-4 ${
+              isActive ? 'bg-purple-600' : 'bg-gray-800'
+            }`}
+          >
+            <Text className="text-white font-bold text-lg">
+              {item.name.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+          <View className="flex-1">
+            <View className="flex-row items-center">
+              <Text className="text-white font-semibold text-lg">{item.name}</Text>
+              {isActive && (
+                <View className="ml-2 px-2 py-0.5 bg-purple-600 rounded-full">
+                  <Text className="text-white text-xs font-medium">Active</Text>
+                </View>
+              )}
+            </View>
+            <Text className="text-gray-500 text-sm mt-1">
+              {item.address.slice(0, 12)}...{item.address.slice(-10)}
+            </Text>
+          </View>
+          {!isActive && (
+            <Ionicons name="chevron-forward" size={20} color="#6b7280" />
+          )}
+        </TouchableOpacity>
+      );
+    },
+    [currentWalletName, handleWalletPress],
+  );
+
+  const keyExtractor = useCallback((item: WalletListItem) => item.name, []);
 
   const handleSwitchWallet = async () => {
     if (!selectedWalletToSwitch || !password) return;
@@ -106,45 +165,9 @@ export default function WalletManageScreen() {
       {/* Wallet List */}
       <FlatList
         data={walletList}
-        keyExtractor={(item) => item.name}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
         contentContainerStyle={{ paddingHorizontal: 20 }}
-        renderItem={({ item }) => {
-          const isActive = item.name === currentWalletName;
-          return (
-            <TouchableOpacity
-              onPress={() => handleWalletPress(item.name)}
-              className={`mb-3 p-4 rounded-2xl flex-row items-center ${
-                isActive ? 'bg-purple-600/20 border border-purple-600' : 'bg-gray-900'
-              }`}
-            >
-              <View
-                className={`w-12 h-12 rounded-full items-center justify-center mr-4 ${
-                  isActive ? 'bg-purple-600' : 'bg-gray-800'
-                }`}
-              >
-                <Text className="text-white font-bold text-lg">
-                  {item.name.charAt(0).toUpperCase()}
-                </Text>
-              </View>
-              <View className="flex-1">
-                <View className="flex-row items-center">
-                  <Text className="text-white font-semibold text-lg">{item.name}</Text>
-                  {isActive && (
-                    <View className="ml-2 px-2 py-0.5 bg-purple-600 rounded-full">
-                      <Text className="text-white text-xs font-medium">Active</Text>
-                    </View>
-                  )}
-                </View>
-                <Text className="text-gray-500 text-sm mt-1">
-                  {item.address.slice(0, 12)}...{item.address.slice(-10)}
-                </Text>
-              </View>
-              {!isActive && (
-                <Ionicons name="chevron-forward" size={20} color="#6b7280" />
-              )}
-            </TouchableOpacity>
-          );
-        }}
         ListEmptyComponent={
           <View className="items-center py-20">
             <Ionicons name="wallet-outline" size={48} color="#4b5563" />

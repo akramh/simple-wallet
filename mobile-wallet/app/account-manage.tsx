@@ -8,7 +8,7 @@
  * Users can have multiple accounts per wallet without needing separate passwords.
  */
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,43 +20,100 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useShallow } from 'zustand/react/shallow';
 import { useWalletStore } from '../store';
 import { useToast } from '../contexts';
 import { safeGoBack } from '../utils/navigation';
 
+type Account = { index: number; address: string };
+
 export default function AccountManageScreen() {
   const router = useRouter();
   const { showToast } = useToast();
+  // Shallow selector — broad `useWalletStore()` re-rendered this screen on
+  // every store mutation, including unrelated balance/price ticks.
   const {
     accounts,
     currentAccountIndex,
-    address,
     loadAccounts,
     createAccount,
     switchAccount,
     isLoading,
-    error,
-    clearError,
     importType,
-  } = useWalletStore();
+  } = useWalletStore(
+    useShallow((state) => ({
+      accounts: state.accounts,
+      currentAccountIndex: state.currentAccountIndex,
+      loadAccounts: state.loadAccounts,
+      createAccount: state.createAccount,
+      switchAccount: state.switchAccount,
+      isLoading: state.isLoading,
+      importType: state.importType,
+    })),
+  );
 
   useEffect(() => {
     loadAccounts();
   }, []);
 
-  const handleAccountPress = async (index: number) => {
-    if (index === currentAccountIndex) {
-      // Already active
-      return;
-    }
+  const handleAccountPress = useCallback(
+    async (index: number) => {
+      if (index === currentAccountIndex) return;
+      try {
+        await switchAccount(index);
+        safeGoBack(router);
+      } catch (err) {
+        Alert.alert('Error', 'Failed to switch account');
+      }
+    },
+    [currentAccountIndex, switchAccount, router],
+  );
 
-    try {
-      await switchAccount(index);
-      safeGoBack(router);
-    } catch (err) {
-      Alert.alert('Error', 'Failed to switch account');
-    }
-  };
+  const renderItem = useCallback(
+    ({ item }: { item: Account }) => {
+      const isActive = item.index === currentAccountIndex;
+      return (
+        <TouchableOpacity
+          onPress={() => handleAccountPress(item.index)}
+          className={`mb-3 p-4 rounded-2xl flex-row items-center ${
+            isActive ? 'bg-purple-600/20 border border-purple-600' : 'bg-gray-900'
+          }`}
+        >
+          <View
+            className={`w-12 h-12 rounded-full items-center justify-center mr-4 ${
+              isActive ? 'bg-purple-600' : 'bg-gray-800'
+            }`}
+          >
+            <Text className="text-white font-bold text-lg">{item.index + 1}</Text>
+          </View>
+          <View className="flex-1">
+            <View className="flex-row items-center">
+              <Text className="text-white font-semibold text-lg">
+                Account #{item.index + 1}
+              </Text>
+              {isActive && (
+                <View className="ml-2 px-2 py-0.5 bg-purple-600 rounded-full">
+                  <Text className="text-white text-xs font-medium">Active</Text>
+                </View>
+              )}
+            </View>
+            <Text className="text-gray-500 text-sm mt-1">
+              {item.address.slice(0, 12)}...{item.address.slice(-10)}
+            </Text>
+          </View>
+          {!isActive && (
+            <Ionicons name="chevron-forward" size={20} color="#6b7280" />
+          )}
+        </TouchableOpacity>
+      );
+    },
+    [currentAccountIndex, handleAccountPress],
+  );
+
+  const keyExtractor = useCallback(
+    (item: Account) => `account-${item.index}`,
+    [],
+  );
 
   const handleAddAccount = async () => {
     try {
@@ -106,47 +163,9 @@ export default function AccountManageScreen() {
       {/* Account List */}
       <FlatList
         data={accounts}
-        keyExtractor={(item) => `account-${item.index}`}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
         contentContainerStyle={{ paddingHorizontal: 20 }}
-        renderItem={({ item }) => {
-          const isActive = item.index === currentAccountIndex;
-          return (
-            <TouchableOpacity
-              onPress={() => handleAccountPress(item.index)}
-              className={`mb-3 p-4 rounded-2xl flex-row items-center ${
-                isActive ? 'bg-purple-600/20 border border-purple-600' : 'bg-gray-900'
-              }`}
-            >
-              <View
-                className={`w-12 h-12 rounded-full items-center justify-center mr-4 ${
-                  isActive ? 'bg-purple-600' : 'bg-gray-800'
-                }`}
-              >
-                <Text className="text-white font-bold text-lg">
-                  {item.index + 1}
-                </Text>
-              </View>
-              <View className="flex-1">
-                <View className="flex-row items-center">
-                  <Text className="text-white font-semibold text-lg">
-                    Account #{item.index + 1}
-                  </Text>
-                  {isActive && (
-                    <View className="ml-2 px-2 py-0.5 bg-purple-600 rounded-full">
-                      <Text className="text-white text-xs font-medium">Active</Text>
-                    </View>
-                  )}
-                </View>
-                <Text className="text-gray-500 text-sm mt-1">
-                  {item.address.slice(0, 12)}...{item.address.slice(-10)}
-                </Text>
-              </View>
-              {!isActive && (
-                <Ionicons name="chevron-forward" size={20} color="#6b7280" />
-              )}
-            </TouchableOpacity>
-          );
-        }}
         ListEmptyComponent={
           <View className="items-center py-20">
             <Ionicons name="people-outline" size={48} color="#4b5563" />

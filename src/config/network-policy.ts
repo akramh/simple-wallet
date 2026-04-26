@@ -169,6 +169,41 @@ export function buildConnectSrcDirective(): string {
 }
 
 /**
+ * True if the given hostname or full URL points at a loopback or RFC 1918
+ * private IPv4 address — i.e. 127/8, 10/8, 172.16/12, or 192.168/16. Used to
+ * carve out dev-loop traffic (Metro HMR, source-map symbolication, local
+ * explorers) without naming a single LAN IP that DHCP can rotate underneath
+ * us.
+ */
+function isPrivateOrLoopbackHost(hostnameOrUrl: string): boolean {
+  // Cheap substring match first — handles full URLs and bare hostnames
+  // alike, parallel to the original 192.168 check that gated this allowlist.
+  if (
+    hostnameOrUrl.includes('127.0.0.1') ||
+    hostnameOrUrl.includes('192.168.') ||
+    hostnameOrUrl.includes('10.') ||
+    hostnameOrUrl.includes('172.')
+  ) {
+    // The substring match above is intentionally loose to mirror the prior
+    // 192.168 carve-out. Now narrow the 10. and 172. cases to the actual
+    // private ranges so that hostnames like "version-10.example.com" or
+    // "172.example.com" don't accidentally pass.
+    const m = hostnameOrUrl.match(/(?:^|[\/@])(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}/);
+    if (m) {
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      if (a === 127) return true;                        // loopback
+      if (a === 10) return true;                          // 10.0.0.0/8
+      if (a === 192 && b === 168) return true;            // 192.168.0.0/16
+      if (a === 172 && b >= 16 && b <= 31) return true;   // 172.16.0.0/12
+    } else if (hostnameOrUrl === 'localhost' || hostnameOrUrl.startsWith('localhost:')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Checks if a given URL is allowed by the security policy.
  *
  * @param urlString - The full URL to check (e.g. "https://api.example.com/v1/...")
@@ -197,16 +232,19 @@ export function isAllowedUrl(urlString: string): boolean {
       return false;
     }
 
-    // Allow local network access (192.168.x.x)
-    if (urlString.includes('192.168.')) {
+    // Allow local-network access for the dev loop (Metro HMR, symbolicate,
+    // local explorers). Covers the RFC 1918 private ranges + IPv4 loopback.
+    // Production builds rarely receive these hostnames; the carve-out exists
+    // because the dev server's IP changes with the host's DHCP lease and we
+    // cannot enumerate it ahead of time.
+    if (isPrivateOrLoopbackHost(urlString)) {
       return true;
     }
 
     const url = new URL(urlString);
     const hostname = url.hostname.toLowerCase();
 
-    // Allow 192.168.x.x directly
-    if (hostname.startsWith('192.168.')) {
+    if (isPrivateOrLoopbackHost(hostname)) {
       return true;
     }
 

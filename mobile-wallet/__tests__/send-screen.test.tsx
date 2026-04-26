@@ -47,6 +47,8 @@ const enableFakeTimers = () => {
 
 jest.mock('../store', () => ({
   useSendScreenSelector: () => mockState,
+  usePrice: (symbol: string | undefined) =>
+    symbol ? mockState.prices[symbol] ?? null : null,
 }));
 
 jest.mock('expo-router', () => ({

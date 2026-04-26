@@ -5,7 +5,8 @@
  * Supports filtering by transaction type and pull-to-refresh.
  */
 
-import { useEffect, useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useAfterInteraction } from '../../hooks';
 import {
   View,
   Text,
@@ -37,12 +38,14 @@ export default function ActivityScreen() {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
 
-  // Load transactions on mount and when network changes
-  useEffect(() => {
+  // Load transactions on mount and when network changes. Deferred until the
+  // tab transition animation finishes so the RPC fan-out doesn't drop frames
+  // mid-transition.
+  useAfterInteraction(() => {
     if (isUnlocked) {
       loadTransactions();
     }
-  }, [isUnlocked, network]);
+  }, [isUnlocked, network, loadTransactions]);
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);

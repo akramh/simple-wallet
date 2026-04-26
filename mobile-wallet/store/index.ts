@@ -24,10 +24,12 @@ export {
   useNetworkStateSelector,
   // Balances
   useBalancesSelector,
+  useBalance,
   useBalanceRefreshSelector,
   useBalancesWithRefreshSelector,
   // Prices
   usePricesSelector,
+  usePrice,
   usePortfolioTotalsSelector,
   useAllNetworkPortfolioSelector,
   // Transactions

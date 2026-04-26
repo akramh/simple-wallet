@@ -2,7 +2,7 @@
  * @fileoverview Manage Tokens screen - toggle visibility and add custom tokens.
  */
 
-import { useState, useEffect } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -12,32 +12,89 @@ import {
   TouchableOpacity,
   Modal,
   ActivityIndicator,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useShallow } from 'zustand/react/shallow';
 import { useWalletStore } from '../store';
 import { getTokenIcon } from '../utils/tokenIcons';
 import { safeGoBack } from '../utils/navigation';
+import type { TokenBalance } from '../services';
+
+interface TokenRowProps {
+  item: TokenBalance;
+  onToggle: (address: string, value: boolean) => void;
+}
+
+// Memoized row: only re-renders when this specific token's `isVisible` (or
+// identity) changes, not on every search keystroke or store tick.
+const TokenRow = memo(function TokenRow({ item, onToggle }: TokenRowProps) {
+  const icon = getTokenIcon(item.token.symbol);
+  const isNative = item.token.type === 'native';
+  const isVisible = item.isVisible !== false;
+  const handleToggle = useCallback(
+    (val: boolean) => onToggle(item.token.address!, val),
+    [onToggle, item.token.address],
+  );
+
+  return (
+    <View className="flex-row items-center py-4 border-b border-gray-800">
+      <View className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-3 overflow-hidden">
+        {icon ? (
+          <Image
+            source={icon}
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
+        ) : (
+          <Text className="text-white font-bold">{item.token.symbol.charAt(0)}</Text>
+        )}
+      </View>
+      <View className="flex-1">
+        <Text className="text-white font-medium">{item.token.name}</Text>
+        <Text className="text-gray-500 text-sm">{item.token.symbol}</Text>
+      </View>
+      {!isNative && (
+        <Switch
+          value={isVisible}
+          onValueChange={handleToggle}
+          trackColor={{ false: '#374151', true: '#a855f7' }}
+          thumbColor="#fff"
+        />
+      )}
+    </View>
+  );
+});
 
 export default function ManageTokensScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  // Shallow selector — `useWalletStore()` without one re-rendered this screen
+  // on every store change. We only need a handful of fields here.
   const {
     network,
     networks,
     balances,
     toggleTokenVisibility,
     addCustomToken,
-    isLoading,
     error,
-    clearError,
-  } = useWalletStore();
+  } = useWalletStore(
+    useShallow((state) => ({
+      network: state.network,
+      networks: state.networks,
+      balances: state.balances,
+      toggleTokenVisibility: state.toggleTokenVisibility,
+      addCustomToken: state.addCustomToken,
+      error: state.error,
+    })),
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
-  
+
   // Custom token form state
   const [tokenAddress, setTokenAddress] = useState('');
   const [tokenSymbol, setTokenSymbol] = useState('');
@@ -47,13 +104,26 @@ export default function ManageTokensScreen() {
   const networkConfig = networks[network];
   const isEVM = networkConfig?.type === 'evm' || !networkConfig?.type;
 
-  const filteredBalances = balances.filter((item) => {
+  // Recompute only when the inputs actually change. Previously this filter
+  // ran on every render, including unrelated parent re-renders.
+  const filteredBalances = useMemo(() => {
     const query = searchQuery.toLowerCase();
-    return (
-      item.token.name.toLowerCase().includes(query) ||
-      item.token.symbol.toLowerCase().includes(query)
+    if (!query) return balances;
+    return balances.filter(
+      (item) =>
+        item.token.name.toLowerCase().includes(query) ||
+        item.token.symbol.toLowerCase().includes(query),
     );
-  });
+  }, [balances, searchQuery]);
+
+  const renderItem = useCallback(
+    ({ item }: { item: TokenBalance }) => (
+      <TokenRow item={item} onToggle={toggleTokenVisibility} />
+    ),
+    [toggleTokenVisibility],
+  );
+
+  const keyExtractor = useCallback((item: TokenBalance) => item.token.symbol, []);
 
   const handleAddToken = async () => {
     if (!tokenAddress || !tokenSymbol) return;
@@ -113,37 +183,12 @@ export default function ManageTokensScreen() {
       {/* Token List */}
       <FlatList
         data={filteredBalances}
-        keyExtractor={(item) => item.token.symbol}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 20 }}
-        renderItem={({ item }) => {
-          const icon = getTokenIcon(item.token.symbol);
-          const isNative = item.token.type === 'native';
-          const isVisible = item.isVisible !== false;
-
-          return (
-            <View className="flex-row items-center py-4 border-b border-gray-800">
-              <View className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-3 overflow-hidden">
-                {icon ? (
-                  <Image source={icon} className="w-full h-full" resizeMode="cover" />
-                ) : (
-                  <Text className="text-white font-bold">{item.token.symbol.charAt(0)}</Text>
-                )}
-              </View>
-              <View className="flex-1">
-                <Text className="text-white font-medium">{item.token.name}</Text>
-                <Text className="text-gray-500 text-sm">{item.token.symbol}</Text>
-              </View>
-              {!isNative && (
-                <Switch
-                  value={isVisible}
-                  onValueChange={(val) => toggleTokenVisibility(item.token.address!, val)}
-                  trackColor={{ false: '#374151', true: '#a855f7' }}
-                  thumbColor="#fff"
-                />
-              )}
-            </View>
-          );
-        }}
+        removeClippedSubviews
+        initialNumToRender={12}
+        windowSize={5}
         ListEmptyComponent={
           <View className="items-center py-12">
             <Text className="text-gray-500">No tokens found</Text>

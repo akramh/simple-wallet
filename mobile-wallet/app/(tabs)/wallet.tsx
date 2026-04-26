@@ -2,7 +2,7 @@
  * @fileoverview Main wallet screen - shows balances and quick actions.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,15 +10,17 @@ import {
   TouchableOpacity,
   RefreshControl,
   Pressable,
-  Image,
   ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletScreenSelector } from '../../store';
-import { useClipboard } from '../../hooks';
+import { useAfterInteraction, useClipboard } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
+import { Skeleton } from '../../components';
+import type { TokenBalance } from '../../services';
 
 export default function WalletScreen() {
   const router = useRouter();
@@ -42,9 +44,11 @@ export default function WalletScreen() {
   const isNavigatingRef = useRef(false);
   const { copy, isCopied } = useClipboard();
 
-  // Refresh balances on mount (silent - don't show loading indicator for automatic refresh)
-  useEffect(() => {
-    // Avoid spamming refreshes when we already have recent cached data.
+  // Refresh balances on mount (silent — don't show a loading indicator for
+  // automatic refresh). Deferred until the navigation animation that brought
+  // this tab into view has finished; the RPC fan-out otherwise blocks the
+  // JS thread mid-transition and drops frames.
+  useAfterInteraction(() => {
     if (!balancesLastUpdated || Date.now() - balancesLastUpdated > 30_000) {
       refreshBalancesAndPrices({ silent: true });
     }
@@ -79,47 +83,72 @@ export default function WalletScreen() {
   const addressCopied = address ? isCopied(address) : false;
   const hasMultipleAccounts = accounts.length > 1;
 
+  // Memoize the visible-tokens slice — recomputed only when balances change.
+  const visibleBalances = useMemo(
+    () => balances.filter((b) => b.isVisible !== false),
+    [balances],
+  );
+
+  // Stable per-row tap handler. Calling pattern is `handleTokenPress(item)` —
+  // identity stays the same across renders so a memoized TokenRow can skip
+  // re-rendering when its data hasn't changed.
+  const handleTokenPress = useCallback(
+    (item: typeof balances[number]) => {
+      const isNative = item.token.address === 'native' || !item.token.address;
+      navigateOnce(() => {
+        router.push({
+          pathname: '/token-detail',
+          params: {
+            symbol: item.token.symbol,
+            name: item.token.name,
+            network: network,
+            balance: item.balance || '0',
+            contractAddress: isNative ? undefined : item.token.address,
+            isNative: isNative ? 'true' : 'false',
+            decimals: item.token.decimals?.toString() || '18',
+          },
+        });
+      });
+    },
+    [router, navigateOnce, network],
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: typeof balances[number] }) => {
+      const price = prices[item.token.symbol] ?? null;
+      const balance = parseFloat(item.balance || '0');
+      const usdValue = price !== null ? balance * price : null;
+      return (
+        <View className="px-5 bg-gray-900/50">
+          <TokenRow
+            symbol={item.token.symbol}
+            name={item.token.name}
+            balance={item.balance || '0'}
+            usdValue={usdValue}
+            isLoading={item.isLoading}
+            item={item}
+            onPress={handleTokenPress}
+          />
+        </View>
+      );
+    },
+    [prices, handleTokenPress],
+  );
+
+  const keyExtractor = useCallback(
+    (item: typeof balances[number], index: number) => `${item.token.symbol}-${index}`,
+    [],
+  );
+
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
       <FlatList
-        data={balances.filter(b => b.isVisible !== false)}
-        keyExtractor={(item, index) => `${item.token.symbol}-${index}`}
-        renderItem={({ item }) => {
-          const price = prices[item.token.symbol] ?? null;
-          const balance = parseFloat(item.balance || '0');
-          const usdValue = price !== null ? balance * price : null;
-          const isNative = item.token.address === 'native' || !item.token.address;
-
-          const handleTokenPress = () => {
-            navigateOnce(() => {
-              router.push({
-                pathname: '/token-detail',
-                params: {
-                  symbol: item.token.symbol,
-                  name: item.token.name,
-                  network: network,
-                  balance: item.balance || '0',
-                  contractAddress: isNative ? undefined : item.token.address,
-                  isNative: isNative ? 'true' : 'false',
-                  decimals: item.token.decimals?.toString() || '18',
-                },
-              });
-            });
-          };
-
-          return (
-            <View className="px-5 bg-gray-900/50">
-              <TokenRow
-                symbol={item.token.symbol}
-                name={item.token.name}
-                balance={item.balance || '0'}
-                usdValue={usdValue}
-                isLoading={item.isLoading}
-                onPress={handleTokenPress}
-              />
-            </View>
-          );
-        }}
+        data={visibleBalances}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        removeClippedSubviews
+        initialNumToRender={8}
+        windowSize={5}
         ListHeaderComponent={() => (
           <>
             {/* Header */}
@@ -208,13 +237,38 @@ export default function WalletScreen() {
           </>
         )}
         ListEmptyComponent={
-          <View className="items-center py-12 bg-gray-900/50 h-full">
-            <Ionicons name="wallet-outline" size={48} color="#4b5563" />
-            <Text className="text-gray-500 mt-4">No tokens yet</Text>
-            <Text className="text-gray-600 text-sm mt-1">
-              Pull down to refresh
-            </Text>
-          </View>
+          isRefreshingBalances || isLoadingPrices ? (
+            // Cold cache + refreshing: show skeleton rows so the screen has
+            // something living while the RPC fan-out resolves. Replaces the
+            // "No tokens yet" copy that misleadingly fired during the first
+            // few seconds of every cold start.
+            <View className="px-5 bg-gray-900/50">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <View
+                  key={`skeleton-${i}`}
+                  className="flex-row items-center py-4 border-b border-gray-800"
+                >
+                  <Skeleton width={40} height={40} borderRadius={20} style={{ marginRight: 12 }} />
+                  <View className="flex-1">
+                    <Skeleton width={120} height={14} style={{ marginBottom: 6 }} />
+                    <Skeleton width={60} height={12} />
+                  </View>
+                  <View className="items-end">
+                    <Skeleton width={70} height={14} style={{ marginBottom: 6 }} />
+                    <Skeleton width={50} height={12} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View className="items-center py-12 bg-gray-900/50 h-full">
+              <Ionicons name="wallet-outline" size={48} color="#4b5563" />
+              <Text className="text-gray-500 mt-4">No tokens yet</Text>
+              <Text className="text-gray-600 text-sm mt-1">
+                Pull down to refresh
+              </Text>
+            </View>
+          )
         }
         refreshControl={
           <RefreshControl
@@ -259,26 +313,34 @@ function QuickActionButton({
   );
 }
 
-function TokenRow({
-  symbol,
-  name,
-  balance,
-  usdValue,
-  isLoading,
-  onPress,
-}: {
+interface TokenRowProps {
   symbol: string;
   name: string;
   balance: string;
   usdValue: number | null;
   isLoading: boolean;
-  onPress: () => void;
-}) {
+  item: TokenBalance;
+  onPress: (item: TokenBalance) => void;
+}
+
+// Memoized to skip rendering when none of this token's props changed.
+// `onPress` takes the row's `item` so the parent can keep a single stable
+// callback rather than producing a fresh closure per row each render.
+const TokenRow = memo(function TokenRow({
+  symbol,
+  name,
+  balance,
+  usdValue,
+  isLoading,
+  item,
+  onPress,
+}: TokenRowProps) {
   const tokenIcon = getTokenIcon(symbol);
+  const handlePress = useCallback(() => onPress(item), [onPress, item]);
 
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={handlePress}
       activeOpacity={0.7}
       className="flex-row items-center py-4 border-b border-gray-800"
     >
@@ -287,8 +349,9 @@ function TokenRow({
         {tokenIcon ? (
           <Image
             source={tokenIcon}
-            className="w-full h-full"
-            resizeMode="cover"
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
           />
         ) : (
           <Text className="text-white font-bold">{symbol.charAt(0)}</Text>
@@ -321,4 +384,4 @@ function TokenRow({
       <Ionicons name="chevron-forward" size={16} color="#6b7280" style={{ marginLeft: 8 }} />
     </TouchableOpacity>
   );
-}
+});
