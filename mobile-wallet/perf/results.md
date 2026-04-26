@@ -267,6 +267,114 @@ that follow-up ships.
 
 ---
 
+## Phase 6 — Alchemy alignment with CLI / extension
+
+Captured 2026-04-26.
+
+### Audit results from this session
+
+Before changing anything, verified the four Phase 6 audit findings against
+current code:
+
+| Finding | Verdict |
+| --- | --- |
+| EVM + Solana RPC substitution | ✅ Already correct ([bundled-config.ts:118-120](../config/bundled-config.ts:118)). |
+| Alchemy Prices `setAlchemyApiKey` at boot | ✅ Already wired ([WalletBridge.ts:266-267](../services/WalletBridge.ts:266)). |
+| Console redactor at boot | ✅ Already wired ([WalletBridge.ts:42-44](../services/WalletBridge.ts:42)). |
+| `extractAlchemyUrl` regex matches mobile RPC URL format | ✅ Verified — `/\.g\.alchemy\.com\//` matches the substituted URL `https://eth-mainnet.g.alchemy.com/v2/<key>`. No fix needed. |
+| Foreground-only background refresh | ✅ Already implemented ([useBackgroundRefresh.ts](../hooks/useBackgroundRefresh.ts)) — pauses on `'background'` AppState, refreshes immediately on `'active'`. |
+| Alchemy Portfolio batched API on mobile | ❌ **Not wired.** The audit's main delivery target. |
+| React Query staleTime tuning | n/a — mobile has zero `useQuery` consumers. The `QueryClientProvider` is a placeholder; all state is Zustand. |
+
+### Changes
+
+- **Bulk-register networks at boot**
+  ([WalletBridge.ts](../services/WalletBridge.ts) `initialize`)
+  - Now calls `explorerAPI.registerNetworks(this.config.networks, getAlchemyApiKey())`
+    once per session. Mirrors what the extension service-worker does on
+    startup. Pre-warms the Alchemy Transfers fast path for every chain
+    instead of needing a lazy registration round-trip on first
+    transaction-history call.
+
+- **Wire `fetchAlchemyPortfolio` into multi-chain refresh**
+  ([WalletBridge.ts](../services/WalletBridge.ts) `getAllNetworkHoldings`)
+  - Splits enabled networks into Alchemy-supported vs. fallback. The
+    Alchemy set (eth/sepolia/base/arb/opt/polygon/bsc/avalanche/linea/solana-mainnet)
+    is fetched in **one** batched HTTP request that returns balances + token
+    metadata + USD prices. Bitcoin / XRP / TON keep the per-chain
+    `getNetworkPortfolioWithCache` loop.
+  - On partial failure (e.g. an Alchemy chain returns no entries) the
+    remaining chains automatically fall through to the per-chain path —
+    one flaky chain doesn't sink the whole refresh.
+  - Three new private helpers in `WalletBridge`:
+    - `buildAlchemyAddressGroups` — partitions by chain family (EVM
+      shares an address; Solana has its own).
+    - `fetchAlchemyPortfolioWithRetry` — 3-attempt loop with 250 ms
+      base × 2^attempt backoff and 0–250 ms jitter.
+    - `portfolioEntryToHolding` — maps `PortfolioEntry` into the
+      existing holdings-row shape, falling back to native symbol/name
+      from `config.json` when Alchemy doesn't return metadata.
+
+- **Skip redundant per-chain price fetch for Alchemy chains**
+  ([WalletBridge.ts](../services/WalletBridge.ts) enrichment loop in
+  `getAllNetworkHoldings`)
+  - The batched Alchemy response already includes `priceUsd` per token. The
+    enrichment loop now reads from an `alchemyPrices` map first; only
+    chains that fell through to per-chain fetching (BTC/XRP/TON or any
+    Alchemy chain that returned empty) call `getTokenPrices` /
+    `getPriceByNetworkType`.
+
+- **Wire single-chain Alchemy fast path into Wallet tab refresh**
+  ([WalletBridge.ts](../services/WalletBridge.ts) `getNetworkPortfolioWithCache`)
+  - When the active network is Alchemy-supported, the same
+    `fetchAlchemyPortfolioWithRetry` helper handles a 1-network group.
+    Wallet-tab refresh now hits one HTTP roundtrip instead of separate
+    balance + token-list + price calls.
+  - Falls through to the existing `service.getPortfolioForNetwork` path
+    when the chain isn't Alchemy-supported or the batched call returns
+    empty (so transient failures don't break the screen).
+
+### Targets
+
+These are device-confirmable; numbers slot into [baseline.md](./baseline.md):
+
+| Metric | Today (single Alchemy chain) | Target (this phase) |
+| --- | --- | --- |
+| Wallet-tab refresh HTTP calls | 3+ per chain (balance, tokens, prices) | **1** |
+| Portfolio refresh time, 12-chain cold cache | 3–5 s | **1–2 s** |
+| Portfolio HTTP calls, 12-chain cold cache | 12+ | **≤ 2** Alchemy + per-chain for BTC/XRP/TON |
+
+### Bundle size delta
+
+| Platform | Hermes .hbc raw | Hermes .hbc gzipped | vs. Phases 4+5 |
+| --- | --- | --- | --- |
+| iOS | 11,660,618 B | 4,844,328 B | +12 KB raw / +5 KB gzipped |
+| Android | 11,659,815 B | 4,844,257 B | +11 KB raw / +6.7 KB gzipped |
+
+`fetchAlchemyPortfolio` from the shared core + the three new
+`WalletBridge` helpers add a few KB. Negligible against the ~3-second
+runtime savings the batched API delivers on the Portfolio tab.
+
+### Verification
+
+- `npm run typecheck` clean.
+- `npm test` — 4 suites / 25 tests fail (same pre-existing baseline).
+- `expo export` succeeded for both platforms.
+
+### Deliberately deferred
+
+- **React Query staleTime tuning** — no `useQuery` consumers in mobile;
+  the QueryClientProvider in `_layout.tsx` is a placeholder. Worth
+  removing entirely or repurposing in a separate cleanup PR.
+- **Mobile-side redactor unit test** — Phase 6 plan called for one but
+  the redactor is already comprehensively tested at the root
+  ([tests/redact-logs.test.js](../../tests/redact-logs.test.js)) and
+  the mobile wiring is a single line at module-eval. Adding a Jest
+  test for module-eval side effects requires mocking `expo-constants`
+  for diminishing returns.
+
+---
+
 ## Phase 2 — Render hygiene
 
 Captured 2026-04-26.

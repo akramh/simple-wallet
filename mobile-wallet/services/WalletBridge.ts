@@ -31,6 +31,12 @@ import { mobileCrypto, MobileCryptoAdapter } from "./MobileCryptoAdapter";
 import { cacheService } from "./CacheService";
 import type { Token } from "@wallet/types/token";
 import { installConsoleRedactor } from "@wallet/utils/redact-logs";
+import {
+  fetchAlchemyPortfolio,
+  isPortfolioSupported,
+  type PortfolioAddressGroup,
+  type PortfolioEntry,
+} from "@wallet/portfolio-api";
 import Constants from "expo-constants";
 
 // Redact the Alchemy (and legacy Helius) key from any console.* output.
@@ -223,6 +229,29 @@ class WalletBridge {
       // We'll lazily import wallet modules to avoid bundling issues
       // For now, mark as initialized - actual wallet creation happens on unlock/create
       this.isInitialized = true;
+
+      // Eagerly register every EVM network with the explorer-api singleton so
+      // `alchemy_getAssetTransfers` is the chosen path on first transaction
+      // history fetch, instead of needing a lazy registration round-trip per
+      // chain (the prior pattern at line ~1290). Mirrors what the extension
+      // service-worker does on startup. `extractAlchemyUrl` filters by URL
+      // shape, so non-Alchemy chains (avalanche/bsc/linea) automatically fall
+      // through to Etherscan V2.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { explorerAPI } = require("@wallet/explorer-api");
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { getAlchemyApiKey } = require("../config/bundled-config");
+        explorerAPI.registerNetworks(this.config.networks, getAlchemyApiKey());
+        if (__DEV__) {
+          console.log(
+            "[WalletBridge] explorerAPI registered:",
+            explorerAPI.getRegisteredNetworks(),
+          );
+        }
+      } catch (err) {
+        console.warn("[WalletBridge] explorerAPI bulk register failed:", err);
+      }
 
       console.log(
         "[WalletBridge] Initialized with networks:",
@@ -1384,6 +1413,90 @@ class WalletBridge {
   }
 
   /**
+   * Build the Alchemy address-groups for the supplied network keys: one group
+   * per chain family (EVM share an address, Solana has its own). Returns
+   * `null` if no Alchemy-supported networks are present so the caller can
+   * skip the batched call entirely.
+   */
+  private buildAlchemyAddressGroups(
+    networkKeys: string[],
+  ): PortfolioAddressGroup[] | null {
+    const supported = networkKeys.filter(isPortfolioSupported);
+    if (supported.length === 0) return null;
+
+    const evmNetworks = supported.filter((n) => n !== "solana-mainnet");
+    const solanaNetworks = supported.filter((n) => n === "solana-mainnet");
+
+    const groups: PortfolioAddressGroup[] = [];
+    if (evmNetworks.length > 0) {
+      const evmAddress = this.getAddressForNetwork("mainnet"); // any EVM key works
+      if (evmAddress) groups.push({ address: evmAddress, networkKeys: evmNetworks });
+    }
+    if (solanaNetworks.length > 0) {
+      const solAddress = this.getAddressForNetwork("solana-mainnet");
+      if (solAddress) groups.push({ address: solAddress, networkKeys: solanaNetworks });
+    }
+    return groups.length > 0 ? groups : null;
+  }
+
+  /**
+   * Call `fetchAlchemyPortfolio` with bounded retry + exponential backoff +
+   * jitter. Returns an empty array on permanent failure so the caller falls
+   * back to per-chain RPC for the same set of networks.
+   */
+  private async fetchAlchemyPortfolioWithRetry(
+    apiKey: string,
+    groups: PortfolioAddressGroup[],
+  ): Promise<PortfolioEntry[]> {
+    const maxAttempts = 3;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const entries = await fetchAlchemyPortfolio(apiKey, groups);
+        if (entries.length > 0 || attempt === maxAttempts - 1) return entries;
+      } catch (err) {
+        lastErr = err;
+      }
+      // 250 ms · 2^attempt + 0–250 ms jitter, capped on the last try.
+      const delay = 250 * 2 ** attempt + Math.floor(Math.random() * 250);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    if (lastErr) console.warn("[WalletBridge] Alchemy portfolio retry exhausted:", lastErr);
+    return [];
+  }
+
+  /**
+   * Map an Alchemy `PortfolioEntry` into the holdings-row shape the rest of
+   * the wallet UI consumes.
+   */
+  private portfolioEntryToHolding(
+    entry: PortfolioEntry,
+    fetchedAt: number,
+  ): { token: Token; balance: string; networkKey: string; height: null; fetchedAt: number } {
+    const isNative = entry.tokenKey === "native";
+    const netConfig = this.config!.networks[entry.networkKey];
+    const isSolana = entry.networkKey === "solana-mainnet";
+    return {
+      token: {
+        symbol:
+          entry.symbol ??
+          (isNative ? netConfig?.nativeSymbol ?? "?" : "???"),
+        name:
+          entry.name ??
+          (isNative ? netConfig?.nativeName ?? netConfig?.name ?? "" : "Unknown Token"),
+        type: isNative ? "native" : isSolana ? "spl" : "erc20",
+        address: isNative ? undefined : entry.tokenKey,
+        decimals: entry.decimals,
+        logoURI: entry.logoUrl,
+      } as Token,
+      balance: entry.balance,
+      networkKey: entry.networkKey,
+      height: null,
+      fetchedAt,
+    };
+  }
+
+  /**
    * Get holdings across enabled networks with caching, dedupe, and bounded concurrency.
    */
   async getAllNetworkHoldings(options?: {
@@ -1440,9 +1553,54 @@ class WalletBridge {
     }
 
     const runner = (async () => {
-      const queue = [...enabledNetworks];
       const holdings: any[] = [];
       const errors: Record<string, string> = {};
+      // Map of `${networkKey}:${tokenKey}` → priceUsd already returned by
+      // Alchemy. The enrichment loop below uses this to skip the redundant
+      // per-chain price fetch for chains that came through the batched API.
+      const alchemyPrices = new Map<string, number | null>();
+
+      // ────────────────────────────────────────────────────────────────────
+      // Batched path: Alchemy Portfolio API for the chains it covers.
+      //
+      // One HTTP request handles up to 2 addresses × 5 networks each. For our
+      // 9 EVM chains + 1 Solana chain that's at most 2 requests instead of 12
+      // per-chain RPC fan-outs. Failures here just leave `alchemyResults`
+      // empty — every chain falls through to the per-chain path below.
+      // ────────────────────────────────────────────────────────────────────
+      const alchemyApiKey = (() => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { getAlchemyApiKey } = require("../config/bundled-config");
+        return getAlchemyApiKey() as string | undefined;
+      })();
+      const alchemyChains = enabledNetworks.filter(isPortfolioSupported);
+      const fetchedAt = Date.now();
+
+      if (alchemyApiKey && alchemyChains.length > 0) {
+        const groups = this.buildAlchemyAddressGroups(alchemyChains);
+        if (groups) {
+          const entries = await this.fetchAlchemyPortfolioWithRetry(
+            alchemyApiKey,
+            groups,
+          );
+          for (const entry of entries) {
+            holdings.push(this.portfolioEntryToHolding(entry, fetchedAt));
+            alchemyPrices.set(`${entry.networkKey}:${entry.tokenKey}`, entry.priceUsd);
+          }
+        }
+      }
+
+      // ────────────────────────────────────────────────────────────────────
+      // Per-chain fallback path: Bitcoin / XRP / TON, plus any Alchemy chain
+      // for which the batched call returned nothing (rare, but covers
+      // partial-failure scenarios so a flaky single chain doesn't sink the
+      // whole refresh). Bounded concurrency identical to the prior loop.
+      // ────────────────────────────────────────────────────────────────────
+      const alchemyHits = new Set(holdings.map((h) => h.networkKey));
+      const fallbackChains = enabledNetworks.filter(
+        (n) => !alchemyHits.has(n),
+      );
+      const queue = [...fallbackChains];
 
       const workers: Array<Promise<void>> = [];
       for (let i = 0; i < networkConcurrency; i++) {
@@ -1529,11 +1687,35 @@ class WalletBridge {
 
         let priceMap = new Map<string, number | null>();
 
-        // Non-EVM networks: use unified price fetcher
-        if (
+        // Fast path: chains that came through `fetchAlchemyPortfolio` already
+        // carry prices in the response. Reuse them via the `alchemyPrices`
+        // map and skip the per-chain HTTP price fetch entirely.
+        const cameFromAlchemy = isPortfolioSupported(networkKey);
+        const hasAlchemyPriceCoverage =
+          cameFromAlchemy &&
+          assets.some((a) => {
+            const tk = a.token.type === "native" || !a.token.address
+              ? "native"
+              : a.token.address.toLowerCase();
+            return alchemyPrices.has(`${networkKey}:${tk}`);
+          });
+
+        if (hasAlchemyPriceCoverage) {
+          for (const a of assets) {
+            const tk = a.token.type === "native" || !a.token.address
+              ? "native"
+              : a.token.address.toLowerCase();
+            const p = alchemyPrices.get(`${networkKey}:${tk}`);
+            const key = a.token.type === "native" ? "native" : (a.token.address || "");
+            // Preserve the SPL convention that addresses stay case-sensitive;
+            // EVM keys are already lowercased via tokenKey.
+            priceMap.set(key, p ?? null);
+          }
+        } else if (
           netConfig.type &&
           ["bitcoin", "solana", "xrp", "ton"].includes(netConfig.type)
         ) {
+          // Non-EVM, no Alchemy coverage: fall back to the unified price fetcher.
           const price = await getPriceByNetworkType(netConfig.type, networkKey);
           priceMap.set("native", price);
 
@@ -1555,7 +1737,7 @@ class WalletBridge {
             }
           }
         } else if (netConfig.chainId) {
-          // EVM: batch prices per chain
+          // EVM, no Alchemy coverage (e.g. avalanche/bsc/linea): batch prices.
           const tokenInfos = assets.map((a) => ({
             type: (a.token.type === "native" ? "native" : "erc20") as
               | "native"
@@ -1676,6 +1858,45 @@ class WalletBridge {
       return this.inflightBalances.get(cacheKey)!;
 
     const run = (async () => {
+      // Fast path: single-chain Alchemy batched call.
+      // For Alchemy-supported chains (EVM + Solana mainnet), use the same
+      // `/assets/tokens/by-address` endpoint the multi-chain portfolio uses.
+      // It returns balances + token metadata + USD prices in one round-trip
+      // — strictly fewer HTTP calls than the per-chain
+      // `getPortfolioForNetwork` path which fans out balance, token list,
+      // and price queries separately.
+      //
+      // Falls through to the per-chain path on any failure or when the chain
+      // isn't Alchemy-supported (bitcoin, xrp, ton, avalanche, bsc, linea).
+      if (isPortfolioSupported(networkKey)) {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { getAlchemyApiKey } = require("../config/bundled-config");
+        const apiKey = getAlchemyApiKey() as string | undefined;
+        const groups = apiKey ? this.buildAlchemyAddressGroups([networkKey]) : null;
+        if (apiKey && groups) {
+          try {
+            const entries = await this.fetchAlchemyPortfolioWithRetry(apiKey, groups);
+            if (entries.length > 0) {
+              const fetchedAt = Date.now();
+              const portfolio = entries
+                .filter((e) => e.networkKey === networkKey)
+                .map((e) => this.portfolioEntryToHolding(e, fetchedAt));
+              const result = { fetchedAt, height: undefined, portfolio };
+              this.balanceCache.set(cacheKey, result);
+              this.inflightBalances.delete(cacheKey);
+              return result;
+            }
+          } catch (err) {
+            console.warn(
+              "[WalletBridge] Alchemy single-chain path failed; falling back to per-chain:",
+              err,
+            );
+          }
+        }
+      }
+
+      // Per-chain fallback: bitcoin / xrp / ton / non-Alchemy EVM, or any
+      // Alchemy chain whose batched call returned empty.
       const maxRetries = 2;
       let lastErr: any;
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
