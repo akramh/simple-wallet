@@ -78,20 +78,38 @@ Bundle-size deltas are within noise — expected. The win from Phase 1 is at
 
 ### Reverted: `enableFreeze(true)` (2026-04-26)
 
-The Phase 1 freeze opt-in had to be backed out. On Expo Go SDK 54 with Fabric
-+ asyncRoutes, `react-native-screens` `NativeStackView` dispatches a setState
-from an Animated event listener during the freeze→unfreeze transition cycle.
-React 19 then logs *"Can't perform a React state update on a component that
-hasn't mounted yet"* with `AuthLayout` / `TabsLayout` in the trace, even
-though both are bare render-only components. The error is cosmetic in this
-codebase but spams the dev log enough to drown real signal.
+Removed first as a suspected cause of the
+*"Can't perform a React state update on a component that hasn't mounted yet"*
+error spam in the dev log — turned out the freeze wasn't the trigger, but
+this stays reverted: `enableScreens(true)` is the SDK 54 default and freeze
+wasn't buying us anything visible without a device profiler trace.
 
-`enableScreens(true)` stays (it's the SDK 54 default — keeping the explicit
-call is just defensive). `asyncRoutes` and `newArchEnabled` stay; they are
-the bigger Phase 1 wins and are not implicated in this specific listener
-race. Re-introduce the freeze when `react-native-screens` upstream guards
-the NativeStackView listener with a mounted-check, or behind a runtime
-toggle once a device session confirms a measurable tab-switch delta.
+### Reverted: `asyncRoutes: true` for native (2026-04-26)
+
+The actual cause of the *"state update on a component that hasn't mounted
+yet"* error spam. With `asyncRoutes: true`, expo-router wraps each screen
+in `React.lazy(...)` + Suspense; under Fabric + `react-native-screens`
+`NativeStackView`, the Animated event listener inside the navigator can
+dispatch setState on a screen whose lazy chunk hasn't finished resolving.
+React 19 throws an error rather than the prior warning. `AuthLayout` /
+`TabsLayout` showed up in the trace because they're the bare layouts where
+the suspect screen rendered — neither has any state of its own.
+
+Confirmed by elimination: pre-Phase-1 (Fabric on, asyncRoutes off) had no
+warning; post-Phase-1 with freeze removed but asyncRoutes still on, warning
+persisted; setting `asyncRoutes: false` cleared it.
+
+Cost of the rollback: lazy per-screen module evaluation is gone. Native is
+a single Hermes bundle anyway, so what we lose is `React.lazy` deferring
+each screen module's first-execution side effects until first navigation —
+a small win on cold start, not a make-or-break one. Worth giving up to
+keep the dev log readable.
+
+Re-enable when one of:
+- expo-router / react-native-screens land a guard for the lazy×Animated
+  listener race, or
+- We adopt a Suspense boundary that wraps each navigator and absorbs the
+  early setState before it reaches the unmounted child.
 
 ---
 

@@ -69,11 +69,7 @@
 
     "extra": {
       "router": {
-        "asyncRoutes": {
-          "ios": true,
-          "android": true,
-          "default": false
-        }
+        "asyncRoutes": false
       }
     },
     "experiments": {
