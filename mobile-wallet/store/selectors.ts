@@ -84,6 +84,19 @@ export const useNetworkStateSelector = () =>
 /** Select token balances array */
 export const useBalancesSelector = () => useWalletStore((state) => state.balances);
 
+/**
+ * Narrow selector: subscribe to one token's balance entry by symbol. Re-renders
+ * only when that specific TokenBalance changes reference, not on every
+ * balance-refresh tick. Useful from screens like Send that care about the
+ * actively-selected token's balance, not the whole list.
+ *
+ * Returns `undefined` if the symbol isn't in the current network's set.
+ */
+export const useBalance = (symbol: string | undefined) =>
+  useWalletStore((state) =>
+    symbol ? state.balances.find((b) => b.token.symbol === symbol) : undefined,
+  );
+
 /** Select balance refresh state */
 export const useBalanceRefreshSelector = () =>
   useWalletStore(
@@ -111,6 +124,15 @@ export const useBalancesWithRefreshSelector = () =>
 
 /** Select prices map */
 export const usePricesSelector = () => useWalletStore((state) => state.prices);
+
+/**
+ * Narrow selector: subscribe to one symbol's USD price. Returns a scalar so
+ * Zustand's default `===` equality check skips re-renders unless that token's
+ * price actually changed — a price refresh that touches other tokens won't
+ * re-render the consumer.
+ */
+export const usePrice = (symbol: string | undefined) =>
+  useWalletStore((state) => (symbol ? state.prices[symbol] ?? null : null));
 
 /** Select portfolio totals */
 export const usePortfolioTotalsSelector = () =>
@@ -341,13 +363,17 @@ export const useProfileScreenSelector = () =>
   );
 
 /**
- * Send screen selector - subscribes to send transaction state
+ * Send screen selector - subscribes to send transaction state.
+ *
+ * Intentionally does *not* include the `prices` map: the send screen only
+ * needs the active token's price, which it pulls via the narrow `usePrice`
+ * selector. Subscribing to the whole prices Record here would re-render the
+ * screen on every background price tick, even for unrelated tokens.
  */
 export const useSendScreenSelector = () =>
   useWalletStore(
     useShallow((state) => ({
       balances: state.balances,
-      prices: state.prices,
       network: state.network,
       networks: state.networks,
       getGasEstimate: state.getGasEstimate,

@@ -19,7 +19,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { useSendScreenSelector } from '../store';
+import { useSendScreenSelector, usePrice } from '../store';
 import type { Token, GasEstimate } from '../services';
 import {
   isValidTonAddress,
@@ -29,7 +29,7 @@ import {
   isValidXRPAddress,
   isValidDestinationTag,
 } from '../services';
-import { useClipboard } from '../hooks';
+import { useClipboard, useDebouncedValue } from '../hooks';
 import { KeyboardAwareScrollView } from '../components/KeyboardAwareScrollView';
 import { safeGoBack } from '../utils/navigation';
 import { formatDecimal, formatTokenAmountDisplay } from '../utils/amounts';
@@ -42,7 +42,6 @@ export default function SendScreen() {
   const insets = useSafeAreaInsets();
   const {
     balances,
-    prices,
     network,
     networks,
     getGasEstimate,
@@ -88,7 +87,9 @@ export default function SendScreen() {
   const footerOffset =
     keyboardHeight > 0 ? Math.max(keyboardHeight - insets.bottom, 0) : insets.bottom;
 
-  const tokenPrice = selectedToken ? prices[selectedToken.symbol] ?? null : null;
+  // Narrow subscription: only re-renders when the *selected* token's price
+  // updates, not on every background price refresh that touches other tokens.
+  const tokenPrice = usePrice(selectedToken?.symbol);
   const hasTokenPrice =
     typeof tokenPrice === 'number' && Number.isFinite(tokenPrice) && tokenPrice > 0;
 
@@ -159,22 +160,28 @@ export default function SendScreen() {
     setStep('enter-amount');
   };
 
-  // Estimate gas when amount and recipient are valid
+  // Debounce the inputs the gas estimate depends on. Keystroke → 500 ms of
+  // quiet → effect runs once. Avoids the previous "rebuild useCallback +
+  // setTimeout per keystroke" pattern, which churned a fresh closure on
+  // every render and made the estimator easy to flap.
+  const debouncedRecipient = useDebouncedValue(recipient, 500);
+  const debouncedAmount = useDebouncedValue(amount, 500);
+
   const estimateGas = useCallback(async () => {
-    if (!selectedToken || !recipient || !amount) return;
+    if (!selectedToken || !debouncedRecipient || !debouncedAmount) return;
 
     // Basic validation
-    if (recipient.length < 10) return;
-    if (!isValidAmountInput(amount)) return;
-    if (parseFloat(amount) <= 0) return;
-    if (!isValidRecipient(recipient)) {
+    if (debouncedRecipient.length < 10) return;
+    if (!isValidAmountInput(debouncedAmount)) return;
+    if (parseFloat(debouncedAmount) <= 0) return;
+    if (!isValidRecipient(debouncedRecipient)) {
       setGasEstimate(null);
       return;
     }
 
     try {
       setIsEstimating(true);
-      const estimate = await getGasEstimate(selectedToken, recipient, amount);
+      const estimate = await getGasEstimate(selectedToken, debouncedRecipient, debouncedAmount);
       setGasEstimate(estimate);
     } catch (error) {
       console.error('Gas estimation failed:', error);
@@ -182,12 +189,10 @@ export default function SendScreen() {
     } finally {
       setIsEstimating(false);
     }
-  }, [selectedToken, recipient, amount, getGasEstimate]);
+  }, [selectedToken, debouncedRecipient, debouncedAmount, getGasEstimate]);
 
-  // Debounce gas estimation
   useEffect(() => {
-    const timer = setTimeout(estimateGas, 500);
-    return () => clearTimeout(timer);
+    estimateGas();
   }, [estimateGas]);
 
   const handleTokenSelect = (token: Token) => {
