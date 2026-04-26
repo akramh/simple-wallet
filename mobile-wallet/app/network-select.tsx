@@ -2,7 +2,8 @@
  * @fileoverview Network selection modal.
  */
 
-import { View, Text, TouchableOpacity, ScrollView, Image, Switch } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Switch } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -234,8 +235,9 @@ function NetworkRow({
         {networkIcon ? (
           <Image
             source={networkIcon}
-            className="w-full h-full"
-            resizeMode="cover"
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
           />
         ) : (
           <Text className="font-bold" style={{ color: getIconColor() }}>

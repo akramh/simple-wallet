@@ -12,8 +12,8 @@ import {
   TouchableOpacity,
   Modal,
   ActivityIndicator,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -43,7 +43,12 @@ const TokenRow = memo(function TokenRow({ item, onToggle }: TokenRowProps) {
     <View className="flex-row items-center py-4 border-b border-gray-800">
       <View className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-3 overflow-hidden">
         {icon ? (
-          <Image source={icon} className="w-full h-full" resizeMode="cover" />
+          <Image
+            source={icon}
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
         ) : (
           <Text className="text-white font-bold">{item.token.symbol.charAt(0)}</Text>
         )}

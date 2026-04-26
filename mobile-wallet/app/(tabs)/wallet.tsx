@@ -10,15 +10,16 @@ import {
   TouchableOpacity,
   RefreshControl,
   Pressable,
-  Image,
   ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletScreenSelector } from '../../store';
 import { useAfterInteraction, useClipboard } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
+import { Skeleton } from '../../components';
 import type { TokenBalance } from '../../services';
 
 export default function WalletScreen() {
@@ -236,13 +237,38 @@ export default function WalletScreen() {
           </>
         )}
         ListEmptyComponent={
-          <View className="items-center py-12 bg-gray-900/50 h-full">
-            <Ionicons name="wallet-outline" size={48} color="#4b5563" />
-            <Text className="text-gray-500 mt-4">No tokens yet</Text>
-            <Text className="text-gray-600 text-sm mt-1">
-              Pull down to refresh
-            </Text>
-          </View>
+          isRefreshingBalances || isLoadingPrices ? (
+            // Cold cache + refreshing: show skeleton rows so the screen has
+            // something living while the RPC fan-out resolves. Replaces the
+            // "No tokens yet" copy that misleadingly fired during the first
+            // few seconds of every cold start.
+            <View className="px-5 bg-gray-900/50">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <View
+                  key={`skeleton-${i}`}
+                  className="flex-row items-center py-4 border-b border-gray-800"
+                >
+                  <Skeleton width={40} height={40} borderRadius={20} style={{ marginRight: 12 }} />
+                  <View className="flex-1">
+                    <Skeleton width={120} height={14} style={{ marginBottom: 6 }} />
+                    <Skeleton width={60} height={12} />
+                  </View>
+                  <View className="items-end">
+                    <Skeleton width={70} height={14} style={{ marginBottom: 6 }} />
+                    <Skeleton width={50} height={12} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View className="items-center py-12 bg-gray-900/50 h-full">
+              <Ionicons name="wallet-outline" size={48} color="#4b5563" />
+              <Text className="text-gray-500 mt-4">No tokens yet</Text>
+              <Text className="text-gray-600 text-sm mt-1">
+                Pull down to refresh
+              </Text>
+            </View>
+          )
         }
         refreshControl={
           <RefreshControl
@@ -323,8 +349,9 @@ const TokenRow = memo(function TokenRow({
         {tokenIcon ? (
           <Image
             source={tokenIcon}
-            className="w-full h-full"
-            resizeMode="cover"
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
           />
         ) : (
           <Text className="text-white font-bold">{symbol.charAt(0)}</Text>

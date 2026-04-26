@@ -185,6 +185,88 @@ KPI of unlock ≤ 250 ms.
 
 ---
 
+## Phases 4 + 5 — Image caching + perceived speed
+
+Captured 2026-04-26.
+
+### Phase 4 changes — `expo-image`
+
+- Installed `expo-image@~3.0.11` via `npx expo install expo-image`.
+- Swapped `<Image>` from `react-native` → `expo-image` in every consumer of
+  the token-icon library: [components/TokenCard.tsx](../components/TokenCard.tsx),
+  [app/manage-tokens.tsx](../app/manage-tokens.tsx),
+  [app/network-select.tsx](../app/network-select.tsx),
+  [app/token-detail.tsx](../app/token-detail.tsx),
+  [app/(tabs)/portfolio.tsx](../app/(tabs)/portfolio.tsx),
+  [app/(tabs)/wallet.tsx](../app/(tabs)/wallet.tsx).
+  Also dropped a dead `Image` import from
+  [app/(auth)/welcome.tsx](../app/(auth)/welcome.tsx).
+- API tweaks at each call site:
+  - `resizeMode="cover"` → `contentFit="cover"`.
+  - `className="w-full h-full"` → `style={{ width: '100%', height: '100%' }}`
+    (NativeWind doesn't bridge through expo-image).
+  - Added `cachePolicy="memory-disk"` and `transition={150}` (where the
+    image is remote) so first paint draws from memory and subsequent
+    appearances skip the decode + fade in cleanly.
+- **Token icons stay as bundled `require()` sources for now.** Moving
+  them to remote URLs (CoinGecko / token-list) would shave bundle bytes
+  but needs new entries in [src/config/network-policy.ts](../../src/config/network-policy.ts)
+  egress allowlist plus a designed offline-fallback set. Deferred until
+  the network-policy review is done; expo-image is now in place so the
+  later swap to `{ uri: ... }` is the only change needed.
+
+### Phase 5 changes — Skeleton placeholders
+
+- Wired the existing
+  [components/Skeleton.tsx](../components/Skeleton.tsx) primitive into the
+  cold-cache empty states on:
+  - [app/(tabs)/wallet.tsx](../app/(tabs)/wallet.tsx) — 4 skeleton rows
+    while `isRefreshingBalances || isLoadingPrices` and the visible-balances
+    list is still empty. Replaces the misleading "No tokens yet" copy that
+    fired during the first few seconds of every cold start.
+  - [app/(tabs)/portfolio.tsx](../app/(tabs)/portfolio.tsx) — 3 grouped
+    skeleton blocks (network header + 2 rows each) when
+    `isRefreshingAllNetworks` and the holdings list is empty.
+- The "real" empty state ("No tokens yet" / "No holdings yet") still
+  shows when refresh has finished but actually returned nothing — only
+  the cold-start flash is replaced.
+
+### Deliberately deferred (Phase 5 scope)
+
+- **Optimistic balance update after a successful send.** Touches the
+  signing flow, which is exactly the area CLAUDE.md flags as
+  high-blast-radius. Want a device-validated profiler trace + a focused
+  PR for this rather than bundling it with cosmetic changes.
+- **Reanimated v3 worklet animations for pull-to-refresh / sheet
+  drags.** The Phase 1 `enableFreeze` / `asyncRoutes` rollback showed how
+  sensitive react-native-screens × Fabric is to animation timing
+  changes. Holding off until a baseline device session confirms the
+  current pull-to-refresh feels okay; will revisit only if specific
+  surfaces miss frame budget.
+- **Token-icon remote URLs** — see Phase 4 deferred note.
+
+### Bundle size delta
+
+| Platform | Hermes .hbc raw | Hermes .hbc gzipped | vs. Phase 3 |
+| --- | --- | --- | --- |
+| iOS | 11,648,643 B | 4,839,397 B | +22 KB raw / +8.6 KB gzipped |
+| Android | 11,648,623 B | 4,837,592 B | +23 KB raw / +10 KB gzipped |
+
+Real bundle-size cost this time: the `expo-image` JS shim is now in the
+bundle (the native binary lands separately when prebuilding). Acceptable —
+the image module is the foundation for the deferred remote-URL token-icon
+migration that will _remove_ ~500 KB+ of bundled PNGs. Net win lands when
+that follow-up ships.
+
+### Verification
+
+- `npm run typecheck` clean.
+- `npm test` — 4 suites / 25 tests fail. Same pre-existing baseline; the
+  cipher cross-impl test added in Phase 3 still passes (95/120).
+- `expo export` succeeded for both platforms after the swap.
+
+---
+
 ## Phase 2 — Render hygiene
 
 Captured 2026-04-26.
