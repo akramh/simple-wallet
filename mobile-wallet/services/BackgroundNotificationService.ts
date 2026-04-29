@@ -14,6 +14,7 @@
 import * as BackgroundFetch from "expo-background-fetch";
 import * as TaskManager from "expo-task-manager";
 import * as Notifications from "expo-notifications";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import { mobileStorage } from "./MobileStorageAdapter";
 import { getBundledConfig } from "../config/bundled-config";
 
@@ -158,6 +159,17 @@ export class BackgroundNotificationService {
    * Should be called when the app starts.
    */
   static async register() {
+    // Expo Go ships a fixed native runtime that does not declare `fetch`
+    // in UIBackgroundModes (the entry in app.json only takes effect on a
+    // prebuilt dev/production binary). Trying to register here always
+    // throws on Expo Go — skip with a warning instead of a red error.
+    if (Constants.executionEnvironment === ExecutionEnvironment.StoreClient) {
+      console.warn(
+        "[BackgroundService] Skipping background-fetch registration in Expo Go (use a dev build to enable).",
+      );
+      return;
+    }
+
     try {
       const isRegistered =
         await TaskManager.isTaskRegisteredAsync(BACKGROUND_TX_TASK);

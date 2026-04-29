@@ -12,6 +12,8 @@ jest.mock('../config/bundled-config', () => ({
   }),
   getBundledTokens: () => ({}),
   getCoingeckoApiKey: () => undefined,
+  getAlchemyApiKey: () => undefined,
+  getHeliusApiKey: () => undefined,
 }));
 
 // Mock mobile adapters
@@ -100,27 +102,73 @@ describe('WalletBridge Filtering', () => {
     expect(result.totalValue).toBeGreaterThan(0);
   });
 
-  test('getAllNetworkHoldings fetches testnets (for visibility)', async () => {
+  test('getAllNetworkHoldings skips testnets entirely', async () => {
     const spy = jest.spyOn((walletBridge as any).service, 'getPortfolioForNetwork');
-    
-    await walletBridge.getAllNetworkHoldings({ enabledNetworks: ['mainnet', 'sepolia'], force: true });
-    
-    // Should be called for both (visibility required)
+
+    const result = await walletBridge.getAllNetworkHoldings({ enabledNetworks: ['mainnet', 'sepolia'], force: true });
+
+    // Mainnet is fetched; sepolia is excluded at the source.
     expect(spy).toHaveBeenCalledWith('mainnet');
-    expect(spy).toHaveBeenCalledWith('sepolia');
+    expect(spy).not.toHaveBeenCalledWith('sepolia');
+    expect(result.totalsByNetwork.sepolia).toBeUndefined();
+    expect(result.holdings.every((h: any) => h.networkKey !== 'sepolia')).toBe(true);
   });
 
-  test('getAllNetworkHoldings filters out test tokens', async () => {
+  test('getAllNetworkHoldings filters unknown tokens (not in registry) but keeps native + registered', async () => {
+    const USDC = '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    (walletBridge as any).service.getTokensForNetwork = (net: string) =>
+      net === 'mainnet'
+        ? [
+            { symbol: 'ETH', name: 'Ether', type: 'native', decimals: 18, address: 'native' },
+            { symbol: 'USDC', name: 'USD Coin', type: 'erc20', decimals: 6, address: USDC },
+          ]
+        : [];
+
     (walletBridge as any).service.getPortfolioForNetwork = jest.fn(async () => ([
       { token: { symbol: 'ETH', name: 'Ether', type: 'native', decimals: 18, address: 'native' }, balance: '1.0' },
-      { token: { symbol: 'TST', name: 'Test Token', type: 'erc20', decimals: 18, address: '0x123' }, balance: '100.0' },
-      { token: { symbol: 'DUM', name: 'Dummy', type: 'erc20', decimals: 18, address: '0x456' }, balance: '50.0' }
+      { token: { symbol: 'USDC', name: 'USD Coin', type: 'erc20', decimals: 6, address: USDC }, balance: '500.0' },
+      // Unknown ERC-20 (random address): should be filtered.
+      { token: { symbol: 'AIRDROP', name: 'Airdrop', type: 'erc20', decimals: 18, address: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' }, balance: '1000.0' },
     ]));
 
     const result = await walletBridge.getAllNetworkHoldings({ enabledNetworks: ['mainnet'], force: true });
-    
-    // Should only have ETH
-    expect(result.holdings.length).toBe(1);
-    expect(result.holdings[0].token.symbol).toBe('ETH');
+
+    const symbols = result.holdings.map((h: any) => h.token.symbol).sort();
+    expect(symbols).toEqual(['ETH', 'USDC']);
+  });
+
+  test('getAllNetworkHoldings registry filter is case-insensitive for EVM addresses', async () => {
+    const USDC_LOWER = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    const USDC_CHECKSUM = '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    (walletBridge as any).service.getTokensForNetwork = () => [
+      { symbol: 'USDC', name: 'USD Coin', type: 'erc20', decimals: 6, address: USDC_CHECKSUM },
+    ];
+    (walletBridge as any).service.getPortfolioForNetwork = jest.fn(async () => ([
+      // Alchemy returns lowercase; registry has checksum.
+      { token: { symbol: 'USDC', name: 'USD Coin', type: 'erc20', decimals: 6, address: USDC_LOWER }, balance: '10' },
+    ]));
+
+    const result = await walletBridge.getAllNetworkHoldings({ enabledNetworks: ['mainnet'], force: true });
+    expect(result.holdings.map((h: any) => h.token.symbol)).toContain('USDC');
+  });
+
+  test('refreshBalances filters unknown tokens but keeps native + registered', async () => {
+    const USDC = '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    (walletBridge as any).service.getTokensForNetwork = (net: string) =>
+      net === 'mainnet'
+        ? [
+            { symbol: 'ETH', name: 'Ether', type: 'native', decimals: 18, address: 'native' },
+            { symbol: 'USDC', name: 'USD Coin', type: 'erc20', decimals: 6, address: USDC },
+          ]
+        : [];
+    (walletBridge as any).service.getPortfolioForNetwork = jest.fn(async () => ([
+      { token: { symbol: 'ETH', name: 'Ether', type: 'native', decimals: 18, address: 'native' }, balance: '1.0' },
+      { token: { symbol: 'USDC', name: 'USD Coin', type: 'erc20', decimals: 6, address: USDC }, balance: '500.0' },
+      { token: { symbol: 'JUNK', name: 'Junk', type: 'erc20', decimals: 18, address: '0x9999999999999999999999999999999999999999' }, balance: '999' },
+    ]));
+
+    const balances = await walletBridge.refreshBalances({ force: true });
+    const symbols = balances.map((b) => b.token.symbol).sort();
+    expect(symbols).toEqual(['ETH', 'USDC']);
   });
 });

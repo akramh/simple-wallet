@@ -669,6 +669,31 @@ class WalletBridge {
   }
 
   /**
+   * Whether `token` is in the supported registry (native + tokens.json + custom)
+   * for `networkKey`. Mirrors the extension's whitelist behavior so unknown
+   * Alchemy-returned tokens (airdrops/spam) don't reach the UI.
+   */
+  private isSupportedToken(
+    networkKey: string,
+    token: { type?: string; address?: string } | null | undefined,
+  ): boolean {
+    if (!token) return false;
+    if (token.type === "native" || !token.address || token.address === "native") {
+      return true;
+    }
+    if (!this.service) return false;
+    const registry = this.service.getTokensForNetwork(networkKey);
+    const target = token.address;
+    const targetLower = target.toLowerCase();
+    return registry.some((t: any) => {
+      if (!t.address || t.type === "native") return false;
+      // SPL addresses are base58 case-sensitive; EVM is checksummed but
+      // case-insensitive at the protocol level. Compare both forms.
+      return t.address === target || t.address.toLowerCase() === targetLower;
+    });
+  }
+
+  /**
    * Get tokens for the current network.
    *
    * @returns Token list with placeholder balances; call `refreshBalances()` to populate.
@@ -802,32 +827,37 @@ class WalletBridge {
         },
       );
 
-      const balances: TokenBalance[] = portfolio.map((item: any) => {
-        const token = this.mapToSharedToken(item.token);
-        const address = token.address?.toLowerCase();
-        const key =
-          address && token.type !== "native"
-            ? `${networkKey}:${address}`
-            : null;
-        const isHidden = key ? this.hiddenTokens.has(key) : false;
+      const balances: TokenBalance[] = portfolio
+        .map((item: any) => {
+          const token = this.mapToSharedToken(item.token);
+          const address = token.address?.toLowerCase();
+          const key =
+            address && token.type !== "native"
+              ? `${networkKey}:${address}`
+              : null;
+          const isHidden = key ? this.hiddenTokens.has(key) : false;
 
-        // Ensure balance is always a string (API may return number for some networks)
-        const rawBalance = item.balance;
-        const balance =
-          rawBalance == null
-            ? "0"
-            : typeof rawBalance === "string"
-              ? rawBalance
-              : String(rawBalance);
+          // Ensure balance is always a string (API may return number for some networks)
+          const rawBalance = item.balance;
+          const balance =
+            rawBalance == null
+              ? "0"
+              : typeof rawBalance === "string"
+                ? rawBalance
+                : String(rawBalance);
 
-        return {
-          token,
-          balance,
-          lastUpdated: fetchedAt,
-          isLoading: false,
-          isVisible: !isHidden,
-        };
-      });
+          return {
+            token,
+            balance,
+            lastUpdated: fetchedAt,
+            isLoading: false,
+            isVisible: !isHidden,
+          };
+        })
+        // Whitelist against tokens.json + custom tokens. Mirrors the
+        // extension's behavior: unknown Alchemy holdings (airdrops/spam)
+        // never surface in the wallet view.
+        .filter((b) => this.isSupportedToken(networkKey, b.token));
 
       // Update cache only if we actually fetched (or just re-save to keep consistent)
       // Actually getNetworkPortfolioWithCache handles the cache saving if it fetched.
@@ -1522,7 +1552,13 @@ class WalletBridge {
         ? options.enabledNetworks
         : Object.keys(this.config!.networks);
 
-    const enabledNetworks = allNetworks;
+    // Skip testnets entirely from the multi-chain portfolio aggregate so
+    // neither the Alchemy batch nor the per-chain fallback fans out for
+    // them. The Wallet (single-chain) view still shows testnet balances
+    // when the user is actively on a testnet.
+    const enabledNetworks = allNetworks.filter(
+      (key) => !this.config!.networks[key]?.isTestnet,
+    );
     
     const now = Date.now();
     const aggregateKey = this.makeAggregateCacheKey(
@@ -1644,29 +1680,21 @@ class WalletBridge {
       await Promise.all(workers);
 
       const filtered = includeZero
-        ? holdings
+        ? holdings.filter((h) => this.isSupportedToken(h.networkKey, h.token))
         : holdings.filter((h) => {
-            const val = parseFloat(h.balance || "0");
+            // Whitelist against tokens.json + custom tokens. Replaces the
+            // old name/symbol heuristic ("Test", "faucet", ...) which let
+            // through arbitrary unknown ERC-20s/SPL airdrops.
+            if (!this.isSupportedToken(h.networkKey, h.token)) return false;
 
-            // Filter out "test tokens" by name or symbol (e.g., tokens with "Test" in name)
-            const tokenName = (h.token.name || "").toLowerCase();
-            const tokenSymbol = (h.token.symbol || "").toLowerCase();
-            
-            const isTest = tokenName.includes("test") ||
-              tokenSymbol.includes("test") ||
-              tokenName.includes("dummy") ||
-              tokenSymbol.includes("faucet");
-
-            if (isTest) {
-               return false;
-            }
-
-            // Filter hidden tokens
+            // User-toggled hidden tokens.
             const address = h.token.address?.toLowerCase();
             if (address && h.token.type !== "native") {
               const key = `${h.networkKey}:${address}`;
               if (this.hiddenTokens.has(key)) return false;
             }
+
+            const val = parseFloat(h.balance || "0");
             return Number.isFinite(val) && val > 0 && h.balance !== "Error";
           });
 
