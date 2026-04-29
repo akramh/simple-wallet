@@ -11,13 +11,14 @@ import {
   RefreshControl,
   Pressable,
   ActivityIndicator,
+  InteractionManager,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletScreenSelector } from '../../store';
-import { useAfterInteraction, useClipboard } from '../../hooks';
+import { useClipboard } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
 import { Skeleton } from '../../components';
 import type { TokenBalance } from '../../services';
@@ -44,15 +45,20 @@ export default function WalletScreen() {
   const isNavigatingRef = useRef(false);
   const { copy, isCopied } = useClipboard();
 
-  // Refresh balances on mount (silent — don't show a loading indicator for
-  // automatic refresh). Deferred until the navigation animation that brought
-  // this tab into view has finished; the RPC fan-out otherwise blocks the
-  // JS thread mid-transition and drops frames.
-  useAfterInteraction(() => {
-    if (!balancesLastUpdated || Date.now() - balancesLastUpdated > 30_000) {
-      refreshBalancesAndPrices({ silent: true });
-    }
-  }, [balancesLastUpdated, refreshBalancesAndPrices]);
+  // Refresh balances every time the tab gains focus (silent — no spinner for
+  // automatic refresh; gated by a 30s freshness threshold so re-visits don't
+  // double-fetch). Deferred via InteractionManager so the RPC fan-out doesn't
+  // block the tab transition's JS work and drop frames.
+  useFocusEffect(
+    useCallback(() => {
+      const handle = InteractionManager.runAfterInteractions(() => {
+        if (!balancesLastUpdated || Date.now() - balancesLastUpdated > 30_000) {
+          refreshBalancesAndPrices({ silent: true });
+        }
+      });
+      return () => handle.cancel();
+    }, [balancesLastUpdated, refreshBalancesAndPrices]),
+  );
 
   // Pull-to-refresh handler - shows loading indicator (user-initiated)
   const handleRefresh = useCallback(() => {

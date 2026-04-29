@@ -1,18 +1,25 @@
 /**
  * @fileoverview Tab navigation layout for main app screens.
+ *
+ * - `lazy: false` pre-mounts every tab during the first focus so subsequent
+ *   tab presses are instant (no first-mount RPC fan-out delay). Data fetches
+ *   inside each tab remain gated by a 30s freshness check + `useFocusEffect`.
+ * - `tabBarButton: AnimatedTabButton` adds a light selection haptic and a
+ *   brief press-down scale on every tab press.
+ * - `tabBarIcon: AnimatedTabIcon` adds a tinted purple pill halo + ~8%
+ *   icon scale-up on the focused tab.
  */
 
 import { Tabs } from 'expo-router';
-import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-
-type IconName = keyof typeof Ionicons.glyphMap;
+import { AnimatedTabButton, AnimatedTabIcon } from '../../components';
 
 export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
+        lazy: false,
+        tabBarButton: (props) => <AnimatedTabButton {...props} />,
         tabBarStyle: {
           backgroundColor: '#111827', // gray-900
           borderTopColor: '#1f2937', // gray-800
@@ -33,8 +40,8 @@ export default function TabsLayout() {
         name="wallet"
         options={{
           title: 'Wallet',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="wallet-outline" size={size} color={color} />
+          tabBarIcon: ({ focused, color, size }) => (
+            <AnimatedTabIcon name="wallet-outline" size={size} color={color} focused={focused} />
           ),
         }}
       />
@@ -42,8 +49,8 @@ export default function TabsLayout() {
         name="activity"
         options={{
           title: 'Activity',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="time-outline" size={size} color={color} />
+          tabBarIcon: ({ focused, color, size }) => (
+            <AnimatedTabIcon name="time-outline" size={size} color={color} focused={focused} />
           ),
         }}
       />
@@ -51,8 +58,8 @@ export default function TabsLayout() {
         name="portfolio"
         options={{
           title: 'Portfolio',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="pie-chart-outline" size={size} color={color} />
+          tabBarIcon: ({ focused, color, size }) => (
+            <AnimatedTabIcon name="pie-chart-outline" size={size} color={color} focused={focused} />
           ),
         }}
       />
@@ -60,8 +67,8 @@ export default function TabsLayout() {
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
+          tabBarIcon: ({ focused, color, size }) => (
+            <AnimatedTabIcon name="person-outline" size={size} color={color} focused={focused} />
           ),
         }}
       />
