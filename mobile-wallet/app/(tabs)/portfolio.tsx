@@ -6,14 +6,13 @@
  * - Refresh in the background when data is stale
  */
 
-import { useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { View, Text, ScrollView, Dimensions, TouchableOpacity, RefreshControl, ActivityIndicator, InteractionManager } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { usePortfolioScreenSelector } from '../../store';
-import { useAfterInteraction } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
 import { Skeleton } from '../../components';
 
@@ -35,17 +34,26 @@ export default function PortfolioScreen() {
   } = usePortfolioScreenSelector();
   const isNavigatingRef = useRef(false);
 
-  // Hydrate cached snapshot immediately on tab visit, then revalidate
-  // silently if stale. Hydration is fast and stays inline; the revalidation
-  // RPC fan-out is deferred until the tab transition finishes so it doesn't
-  // drop frames mid-animation. Replaces the previous `setTimeout(..., 0)`
-  // ad-hoc deferral.
-  useAfterInteraction(() => {
-    const cachedAt = hydrateAllNetworksFromCache();
-    if (!cachedAt || Date.now() - cachedAt > 30_000) {
-      refreshAllNetworks({ silent: true });
-    }
-  }, [hydrateAllNetworksFromCache, refreshAllNetworks]);
+  // Two-phase render: paint a cheap skeleton during the tab transition, then
+  // swap to the full holdings list once the navigator's interaction settles.
+  // The full list (Object.entries(networks).map → many HoldingRows with
+  // expo-images) is heavy on first paint and was making the tab feel
+  // sluggish; gating it behind `isReady` keeps the transition itself ~0ms.
+  const [isReady, setIsReady] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      setIsReady(false);
+      const handle = InteractionManager.runAfterInteractions(() => {
+        const cachedAt = hydrateAllNetworksFromCache();
+        if (!cachedAt || Date.now() - cachedAt > 30_000) {
+          refreshAllNetworks({ silent: true });
+        }
+        setIsReady(true);
+      });
+      return () => handle.cancel();
+    }, [hydrateAllNetworksFromCache, refreshAllNetworks]),
+  );
 
   // Pull-to-refresh handler - explicitly not silent so RefreshControl shows indicator
   const handleRefresh = useCallback(() => {
@@ -102,13 +110,18 @@ export default function PortfolioScreen() {
         <View className="px-5">
           <Text className="text-white text-lg font-semibold mb-4">Holdings</Text>
 
-          {allNetworkHoldings.filter(b => {
+          {!isReady ||
+          allNetworkHoldings.filter(b => {
             const val = parseFloat(b.balance || '0');
             return Number.isFinite(val) && val > 0;
           }).length === 0 ? (
-            isRefreshingAllNetworks ? (
-              // Cold cache + refreshing: skeleton rows beat the misleading
-              // "No holdings yet" copy that otherwise flashes on cold start.
+            !isReady || isRefreshingAllNetworks ? (
+              // Two cases collapse here:
+              //  1. !isReady — first paint after the tab gains focus, while
+              //     the navigator transition is still settling. Cheap skeleton
+              //     keeps the transition snappy.
+              //  2. Cold cache + refreshing — skeleton rows beat the
+              //     misleading "No holdings yet" copy on cold start.
               <View>
                 {Array.from({ length: 3 }).map((_, i) => (
                   <View key={`portfolio-skel-${i}`} className="mb-4">

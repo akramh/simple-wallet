@@ -18,4 +18,6 @@ export { PriceChart } from './PriceChart';
 export { RefreshPill } from './RefreshPill';
 export { Skeleton } from './Skeleton';
 export { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
+export { AnimatedTabButton } from './AnimatedTabButton';
+export { AnimatedTabIcon } from './AnimatedTabIcon';
 

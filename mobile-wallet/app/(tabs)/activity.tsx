@@ -6,7 +6,6 @@
  */
 
 import { useCallback, useState } from 'react';
-import { useAfterInteraction } from '../../hooks';
 import {
   View,
   Text,
@@ -14,8 +13,10 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  InteractionManager,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useActivityScreenSelector } from '../../store';
 import { TransactionDetailsModal } from '../../components/TransactionDetailsModal';
@@ -38,14 +39,18 @@ export default function ActivityScreen() {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
 
-  // Load transactions on mount and when network changes. Deferred until the
-  // tab transition animation finishes so the RPC fan-out doesn't drop frames
-  // mid-transition.
-  useAfterInteraction(() => {
-    if (isUnlocked) {
-      loadTransactions();
-    }
-  }, [isUnlocked, network, loadTransactions]);
+  // Load transactions every time the tab gains focus (and re-arms when the
+  // active network changes). Deferred via InteractionManager so the RPC
+  // fan-out doesn't block the tab transition.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isUnlocked) return;
+      const handle = InteractionManager.runAfterInteractions(() => {
+        loadTransactions();
+      });
+      return () => handle.cancel();
+    }, [isUnlocked, network, loadTransactions]),
+  );
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
