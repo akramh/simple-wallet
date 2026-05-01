@@ -40,6 +40,50 @@ const LAST_WALLET_KEY = 'last_wallet_name';
 const AUTO_LOCK_MINUTES_KEY = 'auto_lock_minutes';
 let lockListenerAttached = false;
 
+// ============================================================================
+// Equality helpers — used to short-circuit silent refreshes when the fetched
+// result is identical to what's already in state. Avoids a full holdings
+// re-render on the Portfolio screen when the network round-trip returns the
+// same numbers.
+// ============================================================================
+
+type HoldingShape = {
+  token: { symbol: string; address?: string };
+  balance: string | null;
+  value?: number;
+  networkKey: string;
+};
+
+const holdingsEqual = (a: readonly HoldingShape[], b: readonly HoldingShape[]): boolean => {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.networkKey !== y.networkKey ||
+      x.balance !== y.balance ||
+      x.value !== y.value ||
+      x.token.symbol !== y.token.symbol ||
+      x.token.address !== y.token.address
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const totalsEqual = (a: Record<string, number>, b: Record<string, number>): boolean => {
+  if (a === b) return true;
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+};
+
 const getLockedState = () => ({
   isUnlocked: false,
   address: null,
@@ -699,7 +743,22 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         set({ isRefreshingAllNetworks: true });
       }
       const result = await walletBridge.getAllNetworkHoldings({ enabledNetworks: enabled, ttlMs: 30_000, force });
-      // Batch state updates to reduce re-renders
+      // Skip the state write when nothing the UI cares about changed. The
+      // SectionList + memoized rows still re-render whenever the array
+      // identities flip, so silent refreshes that return identical data
+      // would otherwise cost a full holdings re-render for nothing.
+      const prev = get();
+      const same =
+        holdingsEqual(
+          prev.allNetworkHoldings as unknown as HoldingShape[],
+          result.holdings as unknown as HoldingShape[],
+        ) && totalsEqual(prev.allNetworkTotals, result.totalsByNetwork);
+      if (same && !prev.isRefreshingAllNetworks) {
+        if (result.fetchedAt !== prev.allNetworksLastUpdated) {
+          set({ allNetworksLastUpdated: result.fetchedAt });
+        }
+        return;
+      }
       batchUpdates(() => {
         set({
           allNetworkHoldings: result.holdings,
