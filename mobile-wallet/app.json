@@ -11,15 +11,16 @@
     "splash": {
       "image": "./assets/images/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#101828"
+      "backgroundColor": "#6D4AFF"
     },
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
+      "icon": "./assets/images/icon-ios.png",
       "supportsTablet": false,
       "bundleIdentifier": "com.akram.monkey",
-      "buildNumber": "1.0.13",
+      "buildNumber": "1.0.14",
       "infoPlist": {
         "NSCameraUsageDescription": "Simple Wallet needs camera access to scan QR codes for receiving crypto payments.",
         "NSFaceIDUsageDescription": "Simple Wallet uses Face ID to securely unlock your wallet.",
