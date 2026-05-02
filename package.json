@@ -20,7 +20,8 @@
     "dev": "tsx src/index.ts",
     "test": "npm run build && node --test tests/*.test.js",
     "type-check": "tsc --noEmit",
-    "type-check:extension": "tsc --noEmit -p extension"
+    "type-check:extension": "tsc --noEmit -p extension",
+    "sync-secrets": "tsx scripts/sync-secrets.ts"
   },
   "keywords": [
     "ethereum",

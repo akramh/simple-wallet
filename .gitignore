@@ -7,6 +7,8 @@ wallet-key
 backup-*.json
 *.log
 .env
+.env.synced
+.doppler/
 .claude/
 # CLI user-state (current network, showTestnets toggle). Persisted here
 # rather than config.json so the shipped template is never mutated with
