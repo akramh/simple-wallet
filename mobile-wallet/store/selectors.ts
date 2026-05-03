@@ -416,3 +416,26 @@ export const useNetworkSelectScreenSelector = () =>
       toggleShowTestnets: state.toggleShowTestnets,
     }))
   );
+
+/**
+ * WalletHeader selector — feeds the network strip and account chip.
+ *
+ * The pinned-strip array is *not* selected here; consumers compute it via
+ * `computePinnedNetworks` inside the component so that `useShallow` only has
+ * to compare the underlying inputs (network, recents, networks map, etc).
+ */
+export const useHeaderIdentitySelector = () =>
+  useWalletStore(
+    useShallow((state) => ({
+      currentWalletName: state.currentWalletName,
+      currentAccountIndex: state.currentAccountIndex,
+      address: state.address,
+      network: state.network,
+      networks: state.networks,
+      enabledNetworks: state.enabledNetworks,
+      recentNetworks: state.recentNetworks,
+      importType: state.importType,
+      privateKeyType: state.privateKeyType,
+      switchNetwork: state.switchNetwork,
+    }))
+  );

@@ -48,6 +48,29 @@ jest.mock('@expo/vector-icons', () => {
 });
 
 // -----------------------------------------------------------------------------
+// react-native-svg mock — minimal stubs so Blockie / QR can render in Jest
+// without the native module. Components render their children only; props are
+// ignored. We deliberately avoid `require('react-native')` here because the
+// jest-expo + nativewind transform turns that import into an out-of-scope
+// reference under Jest's mock-hoisting rules.
+// -----------------------------------------------------------------------------
+jest.mock('react-native-svg', () => {
+  const passthrough = ({ children }) => children ?? null;
+  return {
+    __esModule: true,
+    default: passthrough,
+    Svg: passthrough,
+    Defs: passthrough,
+    LinearGradient: passthrough,
+    Stop: passthrough,
+    Rect: passthrough,
+    Circle: passthrough,
+    Path: passthrough,
+    G: passthrough,
+  };
+});
+
+// -----------------------------------------------------------------------------
 // AsyncStorage mock (used by MobileStorageAdapter)
 // -----------------------------------------------------------------------------
 jest.mock('@react-native-async-storage/async-storage', () => {
@@ -99,7 +122,10 @@ jest.mock('expo-clipboard', () => ({
 jest.mock('expo-haptics', () => ({
   __esModule: true,
   NotificationFeedbackType: { Success: 'success' },
+  ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
   notificationAsync: jest.fn(async () => {}),
+  impactAsync: jest.fn(async () => {}),
+  selectionAsync: jest.fn(async () => {}),
 }));
 
 jest.mock('expo-linking', () => ({

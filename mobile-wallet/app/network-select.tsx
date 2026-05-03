@@ -10,25 +10,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNetworkSelectScreenSelector } from '../store';
 import { getNetworkIcon } from '../utils/tokenIcons';
 import { safeGoBack } from '../utils/navigation';
-
-/**
- * Maps privateKeyType to compatible network types.
- * Mnemonic wallets support all network types.
- */
-const CHAIN_TYPE_COMPATIBILITY: Record<string, string[]> = {
-  evm: ['evm', undefined as any], // undefined = legacy EVM networks without explicit type
-  bitcoin: ['bitcoin'],
-  solana: ['solana'],
-  xrp: ['xrp'],
-  ton: ['ton'],
-};
+import { isNetworkCompatible } from '../utils/networkCompatibility';
 
 export default function NetworkSelectScreen() {
   const router = useRouter();
-  const { 
-    network, 
-    networks, 
-    switchNetwork, 
+  const {
+    network,
+    networks,
+    switchNetwork,
     isLoading,
     showTestnets,
     toggleShowTestnets,
@@ -36,21 +25,8 @@ export default function NetworkSelectScreen() {
     privateKeyType,
   } = useNetworkSelectScreenSelector();
 
-  /**
-   * Check if a network is compatible with the current wallet type.
-   * Mnemonic wallets support all networks. Private key wallets only support their chain type.
-   */
-  const isNetworkCompatible = (networkConfig: any): boolean => {
-    // Mnemonic wallets support all networks
-    if (importType !== 'privateKey') return true;
-    
-    // No privateKeyType means we can't determine compatibility - allow all
-    if (!privateKeyType) return true;
-    
-    const compatibleTypes = CHAIN_TYPE_COMPATIBILITY[privateKeyType] || [];
-    const networkType = networkConfig.type || 'evm'; // default to EVM if not specified
-    return compatibleTypes.includes(networkType);
-  };
+  const checkCompatibility = (networkConfig: any): boolean =>
+    isNetworkCompatible(networkConfig, importType, privateKeyType);
 
   const handleNetworkSelect = async (networkKey: string, isDisabled: boolean) => {
     if (isDisabled) return;
@@ -111,7 +87,7 @@ export default function NetworkSelectScreen() {
             <Text className="text-gray-400 text-sm uppercase mb-3">EVM Networks</Text>
             <View className="bg-gray-900 rounded-2xl overflow-hidden mb-6">
               {evmNetworks.map(([key, config], index) => {
-                const isDisabled = !isNetworkCompatible(config);
+                const isDisabled = !checkCompatibility(config);
                 return (
                   <NetworkRow
                     key={key}
@@ -136,7 +112,7 @@ export default function NetworkSelectScreen() {
             <Text className="text-gray-400 text-sm uppercase mb-3">Other Networks</Text>
             <View className="bg-gray-900 rounded-2xl overflow-hidden mb-6">
               {otherNetworks.map(([key, config], index) => {
-                const isDisabled = !isNetworkCompatible(config);
+                const isDisabled = !checkCompatibility(config);
                 return (
                   <NetworkRow
                     key={key}

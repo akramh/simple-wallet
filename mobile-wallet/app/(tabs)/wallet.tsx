@@ -20,7 +20,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useWalletScreenSelector } from '../../store';
 import { useClipboard } from '../../hooks';
 import { getTokenIcon } from '../../utils/tokenIcons';
-import { Skeleton } from '../../components';
+import {
+  Skeleton,
+  WalletHeader,
+  WalletHeaderAccountSheet,
+  useWalletHeaderController,
+} from '../../components';
 import type { TokenBalance } from '../../services';
 
 export default function WalletScreen() {
@@ -29,7 +34,6 @@ export default function WalletScreen() {
   const {
     address,
     network,
-    networks,
     balances,
     isRefreshingBalances,
     balancesLastUpdated,
@@ -38,12 +42,10 @@ export default function WalletScreen() {
     refreshBalancesAndPrices,
     prices,
     isLoadingPrices,
-    accounts,
-    currentAccountIndex,
-    currentWalletName,
   } = useWalletScreenSelector();
   const isNavigatingRef = useRef(false);
   const { copy, isCopied } = useClipboard();
+  const headerController = useWalletHeaderController();
 
   // Refresh balances every time the tab gains focus (silent — no spinner for
   // automatic refresh; gated by a 30s freshness threshold so re-visits don't
@@ -82,12 +84,10 @@ export default function WalletScreen() {
     await copy(address);
   };
 
-  const networkConfig = networks[network];
   const truncatedAddress = address
     ? `${address.slice(0, 8)}...${address.slice(-6)}`
     : '';
   const addressCopied = address ? isCopied(address) : false;
-  const hasMultipleAccounts = accounts.length > 1;
 
   // Memoize the visible-tokens slice — recomputed only when balances change.
   const visibleBalances = useMemo(
@@ -148,6 +148,11 @@ export default function WalletScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950">
+      {/* WalletHeader rendered OUTSIDE the FlatList so unrelated list ticks
+          (balance refresh, price updates, refresh control) don't reconcile
+          the network chips. Tap-to-switch-network now repaints in one frame
+          instead of waiting on a full ListHeaderComponent re-render. */}
+      <WalletHeader controller={headerController} />
       <FlatList
         data={visibleBalances}
         keyExtractor={keyExtractor}
@@ -158,38 +163,13 @@ export default function WalletScreen() {
         ListHeaderComponent={() => (
           <>
             {/* Header */}
-            <View className="px-5 pt-4 pb-6">
-              {/* Network & Account Selectors */}
-              <View className="flex-row items-center mb-4">
-                <Pressable
-                  onPress={() => navigateOnce(() => router.push('/network-select'))}
-                  className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full mr-2"
-                >
-                  <View className="w-2.5 h-2.5 rounded-full bg-green-500 mr-2" />
-                  <Text className="text-gray-300 text-sm">{networkConfig?.name || network}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#9ca3af" className="ml-1" />
-                </Pressable>
-                
-                {hasMultipleAccounts && (
-                  <Pressable
-                    onPress={() => navigateOnce(() => router.push('/account-manage'))}
-                    className="flex-row items-center bg-gray-900 px-3 py-2 rounded-full"
-                  >
-                    <Ionicons name="person" size={12} color="#9ca3af" />
-                    <Text className="text-gray-300 text-sm ml-1">#{currentAccountIndex + 1}</Text>
-                    <Ionicons name="chevron-down" size={16} color="#9ca3af" className="ml-1" />
-                  </Pressable>
-                )}
-              </View>
-
+            <View className="px-5 pt-4 pb-8">
               {/* Total Balance */}
-              <Text className="text-gray-400 text-sm mb-1">Total Balance</Text>
-              <Text className="text-white text-4xl font-bold mb-1">{formattedTotal}</Text>
-              
+              <Text className="text-gray-400 text-sm mb-3">Total Balance</Text>
+              <Text className="text-white text-4xl font-bold mb-4">{formattedTotal}</Text>
+
               <View className="flex-row items-center justify-between">
                 <Pressable className="flex-row items-center" onPress={handleCopyAddress}>
-                  <Text className="text-white font-medium">{currentWalletName || 'Wallet'}</Text>
-                  <Text className="text-gray-500 mx-2">·</Text>
                   <Text className="text-gray-400 text-sm">{truncatedAddress}</Text>
                   <Ionicons
                     name={addressCopied ? 'checkmark-circle' : 'copy-outline'}
@@ -198,7 +178,7 @@ export default function WalletScreen() {
                     style={{ marginLeft: 8 }}
                   />
                 </Pressable>
-                
+
                 {balancesLastUpdated && (
                   <Text className="text-gray-600 text-xs">
                     Updated {new Date(balancesLastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -286,6 +266,9 @@ export default function WalletScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ flexGrow: 1 }}
       />
+      {/* Account sheet mounted at screen root — RN Modal can lose its portal
+          when re-rendered inside a FlatList's ListHeaderComponent. */}
+      <WalletHeaderAccountSheet controller={headerController} />
     </SafeAreaView>
   );
 }

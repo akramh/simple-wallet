@@ -54,4 +54,5 @@ export {
   useSendScreenSelector,
   useUnlockScreenSelector,
   useNetworkSelectScreenSelector,
+  useHeaderIdentitySelector,
 } from './selectors';
