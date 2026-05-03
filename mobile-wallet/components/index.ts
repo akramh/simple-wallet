@@ -20,4 +20,9 @@ export { Skeleton } from './Skeleton';
 export { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 export { AnimatedTabButton } from './AnimatedTabButton';
 export { AnimatedTabIcon } from './AnimatedTabIcon';
+export {
+  WalletHeader,
+  WalletHeaderAccountSheet,
+  useWalletHeaderController,
+} from './WalletHeader';
 

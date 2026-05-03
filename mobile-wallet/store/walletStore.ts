@@ -33,11 +33,14 @@ import {
   SendTransactionResult,
 } from '../services';
 import { batchUpdates } from '../utils';
+import { isNetworkCompatible } from '../utils/networkCompatibility';
 
 const ENABLED_NETWORKS_KEY = 'enabledNetworks';
 const PENDING_BACKUP_KEY = 'wallet_pending_backup';
 const LAST_WALLET_KEY = 'last_wallet_name';
 const AUTO_LOCK_MINUTES_KEY = 'auto_lock_minutes';
+const RECENT_NETWORKS_KEY = 'mobile_recent_networks';
+const RECENT_NETWORKS_CAP = 5;
 let lockListenerAttached = false;
 
 // ============================================================================
@@ -83,6 +86,64 @@ const totalsEqual = (a: Record<string, number>, b: Record<string, number>): bool
   }
   return true;
 };
+
+// ============================================================================
+// Pinned-network strip helper
+// ============================================================================
+
+/**
+ * Compute the (up to) 3 networks shown in the WalletHeader's segmented strip.
+ *
+ * The active network is always at index 0. The remaining slots are filled with
+ * the user's most-recently-used networks, then backfilled in config order if
+ * we don't have enough recents (e.g. on first launch).
+ *
+ * Networks are filtered against the current wallet's chain compatibility and
+ * the user's `enabledNetworks` selection so we never pin something the wallet
+ * can't actually sign on or that the user has hidden.
+ */
+export function computePinnedNetworks(args: {
+  current: string;
+  recents: ReadonlyArray<string>;
+  networks: Record<string, NetworkConfig>;
+  enabledNetworks: ReadonlyArray<string>;
+  importType?: 'mnemonic' | 'privateKey';
+  privateKeyType?: 'evm' | 'bitcoin' | 'solana' | 'xrp' | 'ton';
+}): string[] {
+  const { current, recents, networks, enabledNetworks, importType, privateKeyType } = args;
+  const enabledSet = new Set(enabledNetworks);
+  const compat = (key: string): boolean => {
+    const cfg = networks[key];
+    if (!cfg) return false;
+    if (!enabledSet.has(key)) return false;
+    return isNetworkCompatible(cfg, importType, privateKeyType);
+  };
+
+  const result: string[] = [];
+  if (current && networks[current]) {
+    result.push(current);
+  }
+
+  for (const key of recents) {
+    if (result.length >= 3) break;
+    if (key === current) continue;
+    if (result.includes(key)) continue;
+    if (!compat(key)) continue;
+    result.push(key);
+  }
+
+  if (result.length < 3) {
+    for (const key of Object.keys(networks)) {
+      if (result.length >= 3) break;
+      if (key === current) continue;
+      if (result.includes(key)) continue;
+      if (!compat(key)) continue;
+      result.push(key);
+    }
+  }
+
+  return result;
+}
 
 const getLockedState = () => ({
   isUnlocked: false,
@@ -164,6 +225,12 @@ interface WalletStore {
   networks: Record<string, NetworkConfig>;
   enabledNetworks: string[];
   showTestnets: boolean;
+  /**
+   * Most-recently-used network keys in the order they were last selected.
+   * Persisted to AsyncStorage; capped at {@link RECENT_NETWORKS_CAP}. Used to
+   * pick the secondary chips in the WalletHeader's network strip.
+   */
+  recentNetworks: string[];
 
   // Error handling
   error: string | null;
@@ -321,6 +388,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   networks: {},
   enabledNetworks: [],
   showTestnets: false,
+  recentNetworks: [],
 
   error: null,
 
@@ -381,6 +449,19 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         autoLockMinutes = 15;
       }
 
+      let recentNetworks: string[] = [];
+      try {
+        const storedRecents = await AsyncStorage.getItem(RECENT_NETWORKS_KEY);
+        if (storedRecents) {
+          const parsed = JSON.parse(storedRecents);
+          if (Array.isArray(parsed)) {
+            recentNetworks = parsed.filter((k): k is string => typeof k === 'string');
+          }
+        }
+      } catch {
+        recentNetworks = [];
+      }
+
       walletBridge.setAutoLockTimeout(autoLockMinutes);
 
       // Load wallet list
@@ -415,6 +496,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         networks,
         enabledNetworks,
         showTestnets,
+        recentNetworks,
         walletList,
       });
     } catch (error) {
@@ -891,6 +973,14 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
       const cachedBalances = walletBridge.getCachedBalances(networkKey);
       const cachedPrices = walletBridge.getCachedPrices(networkKey);
 
+      const prevRecents = get().recentNetworks;
+      const nextRecents = [networkKey, ...prevRecents.filter((k) => k !== networkKey)].slice(
+        0,
+        RECENT_NETWORKS_CAP,
+      );
+      const recentsChanged =
+        nextRecents.length !== prevRecents.length || nextRecents[0] !== prevRecents[0];
+
       set({
         network: networkKey,
         address: result.address,
@@ -902,7 +992,12 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         formattedTotal: cachedPrices?.formattedTotal ?? '$0.00',
         transactions: [],
         transactionsLastUpdated: null,
+        ...(recentsChanged ? { recentNetworks: nextRecents } : {}),
       });
+
+      if (recentsChanged) {
+        AsyncStorage.setItem(RECENT_NETWORKS_KEY, JSON.stringify(nextRecents)).catch(() => {});
+      }
 
       get().refreshBalances({ silent: true });
       get().loadTransactions();
