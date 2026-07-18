@@ -1,6 +1,6 @@
 # Architecture
 
-Simple Crypto Wallet uses one shared TypeScript core with thin platform
+Simple Wallet uses one shared TypeScript core with thin platform
 adapters for CLI, Chrome extension, and mobile.
 
 ## High-Level Shape

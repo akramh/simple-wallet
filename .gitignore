@@ -5,6 +5,9 @@ wallets.json.backup
 wallets.json.tmp
 wallet-key
 backup-*.json
+# Per-user custom token overlay, created at runtime by WalletAppService.
+# The shipped registry is tokens.json; this file is per-user state.
+tokens-user.json
 *.log
 .env
 .env.synced

@@ -1,7 +1,7 @@
 {
-  "name": "simple-crypto-wallet",
+  "name": "simple-wallet",
   "version": "1.0.0",
-  "description": "A simple Ethereum wallet with testnet/mainnet support",
+  "description": "Multi-chain wallet (EVM, Bitcoin, Solana, XRP, TON) built on Alchemy — a single API key powers RPC, transaction history, prices, and portfolio data across a CLI, a Chrome extension, and a mobile app.",
   "main": "dist/index.js",
   "exports": {
     ".": "./dist/index.js",
@@ -24,12 +24,29 @@
     "sync-secrets": "tsx scripts/sync-secrets.ts"
   },
   "keywords": [
-    "ethereum",
+    "alchemy",
     "wallet",
-    "crypto"
+    "crypto",
+    "multi-chain",
+    "ethereum",
+    "bitcoin",
+    "solana",
+    "xrp",
+    "ton",
+    "chrome-extension",
+    "react-native",
+    "web3"
   ],
-  "author": "",
+  "author": "akramh",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akramh/simple-wallet.git"
+  },
+  "homepage": "https://github.com/akramh/simple-wallet#readme",
+  "bugs": {
+    "url": "https://github.com/akramh/simple-wallet/issues"
+  },
   "dependencies": {
     "@noble/secp256k1": "^3.0.0",
     "@solana/spl-token": "^0.4.9",

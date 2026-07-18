@@ -1,11 +1,13 @@
 # Documentation
 
-This directory is the canonical documentation location for Simple Crypto
-Wallet. Root and platform README files are intentionally short entrypoints that
-link back here.
+This directory is the canonical documentation location for Simple Wallet. Root
+and platform README files are intentionally short entrypoints that link back
+here.
 
 ## Start Here
 
+- **[How Simple Wallet uses Alchemy](./alchemy.md): guided tour of every Alchemy
+  API integration, with links into the code**
 - [Getting started](./getting-started.md): install, run, and build commands
 - [Architecture](./architecture.md): shared core, adapters, and platform flows
 - [API reference](./api-reference.md): SDK and service APIs

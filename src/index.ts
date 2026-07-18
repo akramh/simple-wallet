@@ -1,6 +1,6 @@
 /**
  * @file index.ts
- * @description Command-line interface (CLI) entry point for the Simple Crypto Wallet.
+ * @description Command-line interface (CLI) entry point for the Simple Wallet.
  * 
  * Provides an interactive terminal interface for managing Ethereum wallets,
  * accounts, tokens, and transactions. Uses inquirer for menu navigation

@@ -1,6 +1,6 @@
 /**
  * @file service-worker.ts
- * @description Chrome extension background service worker for the Simple Crypto Wallet.
+ * @description Chrome extension background service worker for the Simple Wallet.
  * 
  * Acts as the central message handler for all wallet operations in the extension context.
  * Manages wallet state, handles dApp communication via EIP-1193 messages, and coordinates
@@ -3706,11 +3706,11 @@ async function monitorTransaction(txHash: string, network: string) {
 
 /** Initialize wallet service when extension is first installed */
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('Simple Crypto Wallet extension installed');
+  console.log('Simple Wallet extension installed');
   initializeWalletService();
 });
 
 /** Initialize wallet service on browser startup */
 initializeWalletService();
 
-console.log('Simple Crypto Wallet background service worker loaded');
+console.log('Simple Wallet background service worker loaded');

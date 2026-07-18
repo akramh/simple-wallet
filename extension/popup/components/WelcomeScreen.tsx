@@ -374,11 +374,11 @@ function WelcomeScreen({ onWalletCreated }: Props) {
       <div className="container">
         <div className="header">
           <img src={logoIcon} alt="Simple Wallet" className="welcome-logo" />
-          <h1>Simple Crypto Wallet</h1>
+          <h1>Simple Wallet</h1>
         </div>
         <div className="content">
           <div className="welcome-message">
-            <p>Welcome to Simple Crypto Wallet</p>
+            <p>Welcome to Simple Wallet</p>
             <p className="text-sm text-text-secondary mt-2">
               Manage your crypto assets securely
             </p>

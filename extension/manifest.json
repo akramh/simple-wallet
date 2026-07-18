@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Simple Crypto Wallet",
+  "name": "Simple Wallet",
   "version": "1.0.1",
   "description": "A simple Ethereum wallet with multi-chain support",
   "permissions": [

@@ -15,7 +15,7 @@ import {
   FileStorage,
   MemoryStorage,
   createProviderFactory,
-} from 'simple-crypto-wallet/sdk';
+} from 'simple-wallet/sdk';
 ```
 
 Browser-like contexts:
@@ -26,11 +26,11 @@ import {
   WalletAppService,
   MemoryStorage,
   createProviderFactory,
-} from 'simple-crypto-wallet/sdk-browser';
+} from 'simple-wallet/sdk-browser';
 ```
 
 `sdk-browser` installs the Buffer polyfill and configures the WebCrypto adapter
-on import. Manual crypto adapter setup is exported from `simple-crypto-wallet/sdk`
+on import. Manual crypto adapter setup is exported from `simple-wallet/sdk`
 for environments that need explicit control.
 
 ## Wallet
@@ -166,7 +166,7 @@ for the extension, and `MobileStorageAdapter` for React Native.
 ## Crypto Adapters
 
 ```ts
-import { setCryptoAdapter, createWebCryptoAdapter } from 'simple-crypto-wallet/sdk';
+import { setCryptoAdapter, createWebCryptoAdapter } from 'simple-wallet/sdk';
 
 setCryptoAdapter(createWebCryptoAdapter());
 ```
