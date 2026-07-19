@@ -45,6 +45,12 @@ do not need to be treated as data APIs unless code starts fetching from them.
 
 ## Environment Variables
 
+The Alchemy key can also be entered at runtime through each app's first-run
+setup flow instead of via env vars: the CLI writes it back to `.env`, the
+extension stores it in `chrome.storage.local`, and mobile stores it in
+`expo-secure-store`. A runtime-entered key takes precedence over the env
+values below. See [alchemy.md](./alchemy.md#entering-the-key-at-runtime).
+
 ### Active Variables
 
 | Variable | Platforms | Used For |

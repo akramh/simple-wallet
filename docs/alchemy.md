@@ -156,6 +156,25 @@ The same key, sourced differently per build system:
 To run the wallet you only need the one key — see the
 [README quickstart](../README.md) and [.env.example](../.env.example).
 
+### Entering the key at runtime
+
+Each app also offers a first-run "get started with Alchemy" flow (skippable,
+re-reachable from settings) that validates a pasted key live — a JSON-RPC
+`eth_blockNumber` against Ethereum mainnet via
+[`src/alchemy-key.ts`](../src/alchemy-key.ts) — before saving it:
+
+| Platform | Where the entered key lives | Entry points |
+| --- | --- | --- |
+| CLI | Repo-root `.env` (written with all three platform variants, mode 0600) | First-run prompt; "Alchemy API Key" in the initial and settings menus |
+| Extension | `chrome.storage.local` (never leaves the service worker; UI sees a masked form only) | Welcome step before create/import; Settings → Network & API |
+| Mobile | `expo-secure-store` (OS Keychain/Keystore) | Onboarding screen before create/import; Profile → Alchemy API Key |
+
+**Precedence:** a runtime-entered key always wins over the build-time env
+key (`ALCHEMY_API_KEY` / `VITE_` / `EXPO_PUBLIC_`); removing it falls back
+to the build-time key when one exists, else to public-RPC degraded mode.
+Applying or removing a key re-substitutes RPC URLs and resets cached
+providers in place — no restart needed on any platform.
+
 ---
 
 ## Security patterns worth copying

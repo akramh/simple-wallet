@@ -70,9 +70,17 @@ development build. Expo Go is useful only for limited UI work.
 
 ## Environment
 
-Copy `.env.example` to `.env` for local CLI development. Extension build-time
-variables must use the `VITE_` prefix. Mobile public build variables use the
-`EXPO_PUBLIC_` prefix where supported by `mobile-wallet/app.config.js`.
+You don't have to configure anything up front: on first launch each app walks
+you through entering an Alchemy API key (validated live) or signing up at
+[dashboard.alchemy.com](https://dashboard.alchemy.com/). The CLI writes the
+key to `.env`; the extension stores it in `chrome.storage.local`; mobile
+stores it in the OS keychain. See
+[How Simple Wallet uses Alchemy](./alchemy.md#entering-the-key-at-runtime).
+
+To configure via files instead: copy `.env.example` to `.env` for local CLI
+development. Extension build-time variables must use the `VITE_` prefix.
+Mobile public build variables use the `EXPO_PUBLIC_` prefix where supported
+by `mobile-wallet/app.config.js`.
 
 The primary key is `ALCHEMY_API_KEY` and its platform variants:
 

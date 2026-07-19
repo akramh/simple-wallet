@@ -43,12 +43,18 @@ git clone https://github.com/akramh/simple-wallet.git
 cd simple-wallet
 npm install
 
-# 2. Configure your Alchemy key
-cp .env.example .env
-# Get a free key at https://dashboard.alchemy.com/ and set ALCHEMY_API_KEY in .env
-
-# 3. Run the CLI
+# 2. Run the CLI
 npm run dev
+```
+
+No key yet? Just run it — on first launch every app walks you through
+entering an Alchemy API key (or getting a free one at
+[dashboard.alchemy.com](https://dashboard.alchemy.com/)), validates it live,
+and saves it for you. You can also configure it up front:
+
+```bash
+cp .env.example .env
+# Set ALCHEMY_API_KEY in .env
 ```
 
 That single key is all you need to fetch balances, history, and prices across
