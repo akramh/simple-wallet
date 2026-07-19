@@ -33,53 +33,75 @@ with links straight into the code.
 - **Graceful fallback.** Alchemy is preferred everywhere; public RPC, Etherscan
   V2, and CoinGecko fill gaps without changing callers.
 
-## Quick start (about 5 minutes)
+## Getting Started
 
 **Prerequisites:** Node.js 18+ and npm.
 
 ```bash
-# 1. Clone and install
 git clone https://github.com/akramh/simple-wallet.git
 cd simple-wallet
 npm install
+```
 
-# 2. Run the CLI
+You don't need any configuration to try it: on first launch each app walks you
+through entering an Alchemy API key (or getting a free one at
+[dashboard.alchemy.com](https://dashboard.alchemy.com/)), validates it live,
+and saves it for you. That single key powers balances, history, and prices
+across every supported EVM chain and Solana. To configure up front instead,
+`cp .env.example .env` and set `ALCHEMY_API_KEY` — everything else in that
+file is optional.
+
+### CLI
+
+```bash
 npm run dev
 ```
 
-No key yet? Just run it — on first launch every app walks you through
-entering an Alchemy API key (or getting a free one at
-[dashboard.alchemy.com](https://dashboard.alchemy.com/)), validates it live,
-and saves it for you. You can also configure it up front:
+An interactive terminal wallet: create or import a wallet, then check your
+portfolio, send, receive, and browse history from the menu.
 
-```bash
-cp .env.example .env
-# Set ALCHEMY_API_KEY in .env
-```
-
-That single key is all you need to fetch balances, history, and prices across
-every supported EVM chain and Solana. Every other key in `.env.example` is
-optional (non-Alchemy chains and higher rate limits).
+<p align="center">
+  <img src="./docs/screenshots/cli-portfolio.png" alt="CLI portfolio view" width="32%" />
+  <img src="./docs/screenshots/cli-history.png" alt="CLI transaction history" width="32%" />
+  <img src="./docs/screenshots/cli-receive.png" alt="CLI receive with QR code" width="32%" />
+</p>
 
 ### Chrome extension
 
 ```bash
 npm run build:extension
-# Load dist-extension/ as an unpacked extension at chrome://extensions/
 ```
 
-The extension build reads `VITE_ALCHEMY_API_KEY`.
+Then open `chrome://extensions/`, enable **Developer mode**, click **Load
+unpacked**, and select `dist-extension/`. On first open the extension offers
+the Alchemy key setup; you can also bake a key into the build with
+`VITE_ALCHEMY_API_KEY`. Details: [docs/platforms/extension.md](./docs/platforms/extension.md).
 
-### Mobile app
+<p align="center">
+  <img src="./docs/screenshots/extension-onboarding.png" alt="Extension Alchemy onboarding" width="32%" />
+  <img src="./docs/screenshots/extension-wallet.png" alt="Extension multi-chain wallet view" width="32%" />
+  <img src="./docs/screenshots/extension-settings.png" alt="Extension settings with Alchemy key" width="32%" />
+</p>
+
+### Mobile app (Expo)
 
 ```bash
 cd mobile-wallet
 npm install
-npm start
+npx expo prebuild --clean
+npx expo run:ios        # or: npx expo run:android
 ```
 
-Native crypto requires a development build (not Expo Go). Mobile reads
-`EXPO_PUBLIC_ALCHEMY_API_KEY`.
+Wallet unlock uses native crypto (`react-native-quick-crypto`), so a
+**development build is required — Expo Go won't work**. Use `npx expo start`
+alone only for Metro/UI iteration. Environment setup, physical-device installs,
+and build details: [docs/platforms/mobile.md](./docs/platforms/mobile.md).
+
+<p align="center">
+  <img src="./docs/screenshots/mobile-wallet.png" alt="Mobile wallet home" width="32%" />
+  <img src="./docs/screenshots/mobile-activity.png" alt="Mobile transaction activity" width="32%" />
+  <img src="./docs/screenshots/mobile-profile.png" alt="Mobile profile and settings" width="32%" />
+</p>
 
 ## Platforms
 
@@ -97,11 +119,6 @@ Native crypto requires a development build (not Expo Go). Mobile reads
 - **Bitcoin** — mainnet and testnet *(mempool.space)*
 - **XRP Ledger** — mainnet and testnet *(xrpl WebSocket)*
 - **TON** — mainnet and testnet *(Toncenter)*
-
-## Screenshots
-
-<!-- TODO: add screenshots of the extension popup and mobile app here. -->
-_Screenshots coming soon._
 
 ## Documentation
 

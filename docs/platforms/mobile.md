@@ -25,6 +25,18 @@ npm run e2e:ios:build
 npm run e2e:ios:test
 ```
 
+## Environment
+
+No configuration is required to try the app: on first launch it walks you
+through entering an Alchemy API key (validated live, stored in the OS
+keychain via expo-secure-store). To bundle a key at build time instead, set
+`EXPO_PUBLIC_ALCHEMY_API_KEY` (or `ALCHEMY_API_KEY`) in the repo-root `.env`
+— `app.config.js` maps it into `expo.extra.alchemyApiKey`. A key entered in
+the app takes precedence over the bundled one and can be managed from
+Profile → Alchemy API Key. See
+[external-apis-and-env.md](../external-apis-and-env.md) for every optional
+variable (Toncenter, CoinGecko, Etherscan fallback).
+
 ## Native Builds
 
 Wallet unlock uses native crypto for PBKDF2 performance. Use a development
