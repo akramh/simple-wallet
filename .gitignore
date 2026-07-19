@@ -9,8 +9,10 @@ backup-*.json
 # The shipped registry is tokens.json; this file is per-user state.
 tokens-user.json
 *.log
+# All .env variants hold live keys — only the template is tracked.
 .env
-.env.synced
+.env.*
+!.env.example
 .doppler/
 .claude/
 # CLI user-state (current network, showTestnets toggle). Persisted here

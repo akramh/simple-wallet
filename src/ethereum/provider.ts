@@ -67,6 +67,18 @@ export class EthereumProvider {
   }
 
   /**
+   * Drops all cached JsonRpcProvider instances and failover indices so the
+   * next call rebuilds them from the (possibly updated) config RPC URLs.
+   * Needed when API keys are applied at runtime — cached providers pin the
+   * URL they were constructed with.
+   */
+  resetProviders(): void {
+    this.provider = null;
+    this.providers = {};
+    this.rpcIndex = {};
+  }
+
+  /**
    * Get list of RPC URLs for a network.
    */
   private getRpcList(networkKey: string): string[] {

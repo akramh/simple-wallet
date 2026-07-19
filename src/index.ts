@@ -63,6 +63,13 @@ import { createProviderFactory } from './providers.js';
 import { ExplorerAPI } from './explorer-api.js';
 import { applyExplorerApiKeys } from './config-utils.js';
 import {
+  looksLikeAlchemyKey,
+  maskAlchemyKey,
+  validateAlchemyKey,
+  ALCHEMY_SIGNUP_URL
+} from './alchemy-key.js';
+import { upsertEnvFile } from './env-file.js';
+import {
   getTokenPrices,
   getNativeTokenPrice,
   getERC20TokenPrice,
@@ -133,6 +140,29 @@ const walletService = new WalletAppService(wallet, config, {
 const explorerAPI = new ExplorerAPI();
 explorerAPI.registerNetworks(config.networks, globalApiKey);
 
+/**
+ * Reads the gitignored CLI user-state file (`config.local.json`). Returns
+ * an empty object when the file is missing or malformed.
+ */
+function readLocalState(): Record<string, unknown> {
+  try {
+    if (fs.existsSync(LOCAL_STATE_PATH)) {
+      return JSON.parse(fs.readFileSync(LOCAL_STATE_PATH, 'utf8')) as Record<string, unknown>;
+    }
+  } catch {
+    // Malformed local state already warned about at startup; treat as empty.
+  }
+  return {};
+}
+
+/**
+ * Read-merge-writes a partial patch into `config.local.json` (same pattern
+ * as WalletAppService.setNetwork, which persists only the `network` field).
+ */
+function patchLocalState(patch: Record<string, unknown>): void {
+  fs.writeFileSync(LOCAL_STATE_PATH, JSON.stringify({ ...readLocalState(), ...patch }, null, 2));
+}
+
 // ============================================================================
 // Session State (In-Memory Only)
 // ============================================================================
@@ -158,6 +188,15 @@ async function main(): Promise<void> {
   ui.clearScreen();
   ui.showHeader(null, null, config.networks[config.network].name);
 
+  // First-run Alchemy setup: prompt before any provider/service spins up so
+  // an entered key applies without a restart. Skippable; skip is remembered
+  // in config.local.json and the flow stays reachable from Settings.
+  if (!hasAlchemyKey() && readLocalState().alchemySetupDismissed !== true) {
+    await promptAlchemyKeySetup('first-run');
+    ui.clearScreen();
+    ui.showHeader(null, null, config.networks[config.network].name);
+  }
+
   await walletService.initialize();
 
   // Check if migration is needed
@@ -170,6 +209,257 @@ async function main(): Promise<void> {
 
   if (walletNames.length > 0) {
     await selectWalletMenu(existingWallets);
+  } else {
+    await initialMenu();
+  }
+}
+
+// ============================================================================
+// Alchemy API Key Setup
+// ============================================================================
+
+/**
+ * Returns the Alchemy key currently available from the environment, if any
+ * (mirrors the candidates getEnvValue checks in config-utils).
+ */
+function getActiveAlchemyKey(): string | undefined {
+  for (const name of ['ALCHEMY_API_KEY', 'VITE_ALCHEMY_API_KEY']) {
+    const value = process.env[name];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return undefined;
+}
+
+/** Whether an Alchemy key is currently available from the environment. */
+function hasAlchemyKey(): boolean {
+  return getActiveAlchemyKey() !== undefined;
+}
+
+/**
+ * Applies (or removes) an Alchemy key for the running process:
+ * env vars, console redaction, RPC URL re-substitution from the pristine
+ * config, explorer re-registration, and provider-cache resets so the new
+ * URLs take effect without a restart.
+ *
+ * @param key - The key to apply, or undefined to remove.
+ */
+async function applyRuntimeAlchemyKey(key: string | undefined): Promise<void> {
+  if (key) {
+    process.env.ALCHEMY_API_KEY = key;
+    process.env.VITE_ALCHEMY_API_KEY = key;
+    installConsoleRedactor(key);
+  } else {
+    delete process.env.ALCHEMY_API_KEY;
+    delete process.env.VITE_ALCHEMY_API_KEY;
+  }
+
+  // configData still holds the raw ${ALCHEMY_API_KEY} placeholders
+  // (applyExplorerApiKeys never mutates its input), so re-substitution
+  // restores the Alchemy URLs that were dropped at startup. Splicing into
+  // the shared `config` object propagates to wallet/walletService/explorerAPI,
+  // which all hold references to it.
+  const fresh = applyExplorerApiKeys(configData);
+  config.networks = fresh.config.networks;
+  explorerAPI.registerNetworks(config.networks, fresh.globalApiKey);
+  explorerAPI.clearCache();
+  wallet.resetProviderCache();
+
+  // Rebuild the per-chain provider for the active network (recreates the
+  // cached Solana/TON/Bitcoin provider objects that pin RPC URLs).
+  try {
+    await walletService.setNetwork(config.network, { persist: false });
+  } catch {
+    // Pre-initialization there may be nothing to rebuild — the first use
+    // will construct providers from the updated config anyway.
+  }
+}
+
+/**
+ * Persists the key to the repo-root `.env` (all three platform variants,
+ * so one CLI entry also feeds extension/mobile builds) and applies it to
+ * the running process.
+ */
+async function saveAlchemyKey(key: string): Promise<void> {
+  upsertEnvFile('.env', {
+    ALCHEMY_API_KEY: key,
+    VITE_ALCHEMY_API_KEY: key,
+    EXPO_PUBLIC_ALCHEMY_API_KEY: key
+  });
+  await applyRuntimeAlchemyKey(key);
+  ui.showSuccess('Alchemy key saved to .env and active now — no restart needed.');
+}
+
+/**
+ * Interactive key entry: password-masked input with format validation,
+ * then a live eth_blockNumber check against Alchemy. Offline users get an
+ * explicit "save anyway" escape hatch; rejected keys are never saved
+ * silently.
+ *
+ * @returns true when a key was saved.
+ */
+async function enterAlchemyKeyFlow(): Promise<boolean> {
+  while (true) {
+    const { key } = await inquirer.prompt<{ key: string }>([
+      {
+        type: 'password',
+        name: 'key',
+        mask: '*',
+        message: 'Paste your Alchemy API key:',
+        validate: (input: string) =>
+          looksLikeAlchemyKey(input) ||
+          'That does not look like an API key — paste just the key, not the URL'
+      }
+    ]);
+    const trimmed = key.trim();
+
+    ui.showLoading('Validating key with Alchemy...');
+    const result = await validateAlchemyKey(trimmed);
+
+    if (result.ok) {
+      await saveAlchemyKey(trimmed);
+      return true;
+    }
+
+    const offline = result.reason === 'network-error' || result.reason === 'timeout';
+    const messages: Record<string, string> = {
+      'invalid-format': 'That does not look like an Alchemy API key.',
+      unauthorized: 'Alchemy rejected this key — check for typos in your dashboard copy.',
+      'bad-response': 'Alchemy returned an unexpected response — the key may be wrong.',
+      'network-error': 'Could not reach Alchemy — check your internet connection.',
+      timeout: 'The validation request timed out — check your internet connection.'
+    };
+    ui.showError(messages[result.reason]);
+
+    const choices = [ui.menuChoice('Try again', '', 'retry')];
+    if (offline) {
+      choices.push(ui.menuChoice('Save without validating', 'Use if you are offline', 'save'));
+    }
+    choices.push(ui.menuChoice('Cancel', '', 'cancel'));
+
+    const { next } = await inquirer.prompt<{ next: string }>([
+      { type: 'list', name: 'next', message: 'What next?', choices }
+    ]);
+
+    if (next === 'save') {
+      await saveAlchemyKey(trimmed);
+      return true;
+    }
+    if (next === 'cancel') return false;
+  }
+}
+
+/**
+ * The getting-started pitch + menu: enter a key, get one from Alchemy, or
+ * skip (with a degraded-mode warning; first-run skip is persisted so the
+ * prompt doesn't nag on every launch).
+ */
+async function promptAlchemyKeySetup(context: 'first-run' | 'settings'): Promise<void> {
+  ui.showBox(
+    'Get started with Alchemy',
+    'This wallet runs on Alchemy: one free API key unlocks fast RPC on all\n' +
+      'EVM networks and Solana, full transaction history, live prices, and\n' +
+      'the unified portfolio view.\n\n' +
+      'Without a key the wallet still works, but degrades: slower public\n' +
+      'RPCs, limited history, and fallback price sources.',
+    'info'
+  );
+
+  while (true) {
+    const { action } = await inquirer.prompt<{ action: string }>([
+      {
+        type: 'list',
+        name: 'action',
+        message: 'How would you like to start?',
+        choices: [
+          ui.menuChoice('Enter my Alchemy API key', 'Paste a key you already have', 'enter'),
+          ui.menuChoice('Get a free key from Alchemy', 'Opens signup info', 'signup'),
+          ui.menuChoice('Skip for now', 'Continue in degraded mode', 'skip')
+        ]
+      }
+    ]);
+
+    if (action === 'enter') {
+      if (await enterAlchemyKeyFlow()) return;
+      // Cancelled — fall through to the menu again.
+    } else if (action === 'signup') {
+      ui.showBox(
+        'Sign up for Alchemy',
+        `1. Visit  ${ALCHEMY_SIGNUP_URL}\n` +
+          '2. Create a free account and an app\n' +
+          "3. Copy the app's API key\n" +
+          '4. Come back and choose "Enter my Alchemy API key"',
+        'info'
+      );
+    } else {
+      if (context === 'first-run') {
+        patchLocalState({ alchemySetupDismissed: true });
+      }
+      ui.showWarning(
+        'Running without an Alchemy key: public RPCs, limited history and prices. ' +
+          'Add a key any time from Settings.'
+      );
+      return;
+    }
+  }
+}
+
+/**
+ * Settings surface for the Alchemy key: shows the masked active key and
+ * offers update/remove. Ends by returning to the caller's menu, following
+ * the CLI navigation pattern.
+ */
+async function manageAlchemyKeyMenu(context: 'initial' | 'settings'): Promise<void> {
+  const activeKey = getActiveAlchemyKey();
+
+  ui.showBox(
+    'Alchemy API Key',
+    activeKey
+      ? `Active key: ${maskAlchemyKey(activeKey)}\nStored in the repo-root .env file.`
+      : 'No key configured. The wallet is running in degraded mode.',
+    activeKey ? 'success' : 'warning'
+  );
+
+  const choices = [
+    ui.menuChoice(activeKey ? 'Update key' : 'Add a key', '', 'update')
+  ];
+  if (activeKey) {
+    choices.push(ui.menuChoice('Remove key', 'Blank it out in .env', 'remove'));
+  }
+  choices.push(ui.menuChoice('Back', '', 'back'));
+
+  const { action } = await inquirer.prompt<{ action: string }>([
+    { type: 'list', name: 'action', message: 'Alchemy API key:', choices }
+  ]);
+
+  if (action === 'update') {
+    await promptAlchemyKeySetup('settings');
+  } else if (action === 'remove') {
+    const { confirmed } = await inquirer.prompt<{ confirmed: boolean }>([
+      {
+        type: 'confirm',
+        name: 'confirmed',
+        message: 'Remove the Alchemy key from .env? The wallet will fall back to public RPCs.',
+        default: false
+      }
+    ]);
+    if (confirmed) {
+      upsertEnvFile('.env', {
+        ALCHEMY_API_KEY: '',
+        VITE_ALCHEMY_API_KEY: '',
+        EXPO_PUBLIC_ALCHEMY_API_KEY: ''
+      });
+      await applyRuntimeAlchemyKey(undefined);
+      ui.showWarning('Alchemy key removed — running in degraded mode.');
+    }
+  }
+
+  if (action !== 'back') {
+    await manageAlchemyKeyMenu(context);
+    return;
+  }
+
+  if (context === 'settings') {
+    await settingsMenu(currentWalletName);
   } else {
     await initialMenu();
   }
@@ -444,6 +734,14 @@ async function initialMenu(): Promise<void> {
     ui.menuChoice('Create a new wallet', 'Generate a fresh 12-word phrase', 'create'),
     ui.menuChoice('Import from recovery phrase', 'Restore an existing wallet', 'import'),
     ui.menuChoice('Import from private key', 'Advanced', 'import_pk'),
+    new inquirer.Separator(''),
+    ui.menuChoice(
+      'Alchemy API Key',
+      hasAlchemyKey()
+        ? `Active: ${maskAlchemyKey(getActiveAlchemyKey() ?? '')}`
+        : 'Not set — add for full features',
+      'alchemy'
+    ),
   ];
 
   if (hasExistingWallets) {
@@ -476,6 +774,9 @@ async function initialMenu(): Promise<void> {
       break;
     case 'import_pk':
       await importWalletFromPrivateKey();
+      break;
+    case 'alchemy':
+      await manageAlchemyKeyMenu('initial');
       break;
     case 'back': {
       const existingWallets = wallet.getAllWallets();
@@ -951,6 +1252,13 @@ async function settingsMenu(walletName: string | null): Promise<void> {
       pageSize: 25,
       choices: [
         ui.menuChoice('Manage Tokens', 'Add or remove ERC-20 tokens', 'tokens'),
+        ui.menuChoice(
+          'Alchemy API Key',
+          hasAlchemyKey()
+            ? `Active: ${maskAlchemyKey(getActiveAlchemyKey() ?? '')}`
+            : 'Not set — add for full features',
+          'alchemy'
+        ),
         ui.menuChoice('Show Secrets', 'View private key & mnemonic', 'secrets'),
         ui.menuChoice('Export Wallet', 'Backup wallet to file', 'export'),
         ui.menuChoice('Switch Wallet', 'Load a different wallet', 'switch'),
@@ -964,6 +1272,9 @@ async function settingsMenu(walletName: string | null): Promise<void> {
   switch (action) {
     case 'tokens':
       await manageTokens(currentWalletName);
+      break;
+    case 'alchemy':
+      await manageAlchemyKeyMenu('settings');
       break;
     case 'secrets':
       await showWalletSecrets(currentWalletName);

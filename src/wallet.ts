@@ -188,6 +188,15 @@ export class Wallet {
     return this.ethereumProvider.getProvider();
   }
 
+  /**
+   * Drops cached EVM providers so subsequent calls rebuild them from the
+   * current config RPC URLs. Call after mutating RPC URLs at runtime (e.g.
+   * applying a newly entered Alchemy key mid-session).
+   */
+  resetProviderCache(): void {
+    this.ethereumProvider.resetProviders();
+  }
+
   async initialize(): Promise<void> {
     const networkConfig = this.config.networks[this.config.network];
     // Implicitly EVM if type is missing

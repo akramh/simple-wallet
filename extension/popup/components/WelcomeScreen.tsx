@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import * as bip39 from 'bip39';
 import { Icon, MnemonicDisplay, PasswordField } from './ui';
+import AlchemyKeySetup from './AlchemyKeySetup';
+import { sendMessageWithRetry } from '../utils/messaging';
 import logoIcon from '../../assets/img/logo.svg';
 import { getWalletNameValidationMessage, isValidWalletName, WALLET_NAME_REQUIREMENTS } from '../../../src/wallet-name.js';
 
@@ -8,10 +10,35 @@ interface Props {
   onWalletCreated: () => void;
 }
 
-type Screen = 'choice' | 'set-password' | 'create-mnemonic' | 'import-wallet' | 'verify-mnemonic';
+type Screen = 'alchemy-setup' | 'choice' | 'set-password' | 'create-mnemonic' | 'import-wallet' | 'verify-mnemonic';
+
+/** chrome.storage.local flag: user skipped the Alchemy onboarding step. */
+const ALCHEMY_SETUP_DISMISSED_KEY = 'alchemySetupDismissed';
 
 function WelcomeScreen({ onWalletCreated }: Props) {
   const [screen, setScreen] = useState<Screen>('choice');
+
+  // First-run Alchemy step: shown before the create/import choice when no
+  // key is configured (build-time or stored) and the user hasn't skipped.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [{ hasKey }, dismissed] = await Promise.all([
+          sendMessageWithRetry<{ hasKey: boolean }>({ type: 'GET_ALCHEMY_KEY_STATUS' }),
+          chrome.storage.local.get(ALCHEMY_SETUP_DISMISSED_KEY),
+        ]);
+        if (!cancelled && !hasKey && dismissed?.[ALCHEMY_SETUP_DISMISSED_KEY] !== true) {
+          setScreen('alchemy-setup');
+        }
+      } catch {
+        // Status unavailable — stay on the normal choice screen.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [mnemonic, setMnemonic] = useState('');
   const [privateKey, setPrivateKey] = useState('');
   const [chainType, setChainType] = useState('evm');
@@ -363,6 +390,28 @@ function WelcomeScreen({ onWalletCreated }: Props) {
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    );
+  }
+
+  // Alchemy Setup - first-run getting-started step (skippable)
+  if (screen === 'alchemy-setup') {
+    return (
+      <div className="container">
+        <div className="header">
+          <img src={logoIcon} alt="Simple Wallet" className="welcome-logo" />
+          <h1>Get started with Alchemy</h1>
+        </div>
+        <div className="content">
+          <AlchemyKeySetup
+            variant="onboarding"
+            onSaved={() => setScreen('choice')}
+            onSkip={() => {
+              chrome.storage.local.set({ [ALCHEMY_SETUP_DISMISSED_KEY]: true }).catch(() => {});
+              setScreen('choice');
+            }}
+          />
         </div>
       </div>
     );

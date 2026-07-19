@@ -118,3 +118,27 @@ test('regression: legacy ${HELIUS_API_KEY} substitution still works', () => {
     'https://mainnet.helius-rpc.com/?api-key=legacy-key',
   );
 });
+
+test('runtime-injected ALCHEMY_API_KEY takes precedence over VITE_ variant', () => {
+  // The extension injects a user-entered key as the bare env name on top of
+  // import.meta.env; getEnvValue checks the bare name first, so the stored
+  // key must win over the build-time VITE_ value.
+  const cfg = {
+    network: 'mainnet',
+    networks: {
+      mainnet: {
+        chainId: 1,
+        rpcUrl: ['https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}'],
+        nativeSymbol: 'ETH',
+        nativeName: 'Ether',
+      },
+    },
+  };
+
+  const { config } = applyExplorerApiKeys(cfg, {
+    VITE_ALCHEMY_API_KEY: 'buildtime-key',
+    ALCHEMY_API_KEY: 'runtime-key',
+  });
+
+  assert.equal(config.networks.mainnet.rpcUrl, 'https://eth-mainnet.g.alchemy.com/v2/runtime-key');
+});

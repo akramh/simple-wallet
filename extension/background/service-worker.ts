@@ -101,11 +101,91 @@ setCryptoAdapter(createWebCryptoAdapter());
 // ============================================================================
 
 import { setAlchemyApiKey, setCoingeckoApiKey } from '../../src/price-providers/index.js';
+import {
+  looksLikeAlchemyKey,
+  maskAlchemyKey,
+  validateAlchemyKey,
+} from '../../src/alchemy-key.js';
 
 /** Configure Alchemy Prices API key (primary provider for current prices) */
 const alchemyApiKey = import.meta.env.VITE_ALCHEMY_API_KEY;
 if (alchemyApiKey) {
   setAlchemyApiKey(alchemyApiKey);
+}
+
+// ============================================================================
+// Runtime Alchemy Key (user-entered, stored in chrome.storage.local)
+// ============================================================================
+
+/** chrome.storage.local key holding a user-entered Alchemy API key. */
+const ALCHEMY_KEY_STORAGE_KEY = 'alchemyApiKey';
+
+/**
+ * User-entered Alchemy key loaded from chrome.storage.local. Takes
+ * precedence over the build-time VITE_ALCHEMY_API_KEY. Held only in the
+ * service worker; UI surfaces receive masked/boolean status, never the raw
+ * key.
+ */
+let runtimeAlchemyKey: string | undefined;
+
+/**
+ * Pre-substitution merged config (bundled + stored overrides) captured by
+ * initializeWalletService. Retains `${ALCHEMY_API_KEY}` placeholders so a
+ * runtime key change can re-substitute without a full re-init (which would
+ * drop the unlocked wallet state).
+ */
+let pristineMergedConfig: (Config & { network: string }) | null = null;
+
+/** Effective key: user-entered wins over build-time env. */
+function getEffectiveAlchemyKey(): string | undefined {
+  if (runtimeAlchemyKey) return runtimeAlchemyKey;
+  const buildTime = import.meta.env.VITE_ALCHEMY_API_KEY;
+  return typeof buildTime === 'string' && buildTime.length > 0 ? buildTime : undefined;
+}
+
+/** Loads the stored key (if any) into module state. Never throws. */
+async function loadStoredAlchemyKey(): Promise<void> {
+  try {
+    const stored = await chrome.storage.local.get(ALCHEMY_KEY_STORAGE_KEY);
+    const value = stored?.[ALCHEMY_KEY_STORAGE_KEY];
+    runtimeAlchemyKey =
+      typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+  } catch {
+    runtimeAlchemyKey = undefined;
+  }
+}
+
+/**
+ * Applies the current effective key to every consumer on the running
+ * worker: console redaction, the Prices provider, RPC URL re-substitution
+ * from the pristine config, explorer re-registration, and provider-cache
+ * resets. Preserves unlocked wallet state (no service re-construction).
+ */
+async function applyAlchemyKeyToServices(): Promise<void> {
+  const effective = getEffectiveAlchemyKey();
+  installConsoleRedactor(effective);
+  setAlchemyApiKey(effective);
+
+  if (!walletService || !pristineMergedConfig) {
+    // Worker not initialized yet — initializeWalletService picks the key up.
+    return;
+  }
+
+  const fresh = applyExplorerApiKeys(pristineMergedConfig, {
+    ...(import.meta.env as Record<string, string | undefined>),
+    ALCHEMY_API_KEY: effective,
+  });
+  // Splice into the live config object shared by wallet + service.
+  walletService.config.networks = fresh.config.networks;
+  explorerAPI.registerNetworks(walletService.config.networks, fresh.globalApiKey);
+  explorerAPI.clearCache();
+  walletService.wallet.resetProviderCache();
+  try {
+    // Rebuild the cached per-chain provider for the active network.
+    await walletService.setNetwork(walletService.config.network, { persist: false });
+  } catch {
+    // Providers rebuild lazily on next use with the updated config.
+  }
 }
 
 /** Configure CoinGecko API key (fallback for current prices + primary for history/metadata) */
@@ -1107,15 +1187,12 @@ async function runRefreshForWallet(targetWallet: string): Promise<void> {
 }
 
 /**
- * Resolve the Alchemy API key available to the service worker.
- * Matches the pattern used in `src/price-providers/alchemy.ts`: env first,
- * then whatever was set at startup via `setAlchemyApiKey`. Kept local
- * because the alchemy module doesn't export its getter.
+ * Resolve the Alchemy API key available to the service worker for the
+ * Portfolio API: the user-entered runtime key wins over the build-time
+ * VITE_ALCHEMY_API_KEY.
  */
 function resolveAlchemyApiKey(): string | undefined {
-  // `import.meta.env` is inlined by Vite at build time for the extension.
-  const fromEnv = (import.meta as any).env?.VITE_ALCHEMY_API_KEY;
-  return typeof fromEnv === 'string' && fromEnv.length > 0 ? fromEnv : undefined;
+  return getEffectiveAlchemyKey();
 }
 
 /** Resolve USD prices for all tokens on a single network. */
@@ -1827,6 +1904,13 @@ async function initializeWalletService(): Promise<void> {
   const storage = new ChromeStorageAdapter();
   await storage.initialize();
 
+  // Load any user-entered Alchemy key BEFORE config substitution so its
+  // RPC URLs are built with the effective key, and register it with the
+  // redactor + Prices provider (user-entered key wins over build-time env).
+  await loadStoredAlchemyKey();
+  installConsoleRedactor(getEffectiveAlchemyKey());
+  setAlchemyApiKey(getEffectiveAlchemyKey());
+
   await loadApprovedOrigins();
 
   // Load config from bundled asset (source of truth), with minimal fallback
@@ -1851,7 +1935,13 @@ async function initializeWalletService(): Promise<void> {
   }
 
   const mergedConfig = { ...bundledConfig, ...storedConfig, networks: mergedNetworks };
-  const { config, globalApiKey } = applyExplorerApiKeys(mergedConfig, import.meta.env as Record<string, string | undefined>);
+  // Keep the pre-substitution config so a runtime key change can
+  // re-substitute in place (see applyAlchemyKeyToServices).
+  pristineMergedConfig = mergedConfig as Config & { network: string };
+  const { config, globalApiKey } = applyExplorerApiKeys(mergedConfig, {
+    ...(import.meta.env as Record<string, string | undefined>),
+    ALCHEMY_API_KEY: getEffectiveAlchemyKey(),
+  });
 
   // Register explorer API URLs from network config (pass global API key)
   explorerAPI.registerNetworks(config.networks, globalApiKey);
@@ -3140,6 +3230,43 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       );
       walletService!.storage.writeJSON('config.json', { ...storedConfig, showTestnets: enabled });
       return { showTestnets: enabled };
+    }
+
+    case 'GET_ALCHEMY_KEY_STATUS': {
+      // Raw key never leaves the worker — masked/boolean status only.
+      const effective = getEffectiveAlchemyKey();
+      return {
+        hasKey: Boolean(effective),
+        source: runtimeAlchemyKey ? 'stored' : effective ? 'buildtime' : null,
+        masked: effective ? maskAlchemyKey(effective) : undefined,
+      };
+    }
+
+    case 'SET_ALCHEMY_KEY': {
+      const key = typeof payload?.key === 'string' ? payload.key.trim() : '';
+      if (!looksLikeAlchemyKey(key)) {
+        return { ok: false, reason: 'invalid-format' };
+      }
+      if (!payload?.allowUnvalidated) {
+        const validation = await validateAlchemyKey(key);
+        if (!validation.ok) return validation;
+      }
+      await chrome.storage.local.set({ [ALCHEMY_KEY_STORAGE_KEY]: key });
+      runtimeAlchemyKey = key;
+      await applyAlchemyKeyToServices();
+      return { ok: true };
+    }
+
+    case 'CLEAR_ALCHEMY_KEY': {
+      await chrome.storage.local.remove(ALCHEMY_KEY_STORAGE_KEY);
+      runtimeAlchemyKey = undefined;
+      await applyAlchemyKeyToServices();
+      const remaining = getEffectiveAlchemyKey();
+      return {
+        hasKey: Boolean(remaining),
+        source: remaining ? 'buildtime' : null,
+        masked: remaining ? maskAlchemyKey(remaining) : undefined,
+      };
     }
 
     case 'GET_TRANSACTION_HISTORY':
