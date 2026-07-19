@@ -94,7 +94,7 @@ interface TransactionReceipt {
  */
 export function showHeader(walletName: string | null = null, accountIndex: number | null = null, networkName: string | null = null, address: string | null = null): void {
   console.log('\n' + chalk.cyan('═'.repeat(60)));
-  console.log(chalk.cyan.bold('  Simple Crypto Wallet'));
+  console.log(chalk.cyan.bold('  Simple Wallet'));
 
   if (walletName || accountIndex !== null || networkName) {
     const parts: string[] = [];

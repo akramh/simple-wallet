@@ -14,6 +14,7 @@ export default function AuthLayout() {
       }}
     >
       <Stack.Screen name="welcome" />
+      <Stack.Screen name="alchemy-setup" />
       <Stack.Screen name="unlock" />
     </Stack>
   );

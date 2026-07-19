@@ -95,7 +95,7 @@ When the diff touches secrets, storage, crypto, or signing, explicitly verify th
 - **Address quirks to respect:** Solana addresses are base58 and case-sensitive. Bitcoin supports multiple formats (Legacy, SegWit, Native SegWit). EVM addresses use EIP-55 mixed-case checksums.
 - **Env var naming for non-alphanumeric network keys** (e.g. `solana-mainnet`) becomes `EXPLORER_API_KEY_SOLANA_MAINNET` (and `VITE_EXPLORER_API_KEY_SOLANA_MAINNET` for the extension build). Alchemy does NOT use per-network keys — one `ALCHEMY_API_KEY` serves all chains; the hostname (`eth-mainnet.g.alchemy.com`, `solana-mainnet.g.alchemy.com`, etc.) selects the chain.
 - **Alchemy Transfers API chain coverage**: `alchemy_getAssetTransfers` supports eth, sepolia, base, polygon, arb, opt only. For avalanche/bsc/linea, the `ExplorerAPI` singleton falls back to Etherscan V2 via the same interface (dispatch lives in `src/explorer-api.ts` `getAllTransactions`).
-- **Leaked Helius key in git history**: commit `8dfe258` introduced `fdb9849d-88cf-4fe6-91f5-057a82d724b7` in `config.json`; present on `origin/main` and 20+ branches. The key has been revoked via the Helius dashboard; config now uses `${ALCHEMY_API_KEY}` substitution.
+- **Leaked Helius key in git history**: commit `8dfe258` introduced a Helius key (`<revoked-helius-key>`) in `config.json`; it persists in history. The key has been revoked via the Helius dashboard; config now uses `${ALCHEMY_API_KEY}` substitution.
 
 ## Working from existing changes (PR / open branch)
 

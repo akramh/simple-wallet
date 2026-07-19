@@ -1,8 +1,7 @@
 # Mobile Wallet — Performance Baseline (Phase 0)
 
 This document is the canonical reference for the **before** numbers we tune
-against in Phases 1–7 of the RN tuning plan
-(`/Users/akram/.claude/plans/goal-is-to-evaluate-soft-pearl.md`).
+against in Phases 1–7 of the RN performance-tuning plan.
 
 Each phase re-runs the captures below and writes deltas into
 `results.md` next to this file. **Do not delete the baseline numbers

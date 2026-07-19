@@ -5,10 +5,12 @@
 import { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, Switch, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useProfileScreenSelector } from '../../store';
 import { useBiometrics, useClipboard } from '../../hooks';
+import { getAlchemyApiKey } from '../../config/bundled-config';
+import { maskAlchemyKey } from '@wallet/alchemy-key';
 
 // Auto-lock timeout options in minutes
 const AUTO_LOCK_OPTIONS = [
@@ -35,6 +37,16 @@ export default function ProfileScreen() {
 
   // Auto-lock UI state
   const [showAutoLockPicker, setShowAutoLockPicker] = useState(false);
+
+  // Alchemy key status (masked) — refreshed on focus so edits on the
+  // /alchemy-key screen show up when returning here.
+  const [alchemyKeySubtitle, setAlchemyKeySubtitle] = useState('Not set — add for full features');
+  useFocusEffect(
+    useCallback(() => {
+      const key = getAlchemyApiKey();
+      setAlchemyKeySubtitle(key ? `Active: ${maskAlchemyKey(key)}` : 'Not set — add for full features');
+    }, [])
+  );
 
   // Biometrics state
   const [showBiometricsPasswordModal, setShowBiometricsPasswordModal] = useState(false);
@@ -225,6 +237,12 @@ export default function ProfileScreen() {
         <View className="px-5 mt-6">
           <Text className="text-gray-400 text-sm mb-3 uppercase">App</Text>
 
+          <SettingsItem
+            icon="key-outline"
+            title="Alchemy API Key"
+            subtitle={alchemyKeySubtitle}
+            onPress={() => navigateOnce(() => router.push('/alchemy-key' as never))}
+          />
           <SettingsItem
             icon="color-palette-outline"
             title="Theme"

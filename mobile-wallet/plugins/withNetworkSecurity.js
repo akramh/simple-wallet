@@ -6,6 +6,10 @@ const path = require('path');
 // Since this runs at build time in a different context, we might duplicate or read the JSON.
 // For robustness, I will include the domains inline here, derived from the same source.
 const ALLOWED_DOMAINS = [
+    // Alchemy: per-chain RPC hosts (<chain>.g.alchemy.com) plus the Prices /
+    // Portfolio Data API host. includeSubdomains covers the per-chain hosts.
+    "g.alchemy.com",
+    "api.g.alchemy.com",
     "ethereum-rpc.publicnode.com",
     "ethereum-sepolia-rpc.publicnode.com",
     "rpc.sepolia.org",

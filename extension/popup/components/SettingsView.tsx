@@ -11,6 +11,8 @@ import keyIcon from '../../assets/icons/key.svg';
 import lockIcon from '../../assets/icons/lock.svg';
 import { applyTheme, getStoredTheme, setStoredTheme, type UiTheme } from '../theme';
 import { Icon } from './ui';
+import AlchemyKeySetup, { type AlchemyKeyStatus } from './AlchemyKeySetup';
+import { sendMessageWithRetry } from '../utils/messaging';
 
 interface Props {
   currentAddress?: string;
@@ -58,6 +60,24 @@ function SettingsView({ onClose }: Props) {
   const [showSecretModal, setShowSecretModal] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [secretType, setSecretType] = useState<'mnemonic' | 'privateKey'>('mnemonic');
+  const [showAlchemyKey, setShowAlchemyKey] = useState(false);
+  const [alchemyStatus, setAlchemyStatus] = useState<AlchemyKeyStatus | null>(null);
+
+  const refreshAlchemyStatus = () => {
+    sendMessageWithRetry<AlchemyKeyStatus>({ type: 'GET_ALCHEMY_KEY_STATUS' })
+      .then(setAlchemyStatus)
+      .catch(() => setAlchemyStatus(null));
+  };
+
+  useEffect(refreshAlchemyStatus, []);
+
+  const alchemyKeySubtitle = !alchemyStatus
+    ? 'Powers RPC, history, prices, and portfolio'
+    : alchemyStatus.hasKey
+      ? alchemyStatus.source === 'stored'
+        ? `${alchemyStatus.masked} (entered here)`
+        : `${alchemyStatus.masked} (build-time)`
+      : 'Not set — add for full features';
   const [uiTheme, setUiTheme] = useState<UiTheme>('auto');
   const [importType, setImportType] = useState<'mnemonic' | 'privateKey' | null>(null);
 
@@ -175,6 +195,32 @@ function SettingsView({ onClose }: Props) {
               onClick={() => setShowChangePassword(true)}
               topBorder
             />
+          </div>
+        </section>
+
+        {/* Network & API */}
+        <section className="settings-section">
+          <h3 className="settings-section__label">Network &amp; API</h3>
+          <div className="wallet-card settings-card settings-card--rows">
+            <SettingsRow
+              iconSrc={keyIcon}
+              title="Alchemy API Key"
+              subtitle={alchemyKeySubtitle}
+              onClick={() => setShowAlchemyKey((prev) => !prev)}
+              trailing={
+                <Icon
+                  name={showAlchemyKey ? 'chevron-down' : 'chevron-right'}
+                  size={16}
+                  decorative
+                  className="settings-row__chev"
+                />
+              }
+            />
+            {showAlchemyKey && (
+              <div className="settings-card__expanded">
+                <AlchemyKeySetup variant="settings" onSaved={refreshAlchemyStatus} />
+              </div>
+            )}
           </div>
         </section>
 

@@ -65,6 +65,8 @@ jest.mock('../config/bundled-config', () => ({
       }
     },
   }),
+  getAlchemyApiKey: () => undefined,
+  setRuntimeAlchemyKey: jest.fn(),
 }));
 
 // Import the service AFTER mocks are set up.

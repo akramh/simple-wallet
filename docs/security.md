@@ -64,6 +64,6 @@ with extension IDs, bundle IDs, allowed origins, and other available controls.
 
 ## Known Historical Secret
 
-Commit `8dfe258` introduced the Helius key
-`fdb9849d-88cf-4fe6-91f5-057a82d724b7` in `config.json`. The key has been
-revoked. Current config uses `${ALCHEMY_API_KEY}` substitution.
+Commit `8dfe258` introduced a Helius key (`<revoked-helius-key>`) in
+`config.json`. The key has been revoked. Current config uses
+`${ALCHEMY_API_KEY}` substitution.

@@ -35,6 +35,8 @@ jest.mock('../config/bundled-config', () => ({
   }),
   getBundledTokens: () => ({}),
   getCoingeckoApiKey: () => undefined,
+  getAlchemyApiKey: () => undefined,
+  setRuntimeAlchemyKey: jest.fn(),
 }));
 
 // Mock mobile adapters

@@ -14,6 +14,7 @@ jest.mock('../config/bundled-config', () => ({
   getCoingeckoApiKey: () => undefined,
   getAlchemyApiKey: () => undefined,
   getHeliusApiKey: () => undefined,
+  setRuntimeAlchemyKey: jest.fn(),
 }));
 
 // Mock mobile adapters

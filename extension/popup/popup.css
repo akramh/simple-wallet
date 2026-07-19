@@ -1566,6 +1566,16 @@
   padding: 0; /* rows provide their own padding */
 }
 
+/* Expanded panel under a settings row (e.g. Alchemy key entry) */
+.settings-card__expanded {
+  padding: 0 16px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-card__expanded .alchemy-key-setup {
+  padding-top: 12px;
+}
+
 /* Tappable rows */
 .settings-row {
   display: flex;
