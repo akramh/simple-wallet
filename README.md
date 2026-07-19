@@ -10,14 +10,14 @@ powers RPC (EVM + Solana), transaction history, prices, and portfolio data —
 across a CLI, a Chrome extension, and a mobile app, all from one shared
 TypeScript core.**
 
-It's also a **reference implementation for using Alchemy's APIs**: real,
-production-shaped code showing the Alchemy JSON-RPC, Transfers, Prices, and
-Portfolio Data APIs working together across nine EVM chains plus Solana.
+If you're learning how to build on Alchemy, this repo doubles as a working
+reference: real, production-shaped code showing the Alchemy JSON-RPC,
+Transfers, Prices, and Portfolio Data APIs working together across nine EVM
+chains plus Solana — see
+**[How Simple Wallet uses Alchemy](./docs/alchemy.md)** for a guided tour
+with links straight into the code.
 
-👉 **Start here: [How Simple Wallet uses Alchemy](./docs/alchemy.md)** — a guided
-tour of every Alchemy integration, with links straight into the code.
-
-## Why this is a good Alchemy showcase
+## How it works
 
 - **One key, many chains.** A single `ALCHEMY_API_KEY` serves nine EVM networks
   and Solana — the hostname selects the chain, so there's no per-chain key
@@ -27,9 +27,9 @@ tour of every Alchemy integration, with links straight into the code.
   - **Transfers API** — `alchemy_getAssetTransfers` for transaction history
   - **Prices API** — first-priority USD token prices
   - **Portfolio Data API** — balances + prices + metadata in a single call
-- **Three real UIs, one core.** The same integration code backs the CLI,
-  extension, and mobile app — you can see how the key is injected under Node,
-  Vite, and Expo.
+- **Three UIs, one core.** The same integration code backs the CLI, extension,
+  and mobile app — the shared TypeScript core in `src/` handles everything
+  chain-related, and each UI just wires up platform adapters.
 - **Graceful fallback.** Alchemy is preferred everywhere; public RPC, Etherscan
   V2, and CoinGecko fill gaps without changing callers.
 
