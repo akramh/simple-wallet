@@ -31,6 +31,12 @@ import { mobileCrypto, MobileCryptoAdapter } from "./MobileCryptoAdapter";
 import { cacheService } from "./CacheService";
 import type { Token } from "@wallet/types/token";
 import { installConsoleRedactor } from "@wallet/utils/redact-logs";
+import { setRuntimeAlchemyKey } from "../config/bundled-config";
+import {
+  getStoredAlchemyKey,
+  saveAlchemyKey,
+  clearAlchemyKey,
+} from "./alchemyKeyStore";
 import {
   fetchAlchemyPortfolio,
   isPortfolioSupported,
@@ -218,6 +224,16 @@ class WalletBridge {
     try {
       // Initialize storage
       await mobileStorage.initialize();
+
+      // Load any user-entered Alchemy key from SecureStore BEFORE building
+      // config: getBundledConfig()/getAlchemyApiKey() are synchronous, so
+      // the key must be cached in bundled-config's module state first. The
+      // runtime key wins over the build-time Expo extra value.
+      const storedAlchemyKey = await getStoredAlchemyKey();
+      setRuntimeAlchemyKey(storedAlchemyKey);
+      if (storedAlchemyKey) {
+        installConsoleRedactor(storedAlchemyKey);
+      }
 
       // Load config (bundled or from storage)
       this.config = await this.loadConfig();
@@ -1420,6 +1436,54 @@ class WalletBridge {
     // Return the address for the new network
     const address = this.service.getAddress();
     return { address };
+  }
+
+  /**
+   * Applies a new user-entered Alchemy key (or removes it with null) on the
+   * running app: persists to SecureStore, updates the runtime key cache,
+   * rebuilds config so RPC URLs re-substitute, re-registers explorer
+   * networks, and resets cached providers — no app restart needed.
+   *
+   * @param key - The new key, or null to remove the stored key (falls back
+   *   to the build-time key if one was bundled).
+   * @async
+   */
+  async reconfigureAlchemyKey(key: string | null): Promise<void> {
+    if (key) {
+      await saveAlchemyKey(key);
+      installConsoleRedactor(key);
+    } else {
+      await clearAlchemyKey();
+    }
+    setRuntimeAlchemyKey(key);
+
+    // Rebuild config with the new key substituted into RPC URLs.
+    this.config = await this.loadConfig();
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { getAlchemyApiKey } = require("../config/bundled-config");
+    // Re-apply the Prices key explicitly: loadConfig only sets it when a
+    // key exists, which would leave a removed key active in the provider.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { setAlchemyApiKey } = require("@wallet/price-providers");
+    setAlchemyApiKey(getAlchemyApiKey());
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { explorerAPI } = require("@wallet/explorer-api");
+    explorerAPI.registerNetworks(this.config.networks, getAlchemyApiKey());
+    explorerAPI.clearCache();
+
+    // If a wallet session is live, point it at the fresh config and drop
+    // cached providers so the next call uses the new URLs.
+    if (this.service) {
+      this.service.config.networks = this.config.networks;
+      this.service.wallet.resetProviderCache();
+      try {
+        await this.service.setNetwork(this.config.network, { persist: false });
+      } catch {
+        // Providers rebuild lazily on next use with the updated config.
+      }
+    }
   }
 
   /**

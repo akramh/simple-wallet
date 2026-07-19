@@ -2,13 +2,32 @@
  * @fileoverview Welcome/onboarding screen.
  */
 
+import { useEffect } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { getAlchemyApiKey } from '../../config/bundled-config';
+import { getSetupDismissed } from '../../services/alchemyKeyStore';
 
 export default function WelcomeScreen() {
   const router = useRouter();
+
+  // First-run Alchemy step: shown before create/import when no key is
+  // configured (build-time or stored) and the user hasn't skipped it.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (getAlchemyApiKey()) return;
+      const dismissed = await getSetupDismissed();
+      if (!cancelled && !dismissed) {
+        router.replace('/(auth)/alchemy-setup');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   return (
     <SafeAreaView className="flex-1 bg-gray-950 px-6">

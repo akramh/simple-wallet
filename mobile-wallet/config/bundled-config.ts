@@ -60,7 +60,25 @@ export interface Token {
 export type TokenRegistry = Record<string, Token[]>;
 
 /**
- * Get API keys from Expo Constants (loaded from .env via app.config.js)
+ * User-entered Alchemy key, loaded from SecureStore by WalletBridge before
+ * config is built. Held at module level because config reads here are
+ * synchronous (Constants) while SecureStore is async — WalletBridge calls
+ * setRuntimeAlchemyKey() during initialize(), before loadConfig().
+ * Takes precedence over the build-time EXPO_PUBLIC_ALCHEMY_API_KEY.
+ */
+let runtimeAlchemyKey: string | null = null;
+
+/**
+ * Registers (or clears, with null) the user-entered Alchemy key so every
+ * synchronous config read resolves it first.
+ */
+export function setRuntimeAlchemyKey(key: string | null): void {
+  runtimeAlchemyKey = key && key.trim() !== '' ? key.trim() : null;
+}
+
+/**
+ * Get API keys from Expo Constants (loaded from .env via app.config.js).
+ * The Alchemy key prefers the runtime (user-entered) value.
  */
 function getApiKeys() {
   const extra = Constants.expoConfig?.extra || {};
@@ -68,7 +86,7 @@ function getApiKeys() {
     explorerApiKey: extra.explorerApiKey as string | undefined,
     explorerApiKeySolanaMainnet: extra.explorerApiKeySolanaMainnet as string | undefined,
     explorerApiKeySolanaDevnet: extra.explorerApiKeySolanaDevnet as string | undefined,
-    alchemyApiKey: extra.alchemyApiKey as string | undefined,
+    alchemyApiKey: runtimeAlchemyKey ?? (extra.alchemyApiKey as string | undefined),
     heliusApiKey: extra.heliusApiKey as string | undefined,
     tonCenterApiKeyMainnet: extra.tonCenterApiKeyMainnet as string | undefined,
     tonCenterApiKeyTestnet: extra.tonCenterApiKeyTestnet as string | undefined,
@@ -201,11 +219,12 @@ export function getCoingeckoApiKey(): string | undefined {
 }
 
 /**
- * Get the Alchemy API key from Expo config.
- * Same key is used for RPC, Transfers, and Prices.
+ * Get the effective Alchemy API key: the user-entered runtime key wins
+ * over the build-time Expo config value. Same key is used for RPC,
+ * Transfers, and Prices.
  *
  * @returns Alchemy API key or undefined if not configured.
  */
 export function getAlchemyApiKey(): string | undefined {
-  return Constants.expoConfig?.extra?.alchemyApiKey;
+  return runtimeAlchemyKey ?? Constants.expoConfig?.extra?.alchemyApiKey;
 }
