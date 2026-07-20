@@ -29,9 +29,11 @@ export const ALCHEMY_TRANSFERS_NETWORKS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Config network keys where `category: "internal"` is supported.
- * Per `references/data-transfers-api.md`, internal transfers are only
- * available on Ethereum Mainnet and Polygon Mainnet.
+ * Config network keys where `category: "internal"` is supported. Per the
+ * Alchemy Transfers docs
+ * (https://docs.alchemy.com/reference/alchemy-getassettransfers), internal
+ * transfers are only available on Ethereum Mainnet and Polygon Mainnet.
+ * See also docs/alchemy.md (endpoint reference).
  */
 const INTERNAL_CATEGORY_NETWORKS: ReadonlySet<string> = new Set(['mainnet', 'polygon']);
 

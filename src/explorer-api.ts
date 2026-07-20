@@ -1,29 +1,40 @@
 /**
  * @file explorer-api.ts
- * @description Block explorer API integration for fetching on-chain transaction history.
- * 
- * Provides a unified interface to Etherscan-compatible APIs across multiple networks
- * using the Etherscan V2 unified endpoint. Supports both native ETH transactions and
- * ERC-20 token transfers with built-in caching, rate limiting, and retry logic.
- * 
+ * @description EVM transaction history behind one interface, with two sources:
+ * Alchemy Transfers (primary) and Etherscan V2 (fallback).
+ *
+ * `getAllTransactions` dispatches per network: if the network's config carries
+ * an Alchemy RPC URL and the network is in {@link ALCHEMY_TRANSFERS_NETWORKS}
+ * (mainnet, sepolia, base, polygon, arbitrum, optimism), history comes from
+ * `alchemy_getAssetTransfers` via {@link AlchemyTransfersClient}. EVM chains
+ * Alchemy Transfers does not cover (avalanche, bsc, linea) — or any setup
+ * without an Alchemy key — use the Etherscan V2 unified endpoint instead.
+ * Callers never see the difference; both paths return
+ * {@link NormalizedTransaction}. See docs/alchemy.md for the endpoint
+ * reference.
+ *
  * @responsibilities
- * - Fetch native and token transaction history from block explorers
- * - Normalize transaction data from various explorer API formats
+ * - Dispatch each network to Alchemy Transfers or Etherscan V2
+ * - Fetch native and ERC-20 token transaction history
+ * - Normalize both sources into the shared {@link NormalizedTransaction} shape
  * - Cache results to reduce API calls (30s default TTL)
- * - Handle rate limiting with exponential backoff
- * - Support multiple networks with per-network or global API keys
- * 
+ * - Handle rate limiting with exponential backoff (Etherscan path)
+ * - Support multiple networks with per-network or global Etherscan API keys
+ *   (Alchemy needs no separate key — it is embedded in the config RPC URL)
+ *
  * @dependencies
  * - Uses native fetch API for HTTP requests
- * - Designed for Etherscan V2 API (works with Etherscan, Polygonscan, etc.)
- * 
+ * - Etherscan V2 unified endpoint for the fallback path
+ * - {@link AlchemyTransfersClient} from ./ethereum/alchemy-transfers.js
+ *
  * @example
  * ```typescript
  * import { explorerAPI } from './explorer-api.js';
- * 
- * explorerAPI.setApiKey('YOUR_ETHERSCAN_API_KEY');
- * explorerAPI.registerNetwork('mainnet', 'https://api.etherscan.io', 1);
- * 
+ *
+ * // Typical wiring: register everything from app config. Networks with an
+ * // Alchemy URL in rpcUrl use Transfers; the rest use Etherscan V2.
+ * explorerAPI.registerNetworks(config.networks, process.env.EXPLORER_API_KEY);
+ *
  * const txs = await explorerAPI.getAllTransactions(address, 'mainnet');
  * ```
  */
@@ -121,18 +132,18 @@ interface NetworkExplorerConfig {
 }
 
 /**
- * Block explorer API client for fetching on-chain transaction history.
- * 
- * Supports Etherscan V2 unified API which provides access to multiple EVM chains
- * through a single endpoint. Includes built-in caching, rate limit handling,
- * and transaction normalization.
- * 
+ * EVM transaction-history client dispatching per network to Alchemy Transfers
+ * (primary, when the network's config has an Alchemy RPC URL and the network
+ * is in the Transfers allowlist) or the Etherscan V2 unified API (fallback).
+ * Includes built-in caching, rate limit handling, and transaction
+ * normalization to a shared shape regardless of source.
+ *
  * @example
  * ```typescript
  * const explorer = new ExplorerAPI();
- * explorer.setApiKey('YOUR_API_KEY');
- * explorer.registerNetwork('mainnet', 'https://api.etherscan.io', 1);
- * 
+ * explorer.setApiKey('YOUR_ETHERSCAN_API_KEY'); // fallback path only
+ * explorer.registerNetworks(config.networks);   // picks the source per network
+ *
  * const history = await explorer.getAllTransactions(
  *   '0x...',
  *   'mainnet',

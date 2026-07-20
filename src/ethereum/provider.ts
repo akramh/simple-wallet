@@ -1,5 +1,21 @@
 /**
- * @fileoverview Ethereum provider handling RPC connections and chain interactions.
+ * @fileoverview EVM JSON-RPC provider: balances, token reads, gas, and sends
+ * for all nine configured EVM networks.
+ *
+ * The provider is chain-agnostic and config-driven — it never names an RPC
+ * vendor. In the default `config.json`, each network's `rpcUrl` array puts an
+ * Alchemy endpoint (`https://<chain>.g.alchemy.com/v2/<key>`, one shared key,
+ * hostname selects the chain) first with public RPC endpoints as failover;
+ * requests iterate that array with exponential-backoff retry. See
+ * docs/alchemy.md for the full endpoint reference.
+ *
+ * @responsibilities
+ * - Maintain one ethers `JsonRpcProvider` per network with URL failover
+ * - Native + ERC-20 balance and metadata reads (Multicall3-batched)
+ * - Fee data, gas estimation, and broadcasting signed transactions
+ *
+ * @security RPC URLs embed the API key. Failover log lines redact the
+ * `/v2/<key>` path segment; never log raw provider URLs from new code paths.
  */
 
 import { ethers } from 'ethers';

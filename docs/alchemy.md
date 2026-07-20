@@ -17,7 +17,9 @@ a Chrome extension, and an Expo mobile app) from a single TypeScript core.
 
 > For a flat inventory of every external service and environment variable (not
 > just Alchemy), see [external-apis-and-env.md](./external-apis-and-env.md).
-> This document is the narrative tour; that one is the reference table.
+> This document is the narrative tour plus the
+> [endpoint reference](#endpoint-reference); that one is the cross-service
+> reference table.
 
 ---
 
@@ -140,6 +142,113 @@ RPC only if it fails:
 - **Mobile:** `fetchAlchemyPortfolioWithRetry()` in
   [`mobile-wallet/services/WalletBridge.ts`](../mobile-wallet/services/WalletBridge.ts),
   with bounded retry/backoff.
+
+---
+
+## Endpoint reference
+
+Every Alchemy call the wallet makes, in one place. All hosts follow the
+[one-key model](#the-one-key-many-chains-model) above — `<key>` is the
+substituted `ALCHEMY_API_KEY`.
+
+### EVM JSON-RPC
+
+Issued by [`src/ethereum/provider.ts`](../src/ethereum/provider.ts) through
+ethers `JsonRpcProvider` against `https://<chain>.g.alchemy.com/v2/<key>`
+(the nine hosts listed in the coverage matrix below). Mapping wallet features
+to the underlying RPC methods:
+
+| Wallet feature | JSON-RPC method(s) |
+| --- | --- |
+| Native balance | `eth_getBalance` |
+| ERC-20 balances + metadata | `eth_call` (`balanceOf` / `decimals` / `symbol` / `name`, batched through Multicall3 to collapse many token reads into one round trip) |
+| Fee estimation | `eth_gasPrice` / `eth_maxPriorityFeePerGas` via ethers `getFeeData()` (the Polygon gas-station plugin is stripped in [`src/providers.ts`](../src/providers.ts) so fees come from Alchemy, not a third-party oracle) |
+| Gas limit | `eth_estimateGas` |
+| Send (native + ERC-20) | `eth_sendRawTransaction` (locally signed), then `eth_getTransactionReceipt` for confirmation |
+| Housekeeping (issued by ethers) | `eth_chainId`, `eth_blockNumber` |
+
+The `rpcUrl` config array is iterated in order with retry/exponential backoff;
+Alchemy is first, public RPC endpoints are the failover.
+
+### Solana JSON-RPC
+
+Issued through `@solana/web3.js` `Connection` against
+`https://solana-{mainnet,devnet}.g.alchemy.com/v2/<key>`:
+
+| Wallet feature | RPC method(s) | Code |
+| --- | --- | --- |
+| SOL balance | `getBalance` | [`src/solana/provider.ts`](../src/solana/provider.ts) |
+| SPL token balances | `getParsedTokenAccountsByOwner`, `getAccountInfo` (associated token accounts) | [`src/solana/provider.ts`](../src/solana/provider.ts) |
+| Fee estimation | `getLatestBlockhash`, `getFeeForMessage`, `getRecentPrioritizationFees` | [`src/solana/provider.ts`](../src/solana/provider.ts) |
+| Send + confirm | `sendRawTransaction`, `getSignatureStatus` | [`src/solana/provider.ts`](../src/solana/provider.ts) |
+| Transaction history | `getSignaturesForAddress`, `getParsedTransaction` | [`src/solana/explorer.ts`](../src/solana/explorer.ts) |
+
+### Transfers API
+
+[`src/ethereum/alchemy-transfers.ts`](../src/ethereum/alchemy-transfers.ts)
+calls [`alchemy_getAssetTransfers`](https://docs.alchemy.com/reference/alchemy-getassettransfers)
+(a JSON-RPC method on the same per-chain hosts):
+
+| Aspect | Value |
+| --- | --- |
+| Calls per refresh | 2 in parallel — one with `fromAddress` (sent), one with `toAddress` (received); results merged, de-duped by hash, sorted newest-first |
+| `category` | `external` + `erc20` everywhere; `internal` added only on Ethereum mainnet and Polygon (the chains where Alchemy supports it) |
+| Other request params | `fromBlock: 0x0`, `toBlock: latest`, `order: desc`, `withMetadata: true`, `excludeZeroValue: true`, `maxCount` ≤ 1000 |
+| Pagination | First page only — Alchemy's opaque `pageKey` cursor is not followed |
+| Chains | mainnet, sepolia, base, polygon, arbitrum, optimism (`ALCHEMY_TRANSFERS_NETWORKS`); avalanche / bsc / linea fall back to Etherscan V2 — dispatch in [`src/explorer-api.ts`](../src/explorer-api.ts) `getAllTransactions` |
+
+### Prices API
+
+[`src/price-providers/alchemy.ts`](../src/price-providers/alchemy.ts), base
+`https://api.g.alchemy.com/prices/v1/<key>`:
+
+| Endpoint | Used for | Notes |
+| --- | --- | --- |
+| `GET /tokens/by-symbol?symbols=<SYM>` | Spot price of natives and majors | Gated by the `SUPPORTED_SYMBOLS` allowlist (majors, stablecoins, top DeFi, SPL ecosystem); anything else goes straight to CoinGecko |
+| `POST /tokens/by-address` | Spot price of an ERC-20 by contract | Body pairs each address with its network slug via `CHAIN_ID_TO_ALCHEMY_SLUG` (all nine EVM chains) |
+
+Registered at priority 0 — tried before CoinGecko/CoinPaprika. Historical
+charts and token metadata intentionally throw so the price manager falls
+through to CoinGecko for those.
+
+### Portfolio Data API
+
+[`src/portfolio-api.ts`](../src/portfolio-api.ts), single endpoint
+`POST https://api.g.alchemy.com/data/v1/<key>/assets/tokens/by-address`:
+
+| Aspect | Value |
+| --- | --- |
+| Batch limits | 2 address entries per request × 5 networks per address; larger portfolios are split into multiple requests |
+| Request flags | `withMetadata`, `withPrices`, `includeNativeTokens`, `includeErc20Tokens` |
+| Network slugs | `NETWORK_KEY_TO_PORTFOLIO_SLUG` — all nine EVM chains plus Solana mainnet. Quirk: the endpoint accepts `solana-mainnet`, not the `sol-mainnet` slug some docs list (verified against the live API) |
+| Not covered | Bitcoin, XRP, TON, Solana devnet — those refresh through their per-chain providers |
+
+### Key validation
+
+[`src/alchemy-key.ts`](../src/alchemy-key.ts) validates a pasted key with a
+single bounded-timeout `eth_blockNumber` POST to
+`https://eth-mainnet.g.alchemy.com/v2/<key>` — used by the first-run flows on
+all three platforms.
+
+### Chain × product coverage
+
+| Network | JSON-RPC | Tx history | Prices | Portfolio |
+| --- | --- | --- | --- | --- |
+| Ethereum (`eth-mainnet`) | ✓ | Transfers (+ internal) | ✓ | ✓ |
+| Sepolia (`eth-sepolia`) | ✓ | Transfers | ✓ | ✓ |
+| Base (`base-mainnet`) | ✓ | Transfers | ✓ | ✓ |
+| Arbitrum (`arb-mainnet`) | ✓ | Transfers | ✓ | ✓ |
+| Optimism (`opt-mainnet`) | ✓ | Transfers | ✓ | ✓ |
+| Polygon (`polygon-mainnet`) | ✓ | Transfers (+ internal) | ✓ | ✓ |
+| Avalanche (`avax-mainnet`) | ✓ | Etherscan V2 fallback | ✓ | ✓ |
+| BNB Smart Chain (`bnb-mainnet`) | ✓ | Etherscan V2 fallback | ✓ | ✓ |
+| Linea (`linea-mainnet`) | ✓ | Etherscan V2 fallback | ✓ | ✓ |
+| Solana mainnet (`solana-mainnet`) | ✓ | Solana RPC (via Alchemy) | by symbol | ✓ |
+| Solana devnet (`solana-devnet`) | ✓ | Solana RPC (via Alchemy) | — | — |
+
+"Tx history" names the source behind `getAllTransactions`; "Prices — by
+symbol" means the by-address contract lookup is EVM-only, while SOL and SPL
+majors resolve through the by-symbol endpoint.
 
 ---
 
