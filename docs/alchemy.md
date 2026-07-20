@@ -4,7 +4,7 @@ Simple Wallet is a working, multi-chain wallet whose entire on-chain data layer
 runs on [Alchemy](https://www.alchemy.com/). This document is a guided tour of
 **how** it uses Alchemy — a reference implementation you can read end to end.
 
-The headline: **one Alchemy API key powers four different Alchemy products
+**Using one Alchemy API key powers four different Alchemy products
 across nine EVM chains plus Solana, shared by three separate apps** (a Node CLI,
 a Chrome extension, and an Expo mobile app) from a single TypeScript core.
 
