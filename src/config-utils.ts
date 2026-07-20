@@ -1,3 +1,29 @@
+/**
+ * @fileoverview Environment-driven API key injection into the network config.
+ *
+ * `config.json` ships with `${ALCHEMY_API_KEY}` (and legacy `${HELIUS_API_KEY}`)
+ * placeholders inside EVM/Solana `rpcUrl` entries instead of real keys. This
+ * module is the canonical substitution step shared by the CLI and the
+ * extension build: it resolves each placeholder from the environment and
+ * attaches per-network explorer (Etherscan) and TON keys.
+ *
+ * @responsibilities
+ * - Substitute RPC URL placeholders from env, checking both `KEY` and
+ *   `VITE_KEY` names so one code path serves Node and Vite builds
+ * - Drop any URL whose required key is missing rather than sending a request
+ *   with an empty key (the remaining array entries keep failover working);
+ *   if *no* URL survives, return the original config so callers fail loudly
+ * - Attach `explorerApiKey` per network (`EXPLORER_API_KEY_<NETWORK>`, network
+ *   IDs normalized to `[A-Z0-9_]`, falling back to the global
+ *   `EXPLORER_API_KEY`) and `rpcApiKey` for TON (`TONCENTER_API_KEY_*`)
+ *
+ * @security Keys flow strictly env → in-memory config. Any key present in the
+ * incoming config object is stripped before substitution so nothing can be
+ * persisted back into `config.json` (see the guard in `src/app-service.ts`).
+ * One Alchemy key serves every chain — the URL hostname selects the chain;
+ * see docs/alchemy.md.
+ */
+
 import type { Config, NetworkConfig } from './types/index.js';
 import type { TonNetworkConfig } from './types/config.js';
 
@@ -86,6 +112,17 @@ function applyRpcApiKeys(network: NetworkConfig, env: EnvRecord): NetworkConfig 
   } as NetworkConfig;
 }
 
+/**
+ * Injects all env-sourced API keys into a loaded config: explorer keys,
+ * RPC URL placeholders (`${ALCHEMY_API_KEY}` / `${HELIUS_API_KEY}`), and TON
+ * `rpcApiKey`. Pure — returns a new config object; the input is not mutated.
+ *
+ * @param config - Parsed config with a selected `network`
+ * @param env - Env lookup source; defaults to `process.env` when available
+ *   (browser builds pass `import.meta.env` explicitly)
+ * @returns The key-substituted config plus the global `EXPLORER_API_KEY`
+ *   value (if set) for callers that register explorers separately
+ */
 export function applyExplorerApiKeys(
   config: Config & { network: string },
   env: EnvRecord = getDefaultEnv()

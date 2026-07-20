@@ -4,6 +4,12 @@
  * Phase 1: read-only support (address + SOL balance).
  * Phase 3: send support (transactions + confirmation).
  *
+ * Uses only standard Solana JSON-RPC methods, so any compliant endpoint works.
+ * In the default `config.json` the `rpcUrls` array puts Alchemy first
+ * (`https://solana-{mainnet,devnet}.g.alchemy.com/v2/<key>` — same shared key
+ * as the EVM chains, hostname selects the cluster) with public RPC failover
+ * behind it. See docs/alchemy.md for the full endpoint reference.
+ *
  * @responsibilities
  * - Fetch native SOL and SPL token balances via RPC
  * - Build, send, and confirm Solana transactions with RPC failover

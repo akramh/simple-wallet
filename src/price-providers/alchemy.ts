@@ -89,7 +89,8 @@ const SUPPORTED_SYMBOLS: ReadonlySet<string> = new Set([
 
 /**
  * Maps EVM chain IDs to Alchemy Prices-by-address network slugs.
- * Same slugs we use for RPC / Transfers (`references/operational-supported-networks.md`).
+ * Same slugs we use for RPC / Transfers — see the chain × product coverage
+ * matrix in docs/alchemy.md.
  */
 const CHAIN_ID_TO_ALCHEMY_SLUG: Record<number, string> = {
   1: 'eth-mainnet',
