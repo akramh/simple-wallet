@@ -55,7 +55,7 @@ import fs from 'fs';
 import qrcode from 'qrcode-terminal';
 import { ethers } from 'ethers';
 import chalk from 'chalk';
-import { validatePasswordLength, hasExistingWallets, needsMigration, encryptMnemonic, validateMnemonic } from './crypto-utils.js';
+import { validatePasswordLength, hasExistingWallets, needsMigration, migratePlaintextWallets, writeWalletsFileAtomic, validateMnemonic } from './crypto-utils.js';
 import * as ui from './ui-helpers.js';
 import { WalletAppService } from './app-service.js';
 import { FileStorage } from './storage.js';
@@ -564,11 +564,19 @@ async function ensureMasterPassword(): Promise<string> {
 
 /**
  * Migrates plaintext wallets to encrypted format.
- * Creates a backup of the original wallets.json before migration.
  * Requires setting up a new master password.
- * 
+ *
+ * Security properties (do not weaken):
+ * - Every encrypted record stores all four decryption components
+ *   (encryptedMnemonic, salt, iv, authTag) and is round-trip verified
+ *   BEFORE the plaintext is discarded — see migratePlaintextWallets().
+ * - The replacement file is written atomically (temp + rename) with mode
+ *   0600, so a crash mid-migration cannot corrupt or expose wallets.json.
+ * - No plaintext backup is created. The plaintext lives only in the original
+ *   file, which is only replaced after verification succeeds.
+ *
  * @async
- * @throws Exits process if user declines migration
+ * @throws Exits process if user declines migration or migration fails
  */
 async function migrateExistingWallets(): Promise<void> {
   console.log('\n⚠️  MIGRATION REQUIRED\n');
@@ -597,31 +605,23 @@ async function migrateExistingWallets(): Promise<void> {
     const data = fs.readFileSync('./wallets.json', 'utf8');
     const wallets: Record<string, any> = JSON.parse(data);
 
-    // Backup original file
-    fs.writeFileSync('./wallets.json.backup', data);
-    console.log('✅ Backup created: wallets.json.backup\n');
+    // Encrypt + verify in memory first; throws (leaving the original file
+    // untouched) if any wallet fails round-trip verification.
+    const { wallets: migrated, migratedCount } = migratePlaintextWallets(wallets, password);
 
-    // Migrate each wallet
-    let migratedCount = 0;
-    for (const [name, walletData] of Object.entries(wallets)) {
-      if (walletData.mnemonic && !walletData.encryptedMnemonic) {
-        console.log(`Encrypting wallet: ${name}...`);
+    // Atomically replace the plaintext file with the verified encrypted one.
+    writeWalletsFileAtomic('./wallets.json', migrated);
 
-        const { encrypted, salt } = encryptMnemonic(walletData.mnemonic, password);
+    console.log(`\n✅ Successfully encrypted ${migratedCount} wallet(s)!\n`);
 
-        wallets[name].encryptedMnemonic = encrypted;
-        wallets[name].salt = salt;
-        delete wallets[name].mnemonic; // Remove plaintext
-
-        migratedCount++;
-      }
+    // Older versions of this migration left a plaintext copy behind. Warn if
+    // one exists — deleting it is the user's call (it may be their only copy
+    // if a previous buggy migration corrupted wallets.json).
+    if (fs.existsSync('./wallets.json.backup')) {
+      console.log(chalk.yellow('⚠️  A plaintext backup from a previous migration exists at wallets.json.backup.'));
+      console.log(chalk.yellow('   After confirming your wallets unlock correctly, securely delete it'));
+      console.log(chalk.yellow('   (it contains unencrypted recovery phrases).\n'));
     }
-
-    // Save encrypted wallets
-    fs.writeFileSync('./wallets.json', JSON.stringify(wallets, null, 2));
-
-    console.log(`\n✅ Successfully encrypted ${migratedCount} wallet(s)!`);
-    console.log('Original backup: wallets.json.backup\n');
 
   } catch (error) {
     const err = error as Error;
