@@ -1994,10 +1994,19 @@ function resetAutoLockTimer(): void {
 /**
  * Locks the wallet and clears session state.
  * Broadcasts lock event to all extension contexts.
+ *
+ * Security invariant: locking must destroy every decrypted secret in this
+ * worker — the session password AND the Wallet's in-memory mnemonic/private
+ * key/signer. `walletService` itself survives (the locked UI still needs the
+ * wallet list and network config); UNLOCK_WALLET rebuilds the key material
+ * from storage via `loadWallet(name, password)`.
  */
 function lockWallet(): void {
   isUnlocked = false;
   setSessionPassword(null);
+
+  // Drop decrypted mnemonic/private key/signer from the Wallet instance.
+  walletService?.wallet.lock();
   if (autoLockTimer) {
     clearTimeout(autoLockTimer);
     autoLockTimer = null;

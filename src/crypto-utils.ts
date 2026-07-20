@@ -448,6 +448,89 @@ export function needsMigration(): boolean {
 }
 
 /**
+ * Result of migrating a wallets file from plaintext to encrypted format.
+ */
+export interface MigrationResult {
+  /** New wallets record with every plaintext mnemonic replaced by encrypted fields */
+  wallets: Record<string, WalletData>;
+  /** Number of wallets that were migrated (already-encrypted wallets are untouched) */
+  migratedCount: number;
+}
+
+/**
+ * Encrypt every plaintext mnemonic in a wallets record.
+ *
+ * Pure transformation — performs no I/O. Each migrated wallet stores ALL four
+ * components required by `decryptMnemonic()` (`encryptedMnemonic`, `salt`,
+ * `iv`, `authTag`); omitting any of them would make the record permanently
+ * undecryptable. Every encryption is round-trip verified (decrypt + compare)
+ * before the plaintext field is dropped, so a failed migration throws instead
+ * of silently destroying access to the wallet.
+ *
+ * @param wallets - Parsed wallets.json contents (may mix plaintext and encrypted wallets)
+ * @param password - Master password to encrypt with
+ * @returns New wallets record plus count of migrated entries; input is not mutated
+ * @throws Error if round-trip verification fails for any wallet
+ */
+export function migratePlaintextWallets(
+  wallets: Record<string, WalletData>,
+  password: string
+): MigrationResult {
+  const migrated: Record<string, WalletData> = {};
+  let migratedCount = 0;
+
+  for (const [name, walletData] of Object.entries(wallets)) {
+    if (walletData.mnemonic && !walletData.encryptedMnemonic) {
+      const plaintext = walletData.mnemonic;
+      const { encrypted, salt, iv, authTag } = encryptMnemonic(plaintext, password);
+
+      // Prove the record is decryptable BEFORE the plaintext is discarded.
+      const roundTrip = decryptMnemonic(encrypted, password, salt, iv, authTag);
+      if (roundTrip !== plaintext) {
+        throw new Error(`Migration verification failed for wallet "${name}" — aborting`);
+      }
+
+      const { mnemonic: _dropped, ...rest } = walletData;
+      migrated[name] = { ...rest, encryptedMnemonic: encrypted, salt, iv, authTag };
+      migratedCount++;
+    } else {
+      migrated[name] = walletData;
+    }
+  }
+
+  return { wallets: migrated, migratedCount };
+}
+
+/**
+ * Atomically replace a wallets file with owner-only permissions.
+ *
+ * Writes to a `.tmp` sibling first, then renames over the target so a crash
+ * mid-write can never leave a truncated/corrupt wallets.json. The temp file is
+ * created with mode 0600 (rename preserves it) and the final path is chmod'd
+ * 0600 as well, covering pre-existing files created with looser permissions.
+ *
+ * Deliberately NOT `safeWriteJSON()`: that helper snapshots the existing file
+ * to `<path>.backup`, which for a plaintext→encrypted migration would persist
+ * an unencrypted copy of every mnemonic — the exact leak this migration exists
+ * to eliminate.
+ *
+ * @param walletsPath - Destination path (e.g. './wallets.json')
+ * @param wallets - Wallets record to serialize
+ */
+export function writeWalletsFileAtomic(
+  walletsPath: string,
+  wallets: Record<string, WalletData>
+): void {
+  const tmpPath = `${walletsPath}.tmp`;
+  if (fs.existsSync(tmpPath)) {
+    fs.unlinkSync(tmpPath);
+  }
+  fs.writeFileSync(tmpPath, JSON.stringify(wallets, null, 2), { mode: 0o600 });
+  fs.renameSync(tmpPath, walletsPath);
+  fs.chmodSync(walletsPath, 0o600);
+}
+
+/**
  * Validate a BIP-39 mnemonic phrase using the official library.
  * Checks word count, word validity, and checksum.
  *

@@ -197,6 +197,34 @@ export class Wallet {
     this.ethereumProvider.resetProviders();
   }
 
+  /**
+   * Destroy all decrypted key material held in memory.
+   *
+   * Locking invariant: after this call the instance must hold no usable
+   * secrets — mnemonic, raw private key, and the derived signer are all
+   * dropped, along with the encrypted blob and its salt/IV/authTag (harmless
+   * on their own, but cleared so a locked instance carries no wallet state at
+   * all). The instance stays constructed (config, storage, providers survive)
+   * and is fully repopulated by the next `loadWallet()` / `loadWalletAsync()`
+   * call, which re-reads and re-decrypts everything from storage.
+   *
+   * JS strings are immutable, so the underlying bytes cannot be zeroed;
+   * dropping every reference so the GC can reclaim them is the strongest
+   * guarantee available on this runtime.
+   */
+  lock(): void {
+    this.wallet = null;
+    this.mnemonic = null;
+    this.privateKey = null;
+    this.encryptedMnemonic = null;
+    this.encryptedPrivateKey = null;
+    this.salt = null;
+    this.iv = null;
+    this.authTag = null;
+    this.privateKeyType = undefined;
+    this.currentAccountIndex = 0;
+  }
+
   async initialize(): Promise<void> {
     const networkConfig = this.config.networks[this.config.network];
     // Implicitly EVM if type is missing
