@@ -19,6 +19,11 @@ interface Props {
   onRefresh: () => void;
   onSend: () => void;
   onReceive: () => void;
+  /**
+   * When set, a Stake action tile is rendered. Parents pass this only when
+   * the active network supports staking (capability-gated, not chain-gated).
+   */
+  onStake?: () => void;
 }
 
 export function BalanceCard({
@@ -28,6 +33,7 @@ export function BalanceCard({
   onRefresh,
   onSend,
   onReceive,
+  onStake,
 }: Props) {
   const busy = refreshing || pricesLoading;
   return (
@@ -56,6 +62,12 @@ export function BalanceCard({
             <img src={sendIcon} alt="" className="action-icon" />
             <span>Send</span>
           </button>
+          {onStake && (
+            <button className="action-tile" onClick={onStake}>
+              <span className="action-icon" aria-hidden style={{ fontSize: 18, lineHeight: '24px' }}>◎</span>
+              <span>Stake</span>
+            </button>
+          )}
         </div>
       </div>
     </div>
