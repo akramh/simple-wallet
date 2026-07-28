@@ -53,3 +53,30 @@ export {
 // the flat 5000-lamport base fee to a getFeeForMessage + priority-fee-sample
 // result. `SolanaFeeEstimate` itself is already re-exported above.
 export type { SolanaFeeEstimateParams } from './provider.js';
+
+// Native staking (Stake Program) — builders, state derivation, provider types
+export type {
+  StakePosition,
+  CreateDelegateStakeParams,
+  StakeAuthorityTxParams,
+} from './stake.js';
+export {
+  STAKE_ACCOUNT_SPACE,
+  STAKE_SEED_PREFIX,
+  MAX_STAKE_SEED_INDEX,
+  EPOCH_U64_SENTINEL,
+  DEFAULT_STAKE_CU_LIMIT,
+  deriveStakeAccountAddress,
+  buildCreateAndDelegateStakeTx,
+  buildDeactivateStakeTx,
+  buildWithdrawStakeTx,
+  signStakeTx,
+  deriveStakeState,
+  parseStakeAccount,
+} from './stake.js';
+export type { SolanaEpochInfo, VoteAccountSummary } from './provider.js';
+export { STAKE_WITHDRAWER_OFFSET } from './provider.js';
+
+// Stakewiz validator metadata (the one non-Alchemy external API for staking)
+export type { StakewizValidatorEntry } from './stakewiz.js';
+export { fetchStakewizValidators, STAKEWIZ_API_BASE } from './stakewiz.js';
