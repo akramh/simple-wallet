@@ -3456,6 +3456,11 @@ async function stakeMenu(walletName: string | null): Promise<void> {
         `${chalk.white(`${p.totalFormatted} ${nativeSymbol}`)}${usd}  ` +
         `[${formatStakeState(p.state)}]${chalk.gray(reward)}`
       );
+      const epochBits: string[] = [];
+      if (typeof p.activationEpoch === 'number') epochBits.push(`staked at epoch ${p.activationEpoch}`);
+      if (typeof p.deactivationEpoch === 'number') epochBits.push(`unstaked at epoch ${p.deactivationEpoch}`);
+      if (typeof p.currentEpoch === 'number') epochBits.push(`current epoch ${p.currentEpoch}`);
+      if (epochBits.length) console.log(chalk.gray(`    ${epochBits.join(' · ')}`));
       console.log(chalk.gray(`    account ${p.positionId}`));
     }
     console.log('');

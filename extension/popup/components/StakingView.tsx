@@ -86,6 +86,160 @@ function trimAmount(amount: string): string {
   return amount.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
 
+/** One label/value line inside a position card. */
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '3px 0' }}>
+      <span style={{ opacity: 0.6, fontSize: 12 }}>{label}</span>
+      <span style={{ fontSize: 12, textAlign: 'right', wordBreak: 'break-all' }}>{value}</span>
+    </div>
+  );
+}
+
+/** Rounded state badge (colored dot + label). */
+function StatePill({ state }: { state: string }) {
+  const color = STATE_COLORS[state] || '#9ca3af';
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '2px 10px',
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        color,
+        background: `${color}1f`,
+        border: `1px solid ${color}55`,
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
+      {state}
+    </span>
+  );
+}
+
+/**
+ * A single staking position card: validator + state up top, the staked
+ * amount as the hero line, then labeled detail rows (epochs, reserve, APY,
+ * reward, account) and state-gated actions.
+ */
+function PositionCard({
+  position: p,
+  nativeSymbol,
+  busy,
+  onUnstake,
+  onWithdraw,
+}: {
+  position: StakePositionViewData;
+  nativeSymbol: string;
+  busy: boolean;
+  onUnstake: () => void;
+  onWithdraw: () => void;
+}) {
+  const usd = formatUsd(p.usdValue);
+  const canUnstake = p.state === 'active' || p.state === 'activating';
+  const canWithdraw = p.state === 'withdrawable';
+  const hasEpochs = typeof p.activationEpoch === 'number';
+  const epochsAgo =
+    hasEpochs && typeof p.currentEpoch === 'number'
+      ? p.currentEpoch - (p.activationEpoch as number)
+      : null;
+
+  return (
+    <div
+      style={{
+        border: '1px solid rgba(128,128,128,0.25)',
+        borderRadius: 12,
+        padding: 14,
+      }}
+    >
+      {/* Header: validator identity + lifecycle state */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {validatorLabel(p.validator)}
+        </span>
+        <StatePill state={p.state} />
+      </div>
+
+      {/* Hero amount */}
+      <div style={{ marginTop: 10, marginBottom: 10 }}>
+        <div style={{ fontSize: 20, fontWeight: 700 }}>
+          {trimAmount(p.totalFormatted)} {nativeSymbol}
+        </div>
+        {usd && <div style={{ opacity: 0.6, fontSize: 12, marginTop: 2 }}>{usd}</div>}
+      </div>
+
+      {/* Details */}
+      <div style={{ borderTop: '1px solid rgba(128,128,128,0.18)', paddingTop: 8 }}>
+        {hasEpochs && (
+          <DetailRow
+            label="Staked at epoch"
+            value={
+              <>
+                {p.activationEpoch}
+                {epochsAgo !== null && epochsAgo >= 0 && (
+                  <span style={{ opacity: 0.6 }}>
+                    {' '}({epochsAgo === 0 ? 'this epoch' : `${epochsAgo} epoch${epochsAgo === 1 ? '' : 's'} ago`})
+                  </span>
+                )}
+              </>
+            }
+          />
+        )}
+        {typeof p.deactivationEpoch === 'number' && (
+          <DetailRow label="Unstaked at epoch" value={p.deactivationEpoch} />
+        )}
+        {typeof p.currentEpoch === 'number' && (
+          <DetailRow label="Current epoch" value={p.currentEpoch} />
+        )}
+        {p.reserveFormatted && (
+          <DetailRow label="Rent reserve" value={`${trimAmount(p.reserveFormatted)} ${nativeSymbol}`} />
+        )}
+        {p.validator.apyPercent !== null && (
+          <DetailRow label="APY" value={`${p.validator.apyPercent.toFixed(1)}%`} />
+        )}
+        {p.validator.commissionPercent !== null && (
+          <DetailRow label="Commission" value={`${p.validator.commissionPercent}%`} />
+        )}
+        {p.lastRewardFormatted && (
+          <DetailRow label="Last reward" value={`+${trimAmount(p.lastRewardFormatted)} ${nativeSymbol}`} />
+        )}
+        <DetailRow label="Stake account" value={`${p.positionId.slice(0, 6)}…${p.positionId.slice(-6)}`} />
+      </div>
+
+      {/* State-gated actions / hints */}
+      {(canUnstake || canWithdraw) && (
+        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+          {canUnstake && (
+            <button className="btn btn-secondary" style={{ flex: 1 }} disabled={busy} onClick={onUnstake}>
+              {busy ? 'Unstaking…' : 'Unstake'}
+            </button>
+          )}
+          {canWithdraw && (
+            <button className="btn btn-primary" style={{ flex: 1 }} disabled={busy} onClick={onWithdraw}>
+              {busy ? 'Withdrawing…' : 'Withdraw'}
+            </button>
+          )}
+        </div>
+      )}
+      {p.state === 'activating' && (
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.6 }}>
+          Activates at the next epoch boundary
+        </div>
+      )}
+      {p.state === 'deactivating' && (
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.6 }}>
+          Withdraw unlocks after the next epoch boundary
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Staking overview screen.
  *
@@ -209,66 +363,17 @@ function StakingView({ network, networks, onBack }: Props) {
             subtitle={`Stake ${nativeSymbol} with a validator to start earning rewards.`}
           />
         ) : (
-          <div className="transaction-list">
-            {positions.map((p) => {
-              const usd = formatUsd(p.usdValue);
-              const canUnstake = p.state === 'active' || p.state === 'activating';
-              const canWithdraw = p.state === 'withdrawable';
-              return (
-                <div key={p.positionId} className="transaction-item" style={{ cursor: 'default' }}>
-                  <div
-                    className="tx-status-bar"
-                    style={{ background: STATE_COLORS[p.state] || '#9ca3af' }}
-                    title={p.state}
-                  />
-                  <div className="tx-content">
-                    <div className="tx-row-primary">
-                      <span className="tx-type">{validatorLabel(p.validator)}</span>
-                      <span className="tx-amount-value">
-                        {trimAmount(p.totalFormatted)} {nativeSymbol}
-                      </span>
-                    </div>
-                    <div className="tx-row-secondary">
-                      <span className="tx-address">
-                        <span style={{ color: STATE_COLORS[p.state] || '#9ca3af' }}>{p.state}</span>
-                        {p.validator.apyPercent !== null && ` · ${p.validator.apyPercent.toFixed(1)}% APY`}
-                        {p.lastRewardFormatted && ` · +${trimAmount(p.lastRewardFormatted)} last epoch`}
-                      </span>
-                      <span className="tx-time">{usd ?? ''}</span>
-                    </div>
-                    {(canUnstake || canWithdraw) && (
-                      <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                        {canUnstake && (
-                          <button
-                            className="btn btn-secondary"
-                            style={{ flex: 1 }}
-                            disabled={actingOn === p.positionId}
-                            onClick={() => runAction('UNSTAKE', p)}
-                          >
-                            {actingOn === p.positionId ? 'Unstaking…' : 'Unstake'}
-                          </button>
-                        )}
-                        {canWithdraw && (
-                          <button
-                            className="btn btn-primary"
-                            style={{ flex: 1 }}
-                            disabled={actingOn === p.positionId}
-                            onClick={() => runAction('WITHDRAW_STAKE', p)}
-                          >
-                            {actingOn === p.positionId ? 'Withdrawing…' : 'Withdraw'}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    {p.state === 'deactivating' && (
-                      <div className="tx-row-secondary" style={{ marginTop: 4 }}>
-                        <span className="tx-address">Withdraw unlocks after the next epoch boundary</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {positions.map((p) => (
+              <PositionCard
+                key={p.positionId}
+                position={p}
+                nativeSymbol={nativeSymbol}
+                busy={actingOn === p.positionId}
+                onUnstake={() => runAction('UNSTAKE', p)}
+                onWithdraw={() => runAction('WITHDRAW_STAKE', p)}
+              />
+            ))}
           </div>
         )}
       </div>

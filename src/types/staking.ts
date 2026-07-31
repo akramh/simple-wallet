@@ -82,6 +82,15 @@ export interface StakePositionView {
   totalFormatted: string;
   /** Lifecycle state — see {@link StakePositionState}. */
   state: StakePositionState;
+  /**
+   * Epoch (or equivalent chain period) the position was staked at; null when
+   * the chain doesn't expose it or the position is undelegated.
+   */
+  activationEpoch?: number | null;
+  /** Epoch the unstake was requested at; null when not deactivating. */
+  deactivationEpoch?: number | null;
+  /** The chain's current epoch at fetch time, for "staked N epochs ago" UX. */
+  currentEpoch?: number;
   /** USD value of the total balance; undefined when prices are unavailable (testnets). */
   usdValue?: number;
   /** Most recent reward amount, formatted in native units, when cheaply available. */

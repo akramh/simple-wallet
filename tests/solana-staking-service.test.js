@@ -179,6 +179,10 @@ test('getStakePositions maps parsed accounts to chain-neutral views', async () =
   assert.equal(p.amountBaseUnits, '1500000000');
   assert.equal(p.reserveFormatted, '0.002282880');
   assert.equal(p.totalFormatted, '1.502282880');
+  // Epoch context for the UI ("staked at epoch X · current Y").
+  assert.equal(p.activationEpoch, 5);
+  assert.equal(p.deactivationEpoch, null);
+  assert.equal(p.currentEpoch, 10);
   // 1.50228288 SOL × $100
   assert.ok(Math.abs(p.usdValue - 150.22828) < 0.01);
 });

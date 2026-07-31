@@ -2205,6 +2205,9 @@ export class WalletAppService {
         reserveFormatted: lamportsToSol(position.rentExemptReserveLamports),
         totalFormatted: lamportsToSol(position.totalLamports),
         state: position.state,
+        activationEpoch: position.activationEpoch,
+        deactivationEpoch: position.deactivationEpoch,
+        currentEpoch: epochInfo.epoch,
         usdValue:
           price !== null ? (position.totalLamports / 1_000_000_000) * price : undefined,
         lastRewardFormatted:

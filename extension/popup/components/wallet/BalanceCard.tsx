@@ -8,6 +8,7 @@
 import React from 'react';
 import sendIcon from '../../../assets/icons/send.svg';
 import receiveIcon from '../../../assets/icons/receive.svg';
+import stakeIcon from '../../../assets/icons/stake.svg';
 
 interface Props {
   /** Formatted total balance, already USD-prefixed (e.g. "$1,234.56"). */
@@ -64,7 +65,7 @@ export function BalanceCard({
           </button>
           {onStake && (
             <button className="action-tile" onClick={onStake}>
-              <span className="action-icon" aria-hidden style={{ fontSize: 18, lineHeight: '24px' }}>◎</span>
+              <img src={stakeIcon} alt="" className="action-icon" />
               <span>Stake</span>
             </button>
           )}
