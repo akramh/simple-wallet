@@ -3533,10 +3533,13 @@ async function stakeNewFlow(): Promise<void> {
 
   const validatorChoices = [
     ...validators.map((v) => {
+      // activatedStakeFormatted is a pre-formatted display string ("430,800")
+      // — render verbatim, never through formatStakeAmount (comma-unsafe).
+      const stake = v.activatedStakeFormatted !== null ? `${v.activatedStakeFormatted} ${nativeSymbol} staked  ` : '';
       const apy = v.apyPercent !== null ? `${v.apyPercent.toFixed(1)}% APY` : 'APY n/a';
       const commission = v.commissionPercent !== null ? `${v.commissionPercent}% fee` : '';
       return {
-        name: `${validatorLabel(v.name, v.id)}  ${chalk.gray(`${apy}  ${commission}`)}`,
+        name: `${validatorLabel(v.name, v.id)}  ${chalk.gray(`${stake}${apy}  ${commission}`)}`,
         value: v.id
       };
     }),

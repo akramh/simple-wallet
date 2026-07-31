@@ -1,7 +1,8 @@
 /**
  * @fileoverview New-stake wizard for the extension popup/sidepanel.
  *
- * Three steps: pick a validator (curated list with search + manual address
+ * Three steps: pick a validator (list sorted by activated stake descending,
+ * each row showing the delegated amount, with search + manual address
  * entry), enter an amount, confirm with fee and activation-delay context.
  * Dispatches the chain-neutral STAKE message; signing happens in the service
  * worker.
@@ -180,7 +181,14 @@ function StakeFlowView({ network, networks, capabilities, onClose }: Props) {
                         </span>
                       </div>
                       <div className="tx-row-secondary">
-                        <span className="tx-address">{v.id.slice(0, 8)}…{v.id.slice(-8)}</span>
+                        {/* Pre-formatted display string ("430,800") — render
+                            verbatim; falls back to the vote address for
+                            manual entries where stake is unknown. */}
+                        <span className="tx-address">
+                          {v.activatedStakeFormatted !== null
+                            ? `${v.activatedStakeFormatted} ${nativeSymbol}`
+                            : `${v.id.slice(0, 8)}…${v.id.slice(-8)}`}
+                        </span>
                         <span className="tx-time">
                           {v.commissionPercent !== null ? `${v.commissionPercent}% fee` : ''}
                         </span>

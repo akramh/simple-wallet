@@ -64,7 +64,7 @@ test('stakeMenu: stake flow drives walletService.stake with picked validator and
   const calls = [];
   app.walletService.getStakePositions = async () => [];
   app.walletService.getStakeValidators = async () => [
-    { id: VOTE, name: 'Validator A', commissionPercent: 5, apyPercent: 7.2, activatedStakeFormatted: '123', delinquent: false },
+    { id: VOTE, name: 'Validator A', commissionPercent: 5, apyPercent: 7.2, activatedStakeFormatted: '430,800', delinquent: false },
   ];
   app.walletService.estimateStakeFee = async () => '0.000005000';
   app.walletService.stake = async (validatorId, amount, password) => {

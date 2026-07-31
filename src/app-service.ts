@@ -1999,7 +1999,8 @@ export class WalletAppService {
   }
 
   /**
-   * List validators available to stake with on a network, best first.
+   * List validators available to stake with on a network, sorted by activated
+   * stake descending (delinquent validators last).
    *
    * @param networkKey - Network to query; defaults to the active network
    * @param limit - Maximum validators to return (default 30)
@@ -2223,29 +2224,39 @@ export class WalletAppService {
       this.getStakewizMap(networkKey),
     ]);
 
-    const merged: Array<ValidatorSummary & { rank: number | null }> = onChain.map((v) => {
-      const meta = stakewiz.get(v.votePubkey);
-      return {
-        id: v.votePubkey,
-        name: meta?.name ?? null,
-        commissionPercent: v.commission,
-        apyPercent: meta?.apyPercent ?? null,
-        activatedStakeFormatted: (v.activatedStakeLamports / 1_000_000_000).toFixed(0),
-        delinquent: v.delinquent,
-        rank: meta?.rank ?? null,
-      };
-    });
+    const merged: Array<ValidatorSummary & { activatedStakeLamports: number; rank: number | null }> =
+      onChain.map((v) => {
+        const meta = stakewiz.get(v.votePubkey);
+        return {
+          id: v.votePubkey,
+          name: meta?.name ?? null,
+          commissionPercent: v.commission,
+          apyPercent: meta?.apyPercent ?? null,
+          // Whole-SOL display string with thousands separators ("430,800") —
+          // not numeric-parseable; UIs render it verbatim.
+          activatedStakeFormatted: Math.round(v.activatedStakeLamports / 1_000_000_000).toLocaleString('en-US'),
+          delinquent: v.delinquent,
+          activatedStakeLamports: v.activatedStakeLamports,
+          rank: meta?.rank ?? null,
+        };
+      });
 
-    // Non-delinquent first, then Stakewiz rank (1 = best), then most stake.
+    // Non-delinquent first, then most stake; Stakewiz rank (1 = best) only
+    // breaks exact-stake ties, with the pubkey as a deterministic fallback.
     merged.sort((a, b) => {
       if (a.delinquent !== b.delinquent) return a.delinquent ? 1 : -1;
+      if (a.activatedStakeLamports !== b.activatedStakeLamports) {
+        return b.activatedStakeLamports - a.activatedStakeLamports;
+      }
       if (a.rank !== null && b.rank !== null && a.rank !== b.rank) return a.rank - b.rank;
-      if (a.rank !== null && b.rank === null) return -1;
-      if (a.rank === null && b.rank !== null) return 1;
-      return Number(b.activatedStakeFormatted) - Number(a.activatedStakeFormatted);
+      if (a.rank !== null) return -1;
+      if (b.rank !== null) return 1;
+      return a.id.localeCompare(b.id);
     });
 
-    return merged.slice(0, limit).map(({ rank: _rank, ...summary }) => summary);
+    return merged
+      .slice(0, limit)
+      .map(({ rank: _rank, activatedStakeLamports: _lamports, ...summary }) => summary);
   }
 
   private async stakeSolana(

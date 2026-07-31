@@ -47,7 +47,12 @@ export interface ValidatorSummary {
   commissionPercent: number | null;
   /** Estimated APY percentage when a metadata source provides it. */
   apyPercent: number | null;
-  /** Total stake delegated to this validator, formatted in the chain's native unit. */
+  /**
+   * Total stake delegated to this validator as a whole-unit, thousands-
+   * separated display string in the chain's native unit (e.g. "430,800");
+   * null when unknown. Render verbatim with the native symbol appended —
+   * the separators make it non-numeric-parseable, so no unit math.
+   */
   activatedStakeFormatted: string | null;
   /** True when the validator is currently delinquent / not voting. */
   delinquent: boolean;

@@ -235,7 +235,7 @@ test('getStakePositions: rewards RPC failure is soft', async () => {
 // Validators
 // ---------------------------------------------------------------------------
 
-test('getStakeValidators merges Stakewiz metadata and sorts sensibly', async () => {
+test('getStakeValidators sorts by activated stake descending and formats stake for display', async () => {
   const stakewizMap = new Map([
     ['vote-ranked-2', { votePubkey: 'vote-ranked-2', name: 'Second', apyPercent: 7.0, rank: 2, commissionPercent: 5 }],
     ['vote-ranked-1', { votePubkey: 'vote-ranked-1', name: 'First', apyPercent: 7.5, rank: 1, commissionPercent: 0 }],
@@ -250,15 +250,81 @@ test('getStakeValidators merges Stakewiz metadata and sorts sensibly', async () 
 
   const validators = await svc.getStakeValidators('solana-mainnet', 3);
   assert.equal(validators.length, 3);
-  // Ranked validators first (rank asc), then unranked by stake; delinquent
-  // fell off the limited list entirely.
-  assert.deepEqual(validators.map((v) => v.id), ['vote-ranked-1', 'vote-ranked-2', 'vote-unranked']);
-  assert.equal(validators[0].name, 'First');
-  assert.equal(validators[0].apyPercent, 7.5);
-  assert.equal(validators[2].name, null);
+  // Stake descending regardless of Stakewiz rank; delinquent fell off the
+  // limited list entirely.
+  assert.deepEqual(validators.map((v) => v.id), ['vote-unranked', 'vote-ranked-2', 'vote-ranked-1']);
+  // Whole-SOL, thousands-separated display strings.
+  assert.deepEqual(validators.map((v) => v.activatedStakeFormatted), ['9,000', '2,000', '1,000']);
+  // Stakewiz metadata still merged onto matching entries.
+  assert.equal(validators[0].name, null);
+  assert.equal(validators[1].name, 'Second');
+  assert.equal(validators[2].name, 'First');
+  assert.equal(validators[2].apyPercent, 7.5);
   assert.ok(!validators.some((v) => v.delinquent));
-  // The internal sort key must not leak into the chain-neutral shape.
+  // Internal sort keys must not leak into the chain-neutral shape.
   assert.equal('rank' in validators[0], false);
+  assert.equal('activatedStakeLamports' in validators[0], false);
+});
+
+test('getStakeValidators keeps delinquent validators last, not dropped', async () => {
+  const { svc, provider } = await buildService('solana-mainnet');
+  provider.getVoteAccountsSummary = async () => [
+    { votePubkey: 'vote-small', commission: 0, activatedStakeLamports: 1_000_000_000_000, delinquent: false },
+    { votePubkey: 'vote-delinquent', commission: 0, activatedStakeLamports: 8_000_000_000_000, delinquent: true },
+    { votePubkey: 'vote-large', commission: 0, activatedStakeLamports: 9_000_000_000_000, delinquent: false },
+  ];
+
+  const validators = await svc.getStakeValidators('solana-mainnet', 4);
+  // The delinquent validator out-stakes vote-small but still sorts last.
+  assert.deepEqual(validators.map((v) => v.id), ['vote-large', 'vote-small', 'vote-delinquent']);
+  assert.equal(validators[2].delinquent, true);
+});
+
+test('getStakeValidators: stake-desc order and formatting hold without Stakewiz metadata', async () => {
+  // Empty map is the Stakewiz-outage and non-mainnet shape.
+  const { svc, provider } = await buildService('solana-mainnet', { stakewizMap: new Map() });
+  provider.getVoteAccountsSummary = async () => [
+    { votePubkey: 'vote-mid', commission: 5, activatedStakeLamports: 105_866_000_000_000, delinquent: false },
+    { votePubkey: 'vote-big', commission: 0, activatedStakeLamports: 430_800_123_456_789, delinquent: false },
+  ];
+
+  const validators = await svc.getStakeValidators('solana-mainnet', 30);
+  assert.deepEqual(validators.map((v) => v.id), ['vote-big', 'vote-mid']);
+  assert.deepEqual(validators.map((v) => v.activatedStakeFormatted), ['430,800', '105,866']);
+  assert.equal(validators[0].name, null);
+  assert.equal(validators[0].apyPercent, null);
+});
+
+test('getStakeValidators breaks exact-stake ties by Stakewiz rank, then pubkey', async () => {
+  const stakewizMap = new Map([
+    ['vote-z-ranked', { votePubkey: 'vote-z-ranked', name: 'Ranked', apyPercent: 7.0, rank: 1, commissionPercent: 0 }],
+  ]);
+  const { svc, provider } = await buildService('solana-mainnet', { stakewizMap });
+  provider.getVoteAccountsSummary = async () => [
+    { votePubkey: 'vote-a-unranked', commission: 0, activatedStakeLamports: 5_000_000_000_000, delinquent: false },
+    { votePubkey: 'vote-z-ranked', commission: 0, activatedStakeLamports: 5_000_000_000_000, delinquent: false },
+    { votePubkey: 'vote-b-unranked', commission: 0, activatedStakeLamports: 5_000_000_000_000, delinquent: false },
+  ];
+
+  const validators = await svc.getStakeValidators('solana-mainnet', 3);
+  // Ranked wins the tie despite sorting after both alphabetically; the
+  // remaining tie falls back to pubkey order for determinism.
+  assert.deepEqual(
+    validators.map((v) => v.id),
+    ['vote-z-ranked', 'vote-a-unranked', 'vote-b-unranked']
+  );
+});
+
+test('getStakeValidators rounds sub-1-SOL stake to "0"', async () => {
+  const { svc, provider } = await buildService('solana-mainnet');
+  provider.getVoteAccountsSummary = async () => [
+    { votePubkey: 'vote-dust', commission: 0, activatedStakeLamports: 400_000_000, delinquent: false },
+  ];
+
+  const validators = await svc.getStakeValidators('solana-mainnet', 1);
+  // Whole-SOL rounding: a mainnet top-30-by-stake list never contains such
+  // validators; "0" is acceptable degenerate output on testnets.
+  assert.equal(validators[0].activatedStakeFormatted, '0');
 });
 
 // ---------------------------------------------------------------------------
