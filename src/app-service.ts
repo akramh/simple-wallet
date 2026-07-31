@@ -44,7 +44,27 @@ import {
   type NormalizedSolanaTransaction,
   type SolanaExplorer,
   type SolTransferResult,
+  STAKE_ACCOUNT_SPACE,
+  STAKE_SEED_PREFIX,
+  MAX_STAKE_SEED_INDEX,
+  deriveStakeAccountAddress,
+  buildCreateAndDelegateStakeTx,
+  buildDeactivateStakeTx,
+  buildWithdrawStakeTx,
+  signStakeTx,
+  parseStakeAccount,
+  fetchStakewizValidators,
+  type StakePosition,
+  type StakewizValidatorEntry,
 } from './solana/index.js';
+import type {
+  StakePositionView,
+  ValidatorSummary,
+  StakeActionResult,
+  StakingCapabilities,
+} from './types/staking.js';
+import { getSolanaPrice } from './price-service.js';
+import { pricesAvailableForNetwork } from './network-visibility.js';
 import { PublicKey, Keypair } from '@solana/web3.js';
 // @ts-ignore
 import bs58 from 'bs58';
@@ -1914,6 +1934,508 @@ export class WalletAppService {
     const merged = [...solHistory, ...tokenHistories.flat()];
     merged.sort((a, b) => b.timestamp - a.timestamp);
     return merged.slice(0, limit);
+  }
+
+  // ============================================================================
+  // Staking — chain-neutral API + Solana implementation
+  // ============================================================================
+  //
+  // UIs call ONLY the generic methods (isStakingSupported, getStakePositions,
+  // getStakeValidators, stake, unstake, withdrawStake); they dispatch on the
+  // network type. Adding staking for another chain (e.g. Ethereum LSTs) means
+  // adding a dispatch branch + implementation here — no UI changes.
+
+  /** Minimum delegated stake enforced by this wallet (0.01 SOL), in lamports. */
+  private static readonly MIN_SOLANA_STAKE_LAMPORTS = 10_000_000;
+
+  /** In-memory Stakewiz cache — metadata only, refreshed at most every 10 min. */
+  private stakewizCache: { fetchedAt: number; map: Map<string, StakewizValidatorEntry> } | null = null;
+
+  /**
+   * Whether staking is available on a network.
+   *
+   * @param networkKey - Network to check; defaults to the active network
+   * @returns True when this service can stake on the network (Solana today)
+   */
+  isStakingSupported(networkKey?: string): boolean {
+    const key = networkKey ?? this.config.network;
+    const netConfig = this.config.networks[key];
+    return !!netConfig && isSolanaNetworkConfig(netConfig);
+  }
+
+  /**
+   * Chain-specific staking semantics for UI copy and button gating.
+   *
+   * @param networkKey - Network to describe; defaults to the active network
+   * @throws Error when staking is unsupported on the network
+   */
+  getStakingCapabilities(networkKey?: string): StakingCapabilities {
+    const key = networkKey ?? this.config.network;
+    this.assertStakingSupported(key);
+    return {
+      canStake: true,
+      canUnstake: true,
+      canWithdraw: true,
+      minStakeFormatted: '0.01',
+      activationNote:
+        'Stake activates at the next epoch boundary (~2-3 days on mainnet) and starts earning after that.',
+      deactivationNote:
+        'Unstaking completes at the next epoch boundary; funds become withdrawable after that.',
+    };
+  }
+
+  /**
+   * List the wallet's staking positions on a network.
+   *
+   * @param networkKey - Network to query; defaults to the active network
+   * @returns Chain-neutral position views (empty when the wallet has none)
+   * @throws Error when staking is unsupported on the network
+   * @async
+   */
+  async getStakePositions(networkKey?: string): Promise<StakePositionView[]> {
+    const key = networkKey ?? this.config.network;
+    this.assertStakingSupported(key);
+    return this.getSolanaStakePositions(key);
+  }
+
+  /**
+   * List validators available to stake with on a network, best first.
+   *
+   * @param networkKey - Network to query; defaults to the active network
+   * @param limit - Maximum validators to return (default 30)
+   * @throws Error when staking is unsupported on the network
+   * @async
+   */
+  async getStakeValidators(networkKey?: string, limit: number = 30): Promise<ValidatorSummary[]> {
+    const key = networkKey ?? this.config.network;
+    this.assertStakingSupported(key);
+    return this.getSolanaValidators(key, limit);
+  }
+
+  /**
+   * Stake native tokens with a validator.
+   *
+   * @param validatorId - Opaque validator id (Solana: vote-account pubkey)
+   * @param amount - Amount to stake in native units (e.g. "1.5")
+   * @param password - Wallet password for signing
+   * @param networkKey - Target network; defaults to the active network
+   * @throws Error when staking is unsupported on the network
+   * @async
+   */
+  async stake(
+    validatorId: string,
+    amount: string,
+    password: string,
+    networkKey?: string
+  ): Promise<StakeActionResult> {
+    const key = networkKey ?? this.config.network;
+    this.assertStakingSupported(key);
+    return this.stakeSolana(validatorId, amount, password, key);
+  }
+
+  /**
+   * Begin unstaking a position (starts the cooldown).
+   *
+   * @param positionId - Opaque position id (Solana: stake-account address)
+   * @param password - Wallet password for signing
+   * @param networkKey - Target network; defaults to the active network
+   * @throws Error when staking is unsupported on the network
+   * @async
+   */
+  async unstake(positionId: string, password: string, networkKey?: string): Promise<StakeActionResult> {
+    const key = networkKey ?? this.config.network;
+    this.assertStakingSupported(key);
+    return this.deactivateSolanaStake(positionId, password, key);
+  }
+
+  /**
+   * Withdraw a fully deactivated position back to the wallet. v1 withdraws
+   * the full balance (closing the position and returning the reserve).
+   *
+   * @param positionId - Opaque position id (Solana: stake-account address)
+   * @param password - Wallet password for signing
+   * @param networkKey - Target network; defaults to the active network
+   * @throws Error when staking is unsupported on the network
+   * @async
+   */
+  async withdrawStake(positionId: string, password: string, networkKey?: string): Promise<StakeActionResult> {
+    const key = networkKey ?? this.config.network;
+    this.assertStakingSupported(key);
+    return this.withdrawSolanaStake(positionId, password, key);
+  }
+
+  /**
+   * Estimate the network fee for a staking action, formatted in native units.
+   * Best-effort — falls back to the protocol base fee.
+   *
+   * @param networkKey - Target network; defaults to the active network
+   * @async
+   */
+  async estimateStakeFee(networkKey?: string): Promise<string> {
+    const key = networkKey ?? this.config.network;
+    this.assertStakingSupported(key);
+    const provider = this.getSolanaProviderForNetwork(key);
+    const estimate = await provider.estimateFee();
+    return estimate.feeSol;
+  }
+
+  private assertStakingSupported(networkKey: string): void {
+    if (!this.isStakingSupported(networkKey)) {
+      throw new Error(`Staking is not supported on ${networkKey}`);
+    }
+  }
+
+  // ---- Solana implementation --------------------------------------------
+
+  /**
+   * Derive the wallet's Solana signing keypair. Mirrors the derivation used
+   * by sendSolanaTransaction: bs58 secret key for private-key imports,
+   * SLIP-10 mnemonic derivation otherwise.
+   *
+   * @security The keypair lives only in the caller's frame; never stored.
+   */
+  private getSolanaSigningKeypair(password: string): Keypair {
+    if (this.wallet.importType === 'privateKey') {
+      const privateKey = this.wallet.getPrivateKey(password);
+      if (!privateKey) {
+        throw new Error('Failed to decrypt private key');
+      }
+      return Keypair.fromSecretKey(bs58.decode(privateKey));
+    }
+    const mnemonic = this.wallet.getMnemonic(password);
+    return deriveSolanaKeypair(mnemonic, this.wallet.getCurrentAccountIndex());
+  }
+
+  private assertSolanaStakingWallet(): void {
+    if (
+      this.wallet.importType === 'privateKey' &&
+      this.wallet.privateKeyType &&
+      this.wallet.privateKeyType !== 'solana'
+    ) {
+      throw new Error('This wallet does not support Solana staking');
+    }
+  }
+
+  /**
+   * Stakewiz metadata map, cached for 10 minutes. Testnets have no Stakewiz
+   * coverage and always resolve to an empty map; failures also resolve to an
+   * empty map (degradation invariant — metadata never blocks staking).
+   */
+  private async getStakewizMap(networkKey: string): Promise<Map<string, StakewizValidatorEntry>> {
+    const netConfig = this.config.networks[networkKey];
+    if (!netConfig || netConfig.isTestnet) {
+      return new Map();
+    }
+    const now = Date.now();
+    if (this.stakewizCache && now - this.stakewizCache.fetchedAt < 10 * 60 * 1000) {
+      return this.stakewizCache.map;
+    }
+    const map = await fetchStakewizValidators();
+    // Don't cache an empty result from an outage — retry on the next call.
+    if (map.size > 0) {
+      this.stakewizCache = { fetchedAt: now, map };
+    }
+    return map;
+  }
+
+  /** Best-effort SOL price; null on testnets (policy) or provider failure. */
+  private async getSolUsdPrice(networkKey: string): Promise<number | null> {
+    if (!pricesAvailableForNetwork(this.config.networks[networkKey])) {
+      return null;
+    }
+    try {
+      return await getSolanaPrice(networkKey);
+    } catch {
+      return null;
+    }
+  }
+
+  private async getSolanaStakePositions(networkKey: string): Promise<StakePositionView[]> {
+    const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
+    if (!solInfo) {
+      return [];
+    }
+
+    const provider = this.getSolanaProviderForNetwork(networkKey);
+    const [rawAccounts, epochInfo] = await Promise.all([
+      provider.getParsedStakeAccountsByWithdrawer(solInfo.address),
+      provider.getEpochInfo(),
+    ]);
+
+    const positions = rawAccounts
+      .map((entry) => parseStakeAccount(entry, epochInfo.epoch))
+      .filter((p): p is StakePosition => p !== null);
+
+    if (!positions.length) {
+      return [];
+    }
+
+    // Rewards are display-only; fallback RPCs may not index them — soft-fail.
+    let rewards: Array<number | null> = positions.map(() => null);
+    try {
+      rewards = await provider.getInflationRewardLamports(
+        positions.map((p) => p.stakeAccountAddress)
+      );
+    } catch {
+      // Keep nulls.
+    }
+
+    const [price, stakewiz] = await Promise.all([
+      this.getSolUsdPrice(networkKey),
+      this.getStakewizMap(networkKey),
+    ]);
+
+    return positions.map((position, i) => {
+      const meta = position.votePubkey ? stakewiz.get(position.votePubkey) : undefined;
+      const reward = rewards[i];
+      return {
+        networkKey,
+        chain: 'solana' as const,
+        positionId: position.stakeAccountAddress,
+        validator: {
+          id: position.votePubkey ?? '',
+          name: meta?.name ?? null,
+          commissionPercent: meta?.commissionPercent ?? null,
+          apyPercent: meta?.apyPercent ?? null,
+          activatedStakeFormatted: null,
+          delinquent: false,
+        },
+        amountFormatted: lamportsToSol(position.delegatedLamports),
+        amountBaseUnits: String(position.delegatedLamports),
+        reserveFormatted: lamportsToSol(position.rentExemptReserveLamports),
+        totalFormatted: lamportsToSol(position.totalLamports),
+        state: position.state,
+        activationEpoch: position.activationEpoch,
+        deactivationEpoch: position.deactivationEpoch,
+        currentEpoch: epochInfo.epoch,
+        usdValue:
+          price !== null ? (position.totalLamports / 1_000_000_000) * price : undefined,
+        lastRewardFormatted:
+          typeof reward === 'number' && reward > 0 ? lamportsToSol(reward) : undefined,
+      };
+    });
+  }
+
+  private async getSolanaValidators(networkKey: string, limit: number): Promise<ValidatorSummary[]> {
+    const provider = this.getSolanaProviderForNetwork(networkKey);
+    const [onChain, stakewiz] = await Promise.all([
+      provider.getVoteAccountsSummary(),
+      this.getStakewizMap(networkKey),
+    ]);
+
+    const merged: Array<ValidatorSummary & { rank: number | null }> = onChain.map((v) => {
+      const meta = stakewiz.get(v.votePubkey);
+      return {
+        id: v.votePubkey,
+        name: meta?.name ?? null,
+        commissionPercent: v.commission,
+        apyPercent: meta?.apyPercent ?? null,
+        activatedStakeFormatted: (v.activatedStakeLamports / 1_000_000_000).toFixed(0),
+        delinquent: v.delinquent,
+        rank: meta?.rank ?? null,
+      };
+    });
+
+    // Non-delinquent first, then Stakewiz rank (1 = best), then most stake.
+    merged.sort((a, b) => {
+      if (a.delinquent !== b.delinquent) return a.delinquent ? 1 : -1;
+      if (a.rank !== null && b.rank !== null && a.rank !== b.rank) return a.rank - b.rank;
+      if (a.rank !== null && b.rank === null) return -1;
+      if (a.rank === null && b.rank !== null) return 1;
+      return Number(b.activatedStakeFormatted) - Number(a.activatedStakeFormatted);
+    });
+
+    return merged.slice(0, limit).map(({ rank: _rank, ...summary }) => summary);
+  }
+
+  private async stakeSolana(
+    votePubkey: string,
+    amountSol: string,
+    password: string,
+    networkKey: string
+  ): Promise<StakeActionResult> {
+    this.assertSolanaStakingWallet();
+
+    let voteKey: PublicKey;
+    try {
+      voteKey = new PublicKey(votePubkey);
+    } catch {
+      throw new Error('Invalid validator vote address');
+    }
+
+    const amountLamports = solToLamports(amountSol);
+    if (!Number.isFinite(amountLamports) || amountLamports <= 0) {
+      throw new Error('Stake amount must be greater than 0');
+    }
+    if (amountLamports < WalletAppService.MIN_SOLANA_STAKE_LAMPORTS) {
+      throw new Error(
+        `Minimum stake is ${lamportsToSol(WalletAppService.MIN_SOLANA_STAKE_LAMPORTS)} SOL`
+      );
+    }
+
+    const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
+    if (!solInfo) {
+      throw new Error('No Solana address available');
+    }
+    const walletPubkey = new PublicKey(solInfo.address);
+
+    const provider = this.getSolanaProviderForNetwork(networkKey);
+    const [rentLamports, feeEstimate, balanceLamports] = await Promise.all([
+      provider.getStakeRentExemptLamports(STAKE_ACCOUNT_SPACE),
+      provider.estimateFee(),
+      provider.getBalanceLamports(solInfo.address),
+    ]);
+
+    // The stake account is funded with amount + rent so the *delegated* stake
+    // equals what the user asked for; rent comes back on withdraw.
+    const fundLamports = amountLamports + rentLamports;
+    validateSufficientBalance(balanceLamports, fundLamports, feeEstimate.feeLamports);
+
+    // Find the first free seed-derived address. Collisions (e.g. an account
+    // created by an earlier stake) are skipped; the scan is capped to keep
+    // worst-case RPC round-trips bounded.
+    let seed: string | null = null;
+    let stakeAccountPubkey: PublicKey | null = null;
+    for (let i = 0; i < MAX_STAKE_SEED_INDEX; i++) {
+      const candidateSeed = `${STAKE_SEED_PREFIX}${i}`;
+      const candidate = await deriveStakeAccountAddress(walletPubkey, candidateSeed);
+      if (!(await provider.accountExists(candidate.toBase58()))) {
+        seed = candidateSeed;
+        stakeAccountPubkey = candidate;
+        break;
+      }
+    }
+    if (!seed || !stakeAccountPubkey) {
+      throw new Error('No free stake account slot available');
+    }
+
+    const keypair = this.getSolanaSigningKeypair(password);
+    const blockhashInfo = await provider.getRecentBlockhash();
+    const tx = buildCreateAndDelegateStakeTx({
+      walletPubkey,
+      stakeAccountPubkey,
+      seed,
+      lamports: fundLamports,
+      votePubkey: voteKey,
+      recentBlockhash: blockhashInfo.blockhash,
+      lastValidBlockHeight: blockhashInfo.lastValidBlockHeight,
+    });
+    const signed = signStakeTx(tx, keypair);
+    const sendResult = await provider.sendTransaction(signed.serialized);
+
+    return {
+      txId: sendResult.signature,
+      positionId: stakeAccountPubkey.toBase58(),
+      feeFormatted: feeEstimate.feeSol,
+    };
+  }
+
+  /**
+   * Find a stake position owned by this wallet (withdrawer == wallet).
+   * Discovering via the withdrawer scan doubles as the ownership check —
+   * a foreign stake account can never appear in the result.
+   */
+  private async findOwnedStakePosition(
+    provider: SolanaProvider,
+    walletAddress: string,
+    stakeAccountAddress: string
+  ): Promise<StakePosition> {
+    const [rawAccounts, epochInfo] = await Promise.all([
+      provider.getParsedStakeAccountsByWithdrawer(walletAddress),
+      provider.getEpochInfo(),
+    ]);
+    const position = rawAccounts
+      .map((entry) => parseStakeAccount(entry, epochInfo.epoch))
+      .find((p) => p?.stakeAccountAddress === stakeAccountAddress);
+    if (!position) {
+      throw new Error('Stake account not found for this wallet');
+    }
+    return position;
+  }
+
+  private async deactivateSolanaStake(
+    stakeAccountAddress: string,
+    password: string,
+    networkKey: string
+  ): Promise<StakeActionResult> {
+    this.assertSolanaStakingWallet();
+
+    const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
+    if (!solInfo) {
+      throw new Error('No Solana address available');
+    }
+
+    const provider = this.getSolanaProviderForNetwork(networkKey);
+    const position = await this.findOwnedStakePosition(provider, solInfo.address, stakeAccountAddress);
+    if (position.state !== 'active' && position.state !== 'activating') {
+      throw new Error(`Cannot unstake a position in state '${position.state}'`);
+    }
+
+    const keypair = this.getSolanaSigningKeypair(password);
+    const [feeEstimate, blockhashInfo] = await Promise.all([
+      provider.estimateFee(),
+      provider.getRecentBlockhash(),
+    ]);
+    const tx = buildDeactivateStakeTx({
+      walletPubkey: keypair.publicKey,
+      stakeAccountPubkey: new PublicKey(stakeAccountAddress),
+      recentBlockhash: blockhashInfo.blockhash,
+      lastValidBlockHeight: blockhashInfo.lastValidBlockHeight,
+    });
+    const signed = signStakeTx(tx, keypair);
+    const sendResult = await provider.sendTransaction(signed.serialized);
+
+    return {
+      txId: sendResult.signature,
+      positionId: stakeAccountAddress,
+      feeFormatted: feeEstimate.feeSol,
+    };
+  }
+
+  private async withdrawSolanaStake(
+    stakeAccountAddress: string,
+    password: string,
+    networkKey: string
+  ): Promise<StakeActionResult> {
+    this.assertSolanaStakingWallet();
+
+    const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
+    if (!solInfo) {
+      throw new Error('No Solana address available');
+    }
+
+    const provider = this.getSolanaProviderForNetwork(networkKey);
+    const position = await this.findOwnedStakePosition(provider, solInfo.address, stakeAccountAddress);
+    if (position.state !== 'withdrawable') {
+      throw new Error(
+        `Stake is not withdrawable yet (state: '${position.state}'). ` +
+        'Unstake first and wait for the next epoch boundary.'
+      );
+    }
+
+    const keypair = this.getSolanaSigningKeypair(password);
+    const [feeEstimate, blockhashInfo] = await Promise.all([
+      provider.estimateFee(),
+      provider.getRecentBlockhash(),
+    ]);
+    // Full-balance withdraw: closes the account and returns the rent reserve.
+    const tx = buildWithdrawStakeTx(
+      {
+        walletPubkey: keypair.publicKey,
+        stakeAccountPubkey: new PublicKey(stakeAccountAddress),
+        recentBlockhash: blockhashInfo.blockhash,
+        lastValidBlockHeight: blockhashInfo.lastValidBlockHeight,
+      },
+      position.totalLamports
+    );
+    const signed = signStakeTx(tx, keypair);
+    const sendResult = await provider.sendTransaction(signed.serialized);
+
+    return {
+      txId: sendResult.signature,
+      positionId: stakeAccountAddress,
+      feeFormatted: feeEstimate.feeSol,
+    };
   }
 
   // ============================================================================

@@ -8,6 +8,7 @@
 import React from 'react';
 import sendIcon from '../../../assets/icons/send.svg';
 import receiveIcon from '../../../assets/icons/receive.svg';
+import stakeIcon from '../../../assets/icons/stake.svg';
 
 interface Props {
   /** Formatted total balance, already USD-prefixed (e.g. "$1,234.56"). */
@@ -19,6 +20,11 @@ interface Props {
   onRefresh: () => void;
   onSend: () => void;
   onReceive: () => void;
+  /**
+   * When set, a Stake action tile is rendered. Parents pass this only when
+   * the active network supports staking (capability-gated, not chain-gated).
+   */
+  onStake?: () => void;
 }
 
 export function BalanceCard({
@@ -28,6 +34,7 @@ export function BalanceCard({
   onRefresh,
   onSend,
   onReceive,
+  onStake,
 }: Props) {
   const busy = refreshing || pricesLoading;
   return (
@@ -56,6 +63,12 @@ export function BalanceCard({
             <img src={sendIcon} alt="" className="action-icon" />
             <span>Send</span>
           </button>
+          {onStake && (
+            <button className="action-tile" onClick={onStake}>
+              <img src={stakeIcon} alt="" className="action-icon" />
+              <span>Stake</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

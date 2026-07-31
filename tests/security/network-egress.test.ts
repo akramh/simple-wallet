@@ -111,6 +111,19 @@ describe('Network Egress Security', () => {
         }
     });
 
+    it('should ALLOW the Stakewiz validator-metadata API (Solana staking)', async () => {
+        const allowedUrl = 'https://api.stakewiz.com/validators';
+
+        try {
+            await fetch(allowedUrl);
+        } catch (err: any) {
+            if (err.message && err.message.includes('[Security] Blocked')) {
+                assert.fail(`Stakewiz URL ${allowedUrl} was blocked by security guard`);
+            }
+            // Other errors (no network in test env) are acceptable.
+        }
+    });
+
     it('should ALLOW all Alchemy chain hostnames used by the wallet', async () => {
         const alchemyHosts = [
             'https://eth-mainnet.g.alchemy.com/v2/fake-key',

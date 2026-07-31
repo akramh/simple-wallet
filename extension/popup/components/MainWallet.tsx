@@ -17,6 +17,7 @@ import Header from './Header';
 import AccountMenu from './AccountMenu';
 import ReceiveView from './ReceiveView';
 import ActivityView from './ActivityView';
+import StakingView from './StakingView';
 import AddTokenModal from './AddTokenModal';
 import AssetPickerModal, { type SendableAsset } from './AssetPickerModal';
 import SendTransactionView from './SendTransactionView';
@@ -207,7 +208,7 @@ interface TokenBalance {
   isActivated?: boolean;
 }
 
-type View = 'tokens' | 'activity' | 'receive' | 'send' | 'settings' | 'tokenDetails';
+type View = 'tokens' | 'activity' | 'receive' | 'send' | 'settings' | 'tokenDetails' | 'stake';
 
 interface TokenWithBalance {
   token: Token;
@@ -275,6 +276,23 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
   const [isOffline, setIsOffline] = useState<boolean>(
     typeof navigator !== 'undefined' && navigator.onLine === false
   );
+
+  /**
+   * Whether the active network supports staking. Capability comes from the
+   * service worker (GET_NETWORK_CONFIG) rather than a chain check so new
+   * staking chains light up without popup changes.
+   */
+  const [stakingSupported, setStakingSupported] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    sendMessageWithRetry<{ isStakingSupported?: boolean }>({
+      type: 'GET_NETWORK_CONFIG',
+      payload: { networkKey: network },
+    })
+      .then((resp) => { if (!cancelled) setStakingSupported(!!resp?.isStakingSupported); })
+      .catch(() => { if (!cancelled) setStakingSupported(false); });
+    return () => { cancelled = true; };
+  }, [network]);
 
   /** Persisted preferences: sort order, hide-zero toggle, privacy mode. */
   const { prefs, update: updatePrefs } = useUserPreferences();
@@ -923,7 +941,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
       )}
 
       {/* Balance + tabs block (account chip lives in Header, unified source). */}
-      {view !== 'settings' && view !== 'send' && view !== 'receive' && view !== 'tokenDetails' && (
+      {view !== 'settings' && view !== 'send' && view !== 'receive' && view !== 'tokenDetails' && view !== 'stake' && (
         <>
           {/* Balance + Actions always above tabs.
            *  Unified view: aggregate USD hero powered by the cross-chain snapshot.
@@ -947,6 +965,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
               onRefresh={handleRefresh}
               onSend={() => setView('send')}
               onReceive={() => setView('receive')}
+              onStake={stakingSupported ? () => setView('stake') : undefined}
             />
           )}
 
@@ -1078,6 +1097,12 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
           </>
         ) : view === 'activity' ? (
           <ActivityView currentAddress={address} network={network} networks={networks} />
+        ) : view === 'stake' ? (
+          <StakingView
+            network={network}
+            networks={networks}
+            onBack={() => setView('tokens')}
+          />
         ) : view === 'receive' ? (
           <div className="takeover">
             <ScreenHeader

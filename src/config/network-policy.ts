@@ -113,6 +113,11 @@ export const ALLOWED_DOMAINS = [
   "solscan.io",
   "api.solscan.io",
 
+  // Solana staking data (validator names/APY/rank — not available on-chain).
+  // Free, unauthenticated, read-only; staking degrades to on-chain data when
+  // this host is unreachable.
+  "api.stakewiz.com",
+
   // XRP Explorer
   "xrpscan.com",
   "api.xrpscan.com", // Verify if API uses same domain

@@ -20,6 +20,8 @@
  * - GET_BALANCE, GET_PORTFOLIO, SEND_TRANSACTION, GET_TRANSACTION_HISTORY
  * - SWITCH_WALLET, SWITCH_ACCOUNT, SWITCH_NETWORK
  * - GET_NETWORKS, GET_SHOW_TESTNETS, SET_SHOW_TESTNETS
+ * - GET_STAKE_POSITIONS, GET_STAKE_VALIDATORS, GET_STAKING_CAPABILITIES
+ * - STAKE, UNSTAKE, WITHDRAW_STAKE (chain-neutral; payload carries networkKey)
  * - ETH_ACCOUNTS, ETH_REQUEST_ACCOUNTS, ETH_SEND_TRANSACTION
  * - PERSONAL_SIGN, ETH_SIGN_TYPED_DATA_V4, PERSONAL_EC_RECOVER
  * - GET_SECRET_PHRASE, GET_PRIVATE_KEY, CHANGE_PASSWORD
@@ -3160,8 +3162,86 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         bitcoinNetwork: isBitcoin ? (netConfigData as any).bitcoinNetwork : undefined,
         solanaCluster: isSolana ? (netConfigData as any).solanaCluster : undefined,
         xrpNetwork: isXrp ? (netConfigData as any).xrpNetwork : undefined,
-        tonNetwork: isTon ? (netConfigData as any).tonNetwork : undefined
+        tonNetwork: isTon ? (netConfigData as any).tonNetwork : undefined,
+        // UIs gate the Stake affordance on this capability flag, never on a
+        // chain check — new staking chains light up without popup changes.
+        isStakingSupported: walletService.isStakingSupported(netConfigNetwork)
       };
+    }
+
+    // ==========================================================================
+    // Staking (chain-neutral protocol → WalletAppService staking API)
+    // ==========================================================================
+
+    case 'GET_STAKE_POSITIONS': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      if (!walletService) throw new Error('Wallet not initialized');
+      resetAutoLockTimer();
+      const positions = await walletService.getStakePositions(payload?.networkKey);
+      return { positions };
+    }
+
+    case 'GET_STAKE_VALIDATORS': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      if (!walletService) throw new Error('Wallet not initialized');
+      resetAutoLockTimer();
+      const validators = await walletService.getStakeValidators(payload?.networkKey);
+      return { validators };
+    }
+
+    case 'GET_STAKING_CAPABILITIES': {
+      if (!walletService) throw new Error('Wallet not initialized');
+      const capabilities = walletService.getStakingCapabilities(payload?.networkKey);
+      return { capabilities };
+    }
+
+    case 'STAKE':
+    case 'UNSTAKE':
+    case 'WITHDRAW_STAKE': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      if (!walletService) throw new Error('Wallet not initialized');
+      resetAutoLockTimer();
+
+      const stakePassword = getSessionPassword();
+      if (!stakePassword) {
+        throw new Error('Session password not available. Please unlock wallet again.');
+      }
+
+      const stakeNetwork = (payload?.networkKey && typeof payload.networkKey === 'string')
+        ? payload.networkKey
+        : walletService.config.network;
+      const stakeNetConfig = walletService.config.networks[stakeNetwork];
+      if (!stakeNetConfig) {
+        throw new Error(`Unknown network: ${stakeNetwork}`);
+      }
+
+      const result = type === 'STAKE'
+        ? await walletService.stake(payload.validatorId, payload.amount, stakePassword, stakeNetwork)
+        : type === 'UNSTAKE'
+          ? await walletService.unstake(payload.positionId, stakePassword, stakeNetwork)
+          : await walletService.withdrawStake(payload.positionId, stakePassword, stakeNetwork);
+
+      // Track in local history + reuse the Solana confirmation-polling loop so
+      // the activity feed flips pending → confirmed like a send does.
+      const stakeFromAddress = walletService.getAddressForChain('solana') || walletService.getAddress();
+      if (transactionHistory && result.txId) {
+        transactionHistory.addTransaction({
+          hash: result.txId,
+          from: stakeFromAddress,
+          to: result.positionId || '',
+          value: type === 'STAKE' ? payload.amount : '',
+          network: stakeNetwork,
+          status: TransactionStatus.PENDING,
+          type: TransactionType.CONTRACT_INTERACTION,
+          timestamp: Date.now(),
+          tokenSymbol: stakeNetConfig.nativeSymbol || 'SOL',
+          tokenAddress: ''
+        });
+      }
+      broadcastTransactionStatus(result.txId, 'pending', stakeNetwork);
+      startSolanaConfirmationPolling(result.txId, stakeNetwork);
+
+      return { result };
     }
 
     case 'GET_GAS_ESTIMATE': {

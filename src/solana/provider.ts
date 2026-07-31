@@ -13,6 +13,8 @@
  * @responsibilities
  * - Fetch native SOL and SPL token balances via RPC
  * - Build, send, and confirm Solana transactions with RPC failover
+ * - Staking reads: stake accounts by withdrawer, vote accounts, epoch info,
+ *   rent exemption, inflation rewards (see "Staking RPC surface" section)
  *
  * @security
  * - Private keys are never logged or persisted here; signing uses provided keypairs only
@@ -28,6 +30,7 @@ import {
   Transaction,
   SystemProgram,
   ComputeBudgetProgram,
+  StakeProgram,
   type SignatureStatus,
 } from '@solana/web3.js';
 import {
@@ -94,6 +97,30 @@ export interface SolanaFeeEstimateParams {
   /** Compute-unit limit to assume (default DEFAULT_SOL_TRANSFER_CU_LIMIT). */
   computeUnitLimit?: number;
 }
+
+/** Subset of getEpochInfo used by staking state derivation. */
+export interface SolanaEpochInfo {
+  epoch: number;
+  slotIndex: number;
+  slotsInEpoch: number;
+}
+
+/** On-chain validator summary from getVoteAccounts (no metadata). */
+export interface VoteAccountSummary {
+  votePubkey: string;
+  /** Commission percentage (0-100). */
+  commission: number;
+  /** Total stake delegated to this validator, in lamports. */
+  activatedStakeLamports: number;
+  delinquent: boolean;
+}
+
+/**
+ * Byte offset of the withdrawer authority pubkey inside a Stake account's
+ * Meta struct: 4 (enum discriminant) + 8 (rent_exempt_reserve) + 32 (staker).
+ * Used as a memcmp filter to find all stake accounts a wallet can withdraw.
+ */
+export const STAKE_WITHDRAWER_OFFSET = 44;
 
 /** Transaction confirmation result */
 export interface SolanaConfirmationResult {
@@ -614,6 +641,193 @@ export class SolanaProvider {
       confirmed: false,
       err: 'Confirmation timeout',
     };
+  }
+
+  // ============================================================================
+  // Staking RPC surface
+  // ============================================================================
+
+  /**
+   * Get the current epoch info. Staking activation state is *derived* from
+   * this plus parsed stake-account epochs — the getStakeActivation RPC is
+   * deprecated network-wide and must not be used.
+   *
+   * @returns Current epoch, slot index, and slots per epoch
+   * @async
+   */
+  async getEpochInfo(): Promise<SolanaEpochInfo> {
+    let lastError: Error | undefined;
+
+    for (const connection of this.connections) {
+      try {
+        const info = await connection.getEpochInfo(this.config.commitment ?? 'confirmed');
+        return {
+          epoch: info.epoch,
+          slotIndex: info.slotIndex,
+          slotsInEpoch: info.slotsInEpoch,
+        };
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    throw new Error(
+      `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
+  }
+
+  /**
+   * Find all Stake Program accounts whose withdrawer authority is `withdrawer`
+   * (i.e. every stake position this wallet can ultimately reclaim), including
+   * accounts created outside this app.
+   *
+   * Uses getProgramAccounts with a memcmp filter at the withdrawer offset and
+   * `jsonParsed` encoding. This is a heavy call; Alchemy supports it, some
+   * public fallback RPCs may reject it — the failover loop covers that.
+   *
+   * @param withdrawer - Wallet address (base58)
+   * @returns Raw parsed program accounts (feed into parseStakeAccount)
+   * @async
+   */
+  async getParsedStakeAccountsByWithdrawer(withdrawer: string): Promise<unknown[]> {
+    const withdrawerKey = new PublicKey(withdrawer);
+    let lastError: Error | undefined;
+
+    for (const connection of this.connections) {
+      try {
+        const accounts = await connection.getParsedProgramAccounts(StakeProgram.programId, {
+          commitment: this.config.commitment ?? 'confirmed',
+          filters: [
+            {
+              memcmp: {
+                offset: STAKE_WITHDRAWER_OFFSET,
+                bytes: withdrawerKey.toBase58(),
+              },
+            },
+          ],
+        });
+        return accounts;
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    throw new Error(
+      `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
+  }
+
+  /**
+   * Get current (and delinquent) validators from getVoteAccounts, normalized
+   * to the fields staking needs. Purely on-chain — names/APY come from the
+   * Stakewiz layer and are merged in WalletAppService.
+   *
+   * @returns All vote accounts, current first, each flagged with delinquency
+   * @async
+   */
+  async getVoteAccountsSummary(): Promise<VoteAccountSummary[]> {
+    let lastError: Error | undefined;
+
+    for (const connection of this.connections) {
+      try {
+        const { current, delinquent } = await connection.getVoteAccounts(
+          this.config.commitment ?? 'confirmed'
+        );
+        const mapEntry = (v: { votePubkey: string; commission: number; activatedStake: number }, isDelinquent: boolean): VoteAccountSummary => ({
+          votePubkey: v.votePubkey,
+          commission: v.commission,
+          activatedStakeLamports: v.activatedStake,
+          delinquent: isDelinquent,
+        });
+        return [
+          ...current.map((v) => mapEntry(v, false)),
+          ...delinquent.map((v) => mapEntry(v, true)),
+        ];
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    throw new Error(
+      `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
+  }
+
+  /**
+   * Minimum lamports a stake account must hold to be rent-exempt.
+   *
+   * @param space - Account size in bytes (callers pass STAKE_ACCOUNT_SPACE)
+   * @returns Rent-exempt minimum in lamports
+   * @async
+   */
+  async getStakeRentExemptLamports(space: number): Promise<number> {
+    let lastError: Error | undefined;
+
+    for (const connection of this.connections) {
+      try {
+        return await connection.getMinimumBalanceForRentExemption(space);
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    throw new Error(
+      `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
+  }
+
+  /**
+   * Check whether an account exists at `address` (used by the stake seed
+   * scan to find a free derived address).
+   *
+   * @param address - Account address (base58)
+   * @returns True when an account with any lamports/data exists
+   * @async
+   */
+  async accountExists(address: string): Promise<boolean> {
+    const key = new PublicKey(address);
+    let lastError: Error | undefined;
+
+    for (const connection of this.connections) {
+      try {
+        const info = await connection.getAccountInfo(key, this.config.commitment ?? 'confirmed');
+        return info !== null;
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    throw new Error(
+      `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
+  }
+
+  /**
+   * Fetch the previous epoch's inflation reward for a batch of addresses.
+   * Best-effort data for display only — callers must tolerate a thrown error
+   * (fallback RPCs may not index rewards) as well as null entries.
+   *
+   * @param addresses - Stake account addresses (base58)
+   * @returns Per-address reward in lamports, null where none was paid
+   * @async
+   */
+  async getInflationRewardLamports(addresses: string[]): Promise<Array<number | null>> {
+    if (!addresses.length) return [];
+    const keys = addresses.map((a) => new PublicKey(a));
+    let lastError: Error | undefined;
+
+    for (const connection of this.connections) {
+      try {
+        const rewards = await connection.getInflationReward(keys);
+        return rewards.map((r) => (r ? r.amount : null));
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    throw new Error(
+      `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
   }
 }
 

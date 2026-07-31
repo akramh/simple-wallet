@@ -1174,6 +1174,28 @@ async function mainMenu(walletName: string | null): Promise<void> {
   ui.clearScreen();
   ui.showHeader(walletName, accountIndex, config.networks[config.network].name, currentAddress);
 
+  // Staking is gated on capability, not chain type, so new staking chains
+  // surface here automatically once WalletAppService supports them.
+  const menuChoices: Array<ReturnType<typeof ui.menuChoice> | InstanceType<typeof inquirer.Separator>> = [
+
+    ui.menuChoice('Balance', 'View balance on the active network', 'balance'),
+    ui.menuChoice('Send', 'Transfer tokens to an address', 'send'),
+    ui.menuChoice('Receive', 'Show address and QR', 'receive'),
+    ui.menuChoice('Portfolio', 'View balances across chains', 'portfolio_all'),
+    ui.menuChoice('History', 'Recent transactions', 'history'),
+  ];
+  if (walletService.isStakingSupported(config.network)) {
+    menuChoices.push(ui.menuChoice('Stake', 'Stake and manage staking positions', 'stake'));
+  }
+  menuChoices.push(
+    new inquirer.Separator(ui.menuSeparator().line),
+    ui.menuChoice('Switch Network', 'Change active blockchain', 'network'),
+    ui.menuChoice('Switch Account', 'Select a different account', 'accounts'),
+    new inquirer.Separator(ui.menuSeparator().line),
+    ui.menuChoice('Settings', 'Preferences and security', 'settings'),
+    ui.menuChoice('Exit', 'Close the wallet', 'exit')
+  );
+
   const { action } = await inquirer.prompt<{ action: string }>([
     {
       type: 'list',
@@ -1181,25 +1203,16 @@ async function mainMenu(walletName: string | null): Promise<void> {
       message: 'Select an action:',
       loop: false,
       pageSize: 25,
-      choices: [
-        ui.menuChoice('Balance', 'View balance on the active network', 'balance'),
-        ui.menuChoice('Send', 'Transfer tokens to an address', 'send'),
-        ui.menuChoice('Receive', 'Show address and QR', 'receive'),
-        ui.menuChoice('Portfolio', 'View balances across chains', 'portfolio_all'),
-        ui.menuChoice('History', 'Recent transactions', 'history'),
-        new inquirer.Separator(ui.menuSeparator().line),
-        ui.menuChoice('Switch Network', 'Change active blockchain', 'network'),
-        ui.menuChoice('Switch Account', 'Select a different account', 'accounts'),
-        new inquirer.Separator(ui.menuSeparator().line),
-        ui.menuChoice('Settings', 'Preferences and security', 'settings'),
-        ui.menuChoice('Exit', 'Close the wallet', 'exit')
-      ]
+      choices: menuChoices
     }
   ]);
 
   switch (action) {
     case 'send':
       await sendCrypto(currentWalletName);
+      break;
+    case 'stake':
+      await stakeMenu(currentWalletName);
       break;
     case 'receive':
       await showReceiveAddress(currentWalletName);
@@ -3376,6 +3389,348 @@ async function deleteCurrentWallet(currentWalletName: string | null): Promise<vo
 }
 
 // ============================================================================
+// Staking Flows
+// ============================================================================
+
+/**
+ * Round a native-unit amount for display. Core amounts are 9-decimal fixed
+ * strings; full precision makes position lines unreadable.
+ */
+function formatStakeAmount(amount: string, maxDecimals: number = 4): string {
+  const n = parseFloat(amount);
+  if (!Number.isFinite(n)) return amount;
+  if (n === 0) return '0';
+  const cutoff = 1 / 10 ** maxDecimals;
+  if (Math.abs(n) < cutoff) return `<${cutoff.toFixed(maxDecimals)}`;
+  return n.toLocaleString('en-US', { maximumFractionDigits: maxDecimals });
+}
+
+/** Colored one-word badge for a staking position's lifecycle state. */
+function formatStakeState(state: string): string {
+  switch (state) {
+    case 'active': return chalk.green(state);
+    case 'activating': return chalk.yellow(state);
+    case 'deactivating': return chalk.yellow(state);
+    case 'withdrawable': return chalk.cyan(state);
+    default: return chalk.gray(state);
+  }
+}
+
+/** Block-explorer URL for a staking transaction on the active network. */
+function stakeTxUrl(txId: string): string {
+  const netConfig = config.networks[config.network];
+  const suffix = config.network === 'solana-devnet' ? '?cluster=devnet' : '';
+  return `${netConfig.blockExplorer}/tx/${txId}${suffix}`;
+}
+
+/** Short display label for a validator: name when known, else truncated id. */
+function validatorLabel(name: string | null, id: string): string {
+  return name || ui.formatAddress(id);
+}
+
+/**
+ * Staking overview: lists the wallet's staking positions on the active
+ * network and dispatches to the stake / unstake / withdraw flows. Uses only
+ * the chain-neutral WalletAppService staking API.
+ *
+ * @param walletName - Name of the currently loaded wallet
+ */
+async function stakeMenu(walletName: string | null): Promise<void> {
+  currentWalletName = walletName;
+  const netConfig = config.networks[config.network];
+  const nativeSymbol = netConfig.nativeSymbol || 'SOL';
+
+  ui.clearScreen();
+  ui.showHeader(walletName, wallet.currentAccountIndex, netConfig.name, walletService.getAddress());
+  ui.showSection('Staking');
+
+  let positions: Awaited<ReturnType<typeof walletService.getStakePositions>> = [];
+  try {
+    ui.showLoading('Loading staking positions...');
+    positions = await walletService.getStakePositions();
+  } catch (error) {
+    ui.showError(`Couldn't load staking positions: ${(error as Error).message}`, [
+      'Check your network connection and try again'
+    ]);
+    await inquirer.prompt<{ continue: string }>([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+    if (process.env.NODE_ENV === 'test') return;
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  if (!positions.length) {
+    ui.showInfo(`No staking positions yet. Stake ${nativeSymbol} to start earning rewards.`);
+  } else {
+    for (const p of positions) {
+      const usd = typeof p.usdValue === 'number' ? `  (${ui.formatUsdPlain(p.usdValue)})` : '';
+      const reward = p.lastRewardFormatted ? `  last reward ${formatStakeAmount(p.lastRewardFormatted, 6)} ${nativeSymbol}` : '';
+      console.log(
+        `  ${chalk.white(validatorLabel(p.validator.name, p.validator.id))}  ` +
+        `${chalk.white(`${formatStakeAmount(p.totalFormatted)} ${nativeSymbol}`)}${usd}  ` +
+        `[${formatStakeState(p.state)}]${chalk.gray(reward)}`
+      );
+      const epochBits: string[] = [];
+      if (typeof p.activationEpoch === 'number') epochBits.push(`staked at epoch ${p.activationEpoch}`);
+      if (typeof p.deactivationEpoch === 'number') epochBits.push(`unstaked at epoch ${p.deactivationEpoch}`);
+      if (typeof p.currentEpoch === 'number') epochBits.push(`current epoch ${p.currentEpoch}`);
+      if (epochBits.length) console.log(chalk.gray(`    ${epochBits.join(' · ')}`));
+      console.log(chalk.gray(`    account ${p.positionId}`));
+    }
+    console.log('');
+  }
+
+  const choices: Array<ReturnType<typeof ui.menuChoice>> = [
+    ui.menuChoice(`Stake ${nativeSymbol}`, 'Delegate to a validator', 'stake_new'),
+  ];
+  positions.forEach((p, i) => {
+    const label = validatorLabel(p.validator.name, p.validator.id);
+    if (p.state === 'active' || p.state === 'activating') {
+      choices.push(ui.menuChoice(`Unstake ${formatStakeAmount(p.totalFormatted)} ${nativeSymbol}`, `From ${label}`, `unstake:${i}`));
+    } else if (p.state === 'withdrawable') {
+      choices.push(ui.menuChoice(`Withdraw ${formatStakeAmount(p.totalFormatted)} ${nativeSymbol}`, `From ${label}`, `withdraw:${i}`));
+    }
+  });
+  choices.push(ui.menuChoice('Back', 'Return to the main menu', 'back'));
+
+  const { action } = await inquirer.prompt<{ action: string }>([
+    { type: 'list', name: 'action', message: 'Select an action:', loop: false, pageSize: 25, choices }
+  ]);
+
+  if (action === 'stake_new') {
+    await stakeNewFlow();
+  } else if (action.startsWith('unstake:')) {
+    await unstakeFlow(positions[Number(action.split(':')[1])]);
+  } else if (action.startsWith('withdraw:')) {
+    await withdrawStakeFlow(positions[Number(action.split(':')[1])]);
+  } else {
+    if (process.env.NODE_ENV === 'test') return;
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  if (process.env.NODE_ENV === 'test') return;
+  await stakeMenu(currentWalletName);
+}
+
+/**
+ * Stake flow: pick a validator (curated list or manual vote address), enter
+ * an amount, confirm with fee/USD context, sign and broadcast.
+ */
+async function stakeNewFlow(): Promise<void> {
+  const netConfig = config.networks[config.network];
+  const nativeSymbol = netConfig.nativeSymbol || 'SOL';
+  const caps = walletService.getStakingCapabilities();
+
+  let validators: Awaited<ReturnType<typeof walletService.getStakeValidators>> = [];
+  try {
+    ui.showLoading('Loading validators...');
+    validators = await walletService.getStakeValidators();
+  } catch (error) {
+    // Validator discovery failing shouldn't dead-end the flow — manual vote
+    // address entry still works.
+    ui.showWarning(`Couldn't load the validator list: ${(error as Error).message}`);
+  }
+
+  const validatorChoices = [
+    ...validators.map((v) => {
+      const apy = v.apyPercent !== null ? `${v.apyPercent.toFixed(1)}% APY` : 'APY n/a';
+      const commission = v.commissionPercent !== null ? `${v.commissionPercent}% fee` : '';
+      return {
+        name: `${validatorLabel(v.name, v.id)}  ${chalk.gray(`${apy}  ${commission}`)}`,
+        value: v.id
+      };
+    }),
+    { name: 'Enter a vote address manually', value: '__manual__' },
+    { name: 'Cancel', value: '' }
+  ];
+
+  let { votePubkey } = await inquirer.prompt<{ votePubkey: string }>([
+    { type: 'list', name: 'votePubkey', message: 'Choose a validator:', loop: false, pageSize: 20, choices: validatorChoices }
+  ]);
+
+  if (votePubkey === '__manual__') {
+    const manual = await inquirer.prompt<{ manualVote?: string }>([
+      {
+        type: 'input',
+        name: 'manualVote',
+        message: 'Validator vote address (or leave empty to cancel):',
+        validate: (input: string) => {
+          if (!input || input.trim() === '') return true;
+          if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input.trim())) {
+            return 'Please enter a valid vote address (base58)';
+          }
+          return true;
+        }
+      }
+    ]);
+    votePubkey = manual.manualVote?.trim() || '';
+  }
+
+  if (!votePubkey) {
+    ui.showWarning('Staking cancelled');
+    return;
+  }
+
+  const minStake = caps.minStakeFormatted ?? '0';
+  const { amount } = await inquirer.prompt<{ amount?: string }>([
+    {
+      type: 'input',
+      name: 'amount',
+      message: `Amount to stake (in ${nativeSymbol}, min ${minStake}):`,
+      validate: (input: string) => {
+        if (!input || input.trim() === '') return true;
+        if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
+        const num = parseFloat(input);
+        if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
+        if (num < parseFloat(minStake)) return `Minimum stake is ${minStake} ${nativeSymbol}`;
+        return true;
+      }
+    }
+  ]);
+
+  if (!amount || amount.trim() === '') {
+    ui.showWarning('Staking cancelled');
+    return;
+  }
+
+  let feeNative = '0.000005';
+  try {
+    feeNative = await walletService.estimateStakeFee();
+  } catch {
+    // Best-effort — the confirm screen shows the base-fee fallback.
+  }
+
+  let solPrice: number | null = null;
+  try {
+    solPrice = await getSolanaPrice();
+  } catch {
+    solPrice = null;
+  }
+  const { amountUsd, gasCostUsd, totalUsd } = calculateTransactionCosts(amount.trim(), solPrice, feeNative, solPrice);
+
+  const selected = validators.find((v) => v.id === votePubkey);
+  ui.showTransactionConfirmation({
+    tokenSymbol: nativeSymbol,
+    amount: amount.trim(),
+    recipient: selected ? `${validatorLabel(selected.name, selected.id)} (${selected.id})` : votePubkey,
+    networkName: netConfig.name || config.network,
+    amountUsd,
+    gasCostNative: feeNative,
+    nativeSymbol,
+    gasCostUsd,
+    totalUsd,
+    gasEstimateFailed: false
+  });
+  ui.showInfo(caps.activationNote);
+  console.log('');
+
+  const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+    { type: 'confirm', name: 'confirm', message: 'Confirm & Stake?', default: false }
+  ]);
+  if (!confirm) {
+    ui.showWarning('Staking cancelled');
+    return;
+  }
+
+  try {
+    ui.showLoading('Broadcasting stake transaction...');
+    const password = await ensureMasterPassword();
+    const result = await walletService.stake(votePubkey, amount.trim(), password);
+
+    ui.showSuccess('Stake transaction broadcasted (pending confirmation)');
+    console.log('');
+    console.log(chalk.gray('Signature:     ') + chalk.magenta(result.txId));
+    if (result.positionId) {
+      console.log(chalk.gray('Stake account: ') + chalk.white(result.positionId));
+    }
+    console.log(chalk.gray('Fee:           ') + chalk.white(`${result.feeFormatted} ${nativeSymbol}`));
+    console.log(chalk.gray('View:          ') + chalk.cyan(stakeTxUrl(result.txId)));
+    console.log('');
+  } catch (error) {
+    ui.showError(`Staking failed: ${(error as Error).message}`);
+  }
+
+  await inquirer.prompt<{ continue: string }>([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+}
+
+/**
+ * Unstake flow: confirm and begin deactivation for a position.
+ *
+ * @param position - The position selected in the staking overview
+ */
+async function unstakeFlow(position: { positionId: string; totalFormatted: string; validator: { name: string | null; id: string } }): Promise<void> {
+  const nativeSymbol = config.networks[config.network].nativeSymbol || 'SOL';
+  const caps = walletService.getStakingCapabilities();
+
+  ui.showInfo(caps.deactivationNote);
+  const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: `Unstake ${position.totalFormatted} ${nativeSymbol} from ${validatorLabel(position.validator.name, position.validator.id)}?`,
+      default: false
+    }
+  ]);
+  if (!confirm) {
+    ui.showWarning('Unstake cancelled');
+    return;
+  }
+
+  try {
+    ui.showLoading('Broadcasting unstake transaction...');
+    const password = await ensureMasterPassword();
+    const result = await walletService.unstake(position.positionId, password);
+    ui.showSuccess('Unstake transaction broadcasted');
+    console.log('');
+    console.log(chalk.gray('Signature: ') + chalk.magenta(result.txId));
+    console.log(chalk.gray('View:      ') + chalk.cyan(stakeTxUrl(result.txId)));
+    console.log('');
+  } catch (error) {
+    ui.showError(`Unstake failed: ${(error as Error).message}`);
+  }
+
+  await inquirer.prompt<{ continue: string }>([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+}
+
+/**
+ * Withdraw flow: confirm and withdraw a fully deactivated position back to
+ * the wallet (full balance including the rent reserve).
+ *
+ * @param position - The position selected in the staking overview
+ */
+async function withdrawStakeFlow(position: { positionId: string; totalFormatted: string; validator: { name: string | null; id: string } }): Promise<void> {
+  const nativeSymbol = config.networks[config.network].nativeSymbol || 'SOL';
+
+  const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: `Withdraw ${position.totalFormatted} ${nativeSymbol} back to your wallet?`,
+      default: false
+    }
+  ]);
+  if (!confirm) {
+    ui.showWarning('Withdraw cancelled');
+    return;
+  }
+
+  try {
+    ui.showLoading('Broadcasting withdraw transaction...');
+    const password = await ensureMasterPassword();
+    const result = await walletService.withdrawStake(position.positionId, password);
+    ui.showSuccess('Withdraw transaction broadcasted');
+    console.log('');
+    console.log(chalk.gray('Signature: ') + chalk.magenta(result.txId));
+    console.log(chalk.gray('View:      ') + chalk.cyan(stakeTxUrl(result.txId)));
+    console.log('');
+  } catch (error) {
+    ui.showError(`Withdraw failed: ${(error as Error).message}`);
+  }
+
+  await inquirer.prompt<{ continue: string }>([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+}
+
+// ============================================================================
 // CLI Execution
 // ============================================================================
 
@@ -3405,5 +3760,6 @@ export {
   showReceiveAddress,
   changeNetwork,
   manageTokens,
-  checkPortfolioAllNetworks
+  checkPortfolioAllNetworks,
+  stakeMenu
 };
