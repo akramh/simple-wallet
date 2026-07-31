@@ -3392,6 +3392,19 @@ async function deleteCurrentWallet(currentWalletName: string | null): Promise<vo
 // Staking Flows
 // ============================================================================
 
+/**
+ * Round a native-unit amount for display. Core amounts are 9-decimal fixed
+ * strings; full precision makes position lines unreadable.
+ */
+function formatStakeAmount(amount: string, maxDecimals: number = 4): string {
+  const n = parseFloat(amount);
+  if (!Number.isFinite(n)) return amount;
+  if (n === 0) return '0';
+  const cutoff = 1 / 10 ** maxDecimals;
+  if (Math.abs(n) < cutoff) return `<${cutoff.toFixed(maxDecimals)}`;
+  return n.toLocaleString('en-US', { maximumFractionDigits: maxDecimals });
+}
+
 /** Colored one-word badge for a staking position's lifecycle state. */
 function formatStakeState(state: string): string {
   switch (state) {
@@ -3450,10 +3463,10 @@ async function stakeMenu(walletName: string | null): Promise<void> {
   } else {
     for (const p of positions) {
       const usd = typeof p.usdValue === 'number' ? `  (${ui.formatUsdPlain(p.usdValue)})` : '';
-      const reward = p.lastRewardFormatted ? `  last reward ${p.lastRewardFormatted} ${nativeSymbol}` : '';
+      const reward = p.lastRewardFormatted ? `  last reward ${formatStakeAmount(p.lastRewardFormatted, 6)} ${nativeSymbol}` : '';
       console.log(
         `  ${chalk.white(validatorLabel(p.validator.name, p.validator.id))}  ` +
-        `${chalk.white(`${p.totalFormatted} ${nativeSymbol}`)}${usd}  ` +
+        `${chalk.white(`${formatStakeAmount(p.totalFormatted)} ${nativeSymbol}`)}${usd}  ` +
         `[${formatStakeState(p.state)}]${chalk.gray(reward)}`
       );
       const epochBits: string[] = [];
@@ -3472,9 +3485,9 @@ async function stakeMenu(walletName: string | null): Promise<void> {
   positions.forEach((p, i) => {
     const label = validatorLabel(p.validator.name, p.validator.id);
     if (p.state === 'active' || p.state === 'activating') {
-      choices.push(ui.menuChoice(`Unstake ${p.totalFormatted} ${nativeSymbol}`, `From ${label}`, `unstake:${i}`));
+      choices.push(ui.menuChoice(`Unstake ${formatStakeAmount(p.totalFormatted)} ${nativeSymbol}`, `From ${label}`, `unstake:${i}`));
     } else if (p.state === 'withdrawable') {
-      choices.push(ui.menuChoice(`Withdraw ${p.totalFormatted} ${nativeSymbol}`, `From ${label}`, `withdraw:${i}`));
+      choices.push(ui.menuChoice(`Withdraw ${formatStakeAmount(p.totalFormatted)} ${nativeSymbol}`, `From ${label}`, `withdraw:${i}`));
     }
   });
   choices.push(ui.menuChoice('Back', 'Return to the main menu', 'back'));

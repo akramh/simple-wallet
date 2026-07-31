@@ -86,6 +86,21 @@ function trimAmount(amount: string): string {
   return amount.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
 
+/**
+ * Round a native-unit amount for display. Core amounts arrive as 9-decimal
+ * fixed strings; showing them raw is what made the cards feel cramped.
+ * Values smaller than the cutoff render as "<0.0001"-style so dust never
+ * shows as a bare 0.
+ */
+function formatAmountDisplay(amount: string, maxDecimals: number = 4): string {
+  const n = parseFloat(amount);
+  if (!Number.isFinite(n)) return trimAmount(amount);
+  if (n === 0) return '0';
+  const cutoff = 1 / 10 ** maxDecimals;
+  if (Math.abs(n) < cutoff) return `<${cutoff.toFixed(maxDecimals)}`;
+  return n.toLocaleString('en-US', { maximumFractionDigits: maxDecimals });
+}
+
 /** One label/value line inside a position card. */
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -168,7 +183,7 @@ function PositionCard({
       {/* Hero amount */}
       <div style={{ marginTop: 10, marginBottom: 10 }}>
         <div style={{ fontSize: 20, fontWeight: 700 }}>
-          {trimAmount(p.totalFormatted)} {nativeSymbol}
+          {formatAmountDisplay(p.totalFormatted)} {nativeSymbol}
         </div>
         {usd && <div style={{ opacity: 0.6, fontSize: 12, marginTop: 2 }}>{usd}</div>}
       </div>
@@ -197,7 +212,7 @@ function PositionCard({
           <DetailRow label="Current epoch" value={p.currentEpoch} />
         )}
         {p.reserveFormatted && (
-          <DetailRow label="Rent reserve" value={`${trimAmount(p.reserveFormatted)} ${nativeSymbol}`} />
+          <DetailRow label="Rent reserve" value={`${formatAmountDisplay(p.reserveFormatted, 6)} ${nativeSymbol}`} />
         )}
         {p.validator.apyPercent !== null && (
           <DetailRow label="APY" value={`${p.validator.apyPercent.toFixed(1)}%`} />
@@ -206,7 +221,7 @@ function PositionCard({
           <DetailRow label="Commission" value={`${p.validator.commissionPercent}%`} />
         )}
         {p.lastRewardFormatted && (
-          <DetailRow label="Last reward" value={`+${trimAmount(p.lastRewardFormatted)} ${nativeSymbol}`} />
+          <DetailRow label="Last reward" value={`+${formatAmountDisplay(p.lastRewardFormatted, 6)} ${nativeSymbol}`} />
         )}
         <DetailRow label="Stake account" value={`${p.positionId.slice(0, 6)}…${p.positionId.slice(-6)}`} />
       </div>
@@ -289,9 +304,9 @@ function StakingView({ network, networks, onBack }: Props) {
 
   const runAction = async (type: 'UNSTAKE' | 'WITHDRAW_STAKE', position: StakePositionViewData) => {
     const confirmText = type === 'UNSTAKE'
-      ? `Unstake ${trimAmount(position.totalFormatted)} ${nativeSymbol} from ${validatorLabel(position.validator)}?` +
+      ? `Unstake ${formatAmountDisplay(position.totalFormatted)} ${nativeSymbol} from ${validatorLabel(position.validator)}?` +
         (capabilities ? `\n\n${capabilities.deactivationNote}` : '')
-      : `Withdraw ${trimAmount(position.totalFormatted)} ${nativeSymbol} back to your wallet?`;
+      : `Withdraw ${formatAmountDisplay(position.totalFormatted)} ${nativeSymbol} back to your wallet?`;
     if (!window.confirm(confirmText)) return;
 
     setActingOn(position.positionId);
