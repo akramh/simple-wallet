@@ -31,6 +31,8 @@ import {
   GasEstimate,
   NetworkConfig,
   SendTransactionResult,
+  StakePositionView,
+  StakeActionResult,
 } from '../services';
 import { batchUpdates } from '../utils';
 import { isNetworkCompatible } from '../utils/networkCompatibility';
@@ -160,6 +162,10 @@ const getLockedState = () => ({
   formattedTotal: '$0.00',
   accounts: [],
   currentAccountIndex: 0,
+  // Staking positions are wallet-derived data — locking must clear them.
+  stakePositions: [],
+  isLoadingStakePositions: false,
+  stakePositionsLastUpdated: null,
 });
 
 // ============================================================================
@@ -220,6 +226,11 @@ interface WalletStore {
   isLoadingTransactions: boolean;
   transactionFilter: 'all' | 'sent' | 'received';
   transactionsLastUpdated: number | null;
+
+  // Staking (chain-neutral; per-network — reset on network/account/wallet switch)
+  stakePositions: StakePositionView[];
+  isLoadingStakePositions: boolean;
+  stakePositionsLastUpdated: number | null;
 
   // Networks
   networks: Record<string, NetworkConfig>;
@@ -333,6 +344,20 @@ interface WalletStore {
   setTransactionFilter: (filter: 'all' | 'sent' | 'received') => void;
   /** Get the current transaction list after applying the active filter. */
   getFilteredTransactions: () => Transaction[];
+
+  // Staking actions
+  /**
+   * Fetch staking positions for the active network.
+   *
+   * @param options.silent - When true, does not set isLoadingStakePositions
+   */
+  loadStakePositions: (options?: { silent?: boolean }) => Promise<void>;
+  /** Stake with a validator; schedules balance/position refreshes on success. */
+  stake: (validatorId: string, amount: string) => Promise<StakeActionResult>;
+  /** Begin unstaking a position (cooldown starts). */
+  unstake: (positionId: string) => Promise<StakeActionResult>;
+  /** Withdraw a fully deactivated position back to the wallet. */
+  withdrawStake: (positionId: string) => Promise<StakeActionResult>;
   
   clearError: () => void;
 }
@@ -384,6 +409,10 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   isLoadingTransactions: false,
   transactionFilter: 'all',
   transactionsLastUpdated: null,
+
+  stakePositions: [],
+  isLoadingStakePositions: false,
+  stakePositionsLastUpdated: null,
 
   networks: {},
   enabledNetworks: [],
@@ -992,6 +1021,9 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         formattedTotal: cachedPrices?.formattedTotal ?? '$0.00',
         transactions: [],
         transactionsLastUpdated: null,
+        // Positions are per-network; never show another chain's stake data.
+        stakePositions: [],
+        stakePositionsLastUpdated: null,
         ...(recentsChanged ? { recentNetworks: nextRecents } : {}),
       });
 
@@ -1083,6 +1115,73 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         isLoadingTransactions: false,
         error: error instanceof Error ? error.message : 'Failed to load transactions',
       });
+    }
+  },
+
+  // ============================================================================
+  // Staking
+  // ============================================================================
+
+  loadStakePositions: async (options?: { silent?: boolean }) => {
+    if (!get().isUnlocked) return;
+    const silent = options?.silent ?? false;
+
+    try {
+      if (!silent) set({ isLoadingStakePositions: true });
+
+      const stakePositions = await walletBridge.getStakePositions();
+
+      batchUpdates(() =>
+        set({
+          stakePositions,
+          isLoadingStakePositions: false,
+          stakePositionsLastUpdated: Date.now(),
+        }),
+      );
+    } catch (error) {
+      console.error('[WalletStore] Load stake positions failed:', error);
+      set({ isLoadingStakePositions: false });
+    }
+  },
+
+  stake: async (validatorId: string, amount: string) => {
+    try {
+      const result = await walletBridge.stake(validatorId, amount);
+
+      // Balance drops immediately; the new position appears as 'activating'.
+      setTimeout(() => get().refreshBalances({ silent: true, force: true }), 2000);
+      setTimeout(() => get().loadStakePositions({ silent: true }), 4000);
+
+      return result;
+    } catch (error) {
+      console.error('[WalletStore] Stake failed:', error);
+      set({ error: error instanceof Error ? error.message : 'Stake failed' });
+      throw error;
+    }
+  },
+
+  unstake: async (positionId: string) => {
+    try {
+      const result = await walletBridge.unstake(positionId);
+      setTimeout(() => get().loadStakePositions({ silent: true }), 4000);
+      return result;
+    } catch (error) {
+      console.error('[WalletStore] Unstake failed:', error);
+      set({ error: error instanceof Error ? error.message : 'Unstake failed' });
+      throw error;
+    }
+  },
+
+  withdrawStake: async (positionId: string) => {
+    try {
+      const result = await walletBridge.withdrawStake(positionId);
+      setTimeout(() => get().refreshBalances({ silent: true, force: true }), 2000);
+      setTimeout(() => get().loadStakePositions({ silent: true }), 4000);
+      return result;
+    } catch (error) {
+      console.error('[WalletStore] Withdraw stake failed:', error);
+      set({ error: error instanceof Error ? error.message : 'Withdraw failed' });
+      throw error;
     }
   },
 
@@ -1179,6 +1278,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         formattedTotal: cachedPrices?.formattedTotal ?? '$0.00',
         transactions: [],
         transactionsLastUpdated: null,
+        stakePositions: [],
+        stakePositionsLastUpdated: null,
       });
 
       // Refresh data (don't await - can run in background, silently)
@@ -1291,6 +1392,8 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         formattedTotal: cachedPrices?.formattedTotal ?? '$0.00',
         transactions: [],
         transactionsLastUpdated: null,
+        stakePositions: [],
+        stakePositionsLastUpdated: null,
       });
 
       // Refresh balances and transactions for new account (silent background refresh)

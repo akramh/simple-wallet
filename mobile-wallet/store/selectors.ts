@@ -382,6 +382,27 @@ export const useSendScreenSelector = () =>
   );
 
 /**
+ * Staking screen selector — positions, loading state, and the chain-neutral
+ * staking actions. Amount/validator wizard state stays local to the screen.
+ */
+export const useStakingScreenSelector = () =>
+  useWalletStore(
+    useShallow((state) => ({
+      isUnlocked: state.isUnlocked,
+      network: state.network,
+      networks: state.networks,
+      balances: state.balances,
+      stakePositions: state.stakePositions,
+      isLoadingStakePositions: state.isLoadingStakePositions,
+      stakePositionsLastUpdated: state.stakePositionsLastUpdated,
+      loadStakePositions: state.loadStakePositions,
+      stake: state.stake,
+      unstake: state.unstake,
+      withdrawStake: state.withdrawStake,
+    }))
+  );
+
+/**
  * Unlock screen selector - subscribes to auth state
  */
 export const useUnlockScreenSelector = () =>
