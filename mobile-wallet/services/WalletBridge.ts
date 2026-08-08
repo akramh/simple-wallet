@@ -30,6 +30,12 @@ import { mobileStorage, MobileStorageAdapter } from "./MobileStorageAdapter";
 import { mobileCrypto, MobileCryptoAdapter } from "./MobileCryptoAdapter";
 import { cacheService } from "./CacheService";
 import type { Token } from "@wallet/types/token";
+import type {
+  StakePositionView,
+  ValidatorSummary,
+  StakingCapabilities,
+  StakeActionResult,
+} from "@wallet/types/staking";
 import { installConsoleRedactor } from "@wallet/utils/redact-logs";
 import { setRuntimeAlchemyKey } from "../config/bundled-config";
 import {
@@ -1113,6 +1119,161 @@ class WalletBridge {
       status: "confirmed",
       blockNumber: result.blockNumber,
     };
+  }
+
+  // ============================================================================
+  // Staking (chain-neutral passthrough to WalletAppService)
+  // ============================================================================
+  //
+  // The UI never sees or supplies a password for staking — signing methods
+  // inject the in-memory session password exactly like sendTransaction does.
+
+  /**
+   * Whether staking is available on a network. Returns false (never throws)
+   * when the wallet is locked so screens can render a disabled affordance.
+   *
+   * @param networkKey - Network to check; defaults to the active network.
+   */
+  isStakingSupported(networkKey?: string): boolean {
+    if (!this._isUnlocked || !this.service) {
+      return false;
+    }
+    try {
+      return this.service.isStakingSupported(networkKey);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Chain-specific staking semantics (min stake, activation copy) for UI.
+   *
+   * @param networkKey - Network to describe; defaults to the active network.
+   * @throws If wallet is locked or staking is unsupported on the network.
+   */
+  getStakingCapabilities(networkKey?: string): StakingCapabilities {
+    this.requireUnlocked();
+    return this.service.getStakingCapabilities(networkKey);
+  }
+
+  /**
+   * List the wallet's staking positions on the active (or given) network.
+   * Unlike getTransactions, failures RETHROW: the staking screen must be
+   * able to distinguish "no positions" from "couldn't load positions" —
+   * the store catches and surfaces the error state.
+   *
+   * @param networkKey - Network to query; defaults to the active network.
+   * @throws If wallet is locked or the positions fetch fails.
+   * @async
+   */
+  async getStakePositions(networkKey?: string): Promise<StakePositionView[]> {
+    this.requireUnlocked();
+    this.resetAutoLockTimer();
+    try {
+      return await this.service.getStakePositions(networkKey);
+    } catch (error) {
+      console.error("[WalletBridge] Failed to fetch stake positions:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * List validators available to stake with, best first. Returns an empty
+   * array on fetch errors — the stake screen offers manual entry regardless.
+   *
+   * @param networkKey - Network to query; defaults to the active network.
+   * @throws If wallet is locked.
+   * @async
+   */
+  async getStakeValidators(networkKey?: string): Promise<ValidatorSummary[]> {
+    this.requireUnlocked();
+    this.resetAutoLockTimer();
+    try {
+      return await this.service.getStakeValidators(networkKey);
+    } catch (error) {
+      console.error("[WalletBridge] Failed to fetch validators:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Estimate the network fee for a staking action (formatted, native units).
+   * Best-effort — falls back to the protocol base fee on failure.
+   *
+   * @param networkKey - Network to estimate on; defaults to the active network.
+   * @throws If wallet is locked.
+   * @async
+   */
+  async estimateStakeFee(networkKey?: string): Promise<string> {
+    this.requireUnlocked();
+    try {
+      return await this.service.estimateStakeFee(networkKey);
+    } catch (error) {
+      console.error("[WalletBridge] Stake fee estimate failed:", error);
+      return "0.000005";
+    }
+  }
+
+  /**
+   * Stake native tokens with a validator. Signs with the session password.
+   *
+   * @param validatorId - Opaque validator id (Solana: vote-account pubkey).
+   * @param amount - Amount in native display units.
+   * @param networkKey - Target network; defaults to the active network.
+   * @throws If wallet is locked or the SDK rejects the stake.
+   * @async
+   */
+  async stake(
+    validatorId: string,
+    amount: string,
+    networkKey?: string,
+  ): Promise<StakeActionResult> {
+    this.requireUnlocked();
+    this.resetAutoLockTimer();
+    return this.service.stake(
+      validatorId,
+      amount,
+      this.sessionPassword!,
+      networkKey,
+    );
+  }
+
+  /**
+   * Begin unstaking a position (starts the cooldown).
+   *
+   * @param positionId - Opaque position id (Solana: stake-account address).
+   * @param networkKey - Target network; defaults to the active network.
+   * @throws If wallet is locked or the SDK rejects the action.
+   * @async
+   */
+  async unstake(
+    positionId: string,
+    networkKey?: string,
+  ): Promise<StakeActionResult> {
+    this.requireUnlocked();
+    this.resetAutoLockTimer();
+    return this.service.unstake(positionId, this.sessionPassword!, networkKey);
+  }
+
+  /**
+   * Withdraw a fully deactivated position back to the wallet (full balance).
+   *
+   * @param positionId - Opaque position id (Solana: stake-account address).
+   * @param networkKey - Target network; defaults to the active network.
+   * @throws If wallet is locked or the SDK rejects the action.
+   * @async
+   */
+  async withdrawStake(
+    positionId: string,
+    networkKey?: string,
+  ): Promise<StakeActionResult> {
+    this.requireUnlocked();
+    this.resetAutoLockTimer();
+    return this.service.withdrawStake(
+      positionId,
+      this.sessionPassword!,
+      networkKey,
+    );
   }
 
   /**

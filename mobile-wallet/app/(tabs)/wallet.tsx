@@ -27,6 +27,7 @@ import {
   useWalletHeaderController,
 } from '../../components';
 import type { TokenBalance } from '../../services';
+import { walletBridge } from '../../services';
 
 export default function WalletScreen() {
   const router = useRouter();
@@ -199,6 +200,15 @@ export default function WalletScreen() {
                 label="Receive"
                 onPress={() => navigateOnce(() => router.push('/receive'))}
               />
+              {/* Capability-gated, not chain-gated: new staking chains light
+                  up here without screen changes. */}
+              {walletBridge.isStakingSupported(network) && (
+                <QuickActionButton
+                  icon="layers"
+                  label="Stake"
+                  onPress={() => navigateOnce(() => router.push('/stake'))}
+                />
+              )}
               <QuickActionButton
                 icon="swap-horizontal"
                 label="Swap"

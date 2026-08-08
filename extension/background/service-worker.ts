@@ -21,7 +21,7 @@
  * - SWITCH_WALLET, SWITCH_ACCOUNT, SWITCH_NETWORK
  * - GET_NETWORKS, GET_SHOW_TESTNETS, SET_SHOW_TESTNETS
  * - GET_STAKE_POSITIONS, GET_STAKE_VALIDATORS, GET_STAKING_CAPABILITIES
- * - STAKE, UNSTAKE, WITHDRAW_STAKE (chain-neutral; payload carries networkKey)
+ * - ESTIMATE_STAKE_FEE, STAKE, UNSTAKE, WITHDRAW_STAKE (chain-neutral; payload carries networkKey)
  * - ETH_ACCOUNTS, ETH_REQUEST_ACCOUNTS, ETH_SEND_TRANSACTION
  * - PERSONAL_SIGN, ETH_SIGN_TYPED_DATA_V4, PERSONAL_EC_RECOVER
  * - GET_SECRET_PHRASE, GET_PRIVATE_KEY, CHANGE_PASSWORD
@@ -3193,6 +3193,14 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       if (!walletService) throw new Error('Wallet not initialized');
       const capabilities = walletService.getStakingCapabilities(payload?.networkKey);
       return { capabilities };
+    }
+
+    case 'ESTIMATE_STAKE_FEE': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      if (!walletService) throw new Error('Wallet not initialized');
+      resetAutoLockTimer();
+      const fee = await walletService.estimateStakeFee(payload?.networkKey);
+      return { fee };
     }
 
     case 'STAKE':

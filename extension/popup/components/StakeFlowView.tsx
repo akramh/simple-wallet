@@ -59,6 +59,7 @@ function StakeFlowView({ network, networks, capabilities, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ txId: string; positionId?: string } | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [feeEstimate, setFeeEstimate] = useState<string | null>(null);
 
   const nativeSymbol = networks[network]?.nativeSymbol || 'SOL';
   const minStake = capabilities?.minStakeFormatted ?? '0';
@@ -82,6 +83,21 @@ function StakeFlowView({ network, networks, capabilities, onClose }: Props) {
     })();
     return () => { cancelled = true; };
   }, [network]);
+
+  // Best-effort fee for the confirm step — parity with CLI/mobile. Null
+  // renders as a pending ellipsis; staking never blocks on the estimate.
+  useEffect(() => {
+    if (step !== 'confirm') return;
+    let cancelled = false;
+    setFeeEstimate(null);
+    sendMessageWithRetry<{ fee?: string; error?: string }>({
+      type: 'ESTIMATE_STAKE_FEE',
+      payload: { networkKey: network },
+    })
+      .then((resp) => { if (!cancelled && resp?.fee) setFeeEstimate(resp.fee); })
+      .catch(() => { /* leave the pending ellipsis */ });
+    return () => { cancelled = true; };
+  }, [step, network]);
 
   const filteredValidators = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -285,6 +301,12 @@ function StakeFlowView({ network, networks, capabilities, onClose }: Props) {
                   </div>
                   <div className="tx-row-secondary">
                     <span className="tx-address">{selected.id}</span>
+                  </div>
+                  <div className="tx-row-secondary">
+                    <span className="tx-address">Network fee</span>
+                    <span className="tx-time">
+                      {feeEstimate ? `${feeEstimate} ${nativeSymbol}` : '…'}
+                    </span>
                   </div>
                 </div>
               </div>

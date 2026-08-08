@@ -51,6 +51,24 @@ jest.mock('../services', () => {
     addCustomToken: jest.fn(async () => {}),
     toggleTokenVisibility: jest.fn(async () => {}),
     setAutoLockTimeout: jest.fn(() => {}),
+    // Staking
+    getStakePositions: jest.fn(async () => [
+      {
+        networkKey: 'solana-mainnet',
+        chain: 'solana',
+        positionId: 'StakeAccount111',
+        validator: { id: 'Vote111', name: 'Validator A', commissionPercent: 5, apyPercent: 7, activatedStakeFormatted: null, delinquent: false },
+        amountFormatted: '1.5',
+        amountBaseUnits: '1500000000',
+        totalFormatted: '1.502282880',
+        state: 'active',
+      },
+    ]),
+    stake: jest.fn(async () => ({ txId: 'stake_sig', positionId: 'StakeAccount111', feeFormatted: '0.000005' })),
+    unstake: jest.fn(async () => ({ txId: 'unstake_sig', feeFormatted: '0.000005' })),
+    withdrawStake: jest.fn(async () => ({ txId: 'withdraw_sig', feeFormatted: '0.000005' })),
+    isStakingSupported: jest.fn(() => true),
+    getStakingCapabilities: jest.fn(() => ({ canStake: true, canUnstake: true, canWithdraw: true, activationNote: '', deactivationNote: '' })),
   };
 
   return {
@@ -88,6 +106,10 @@ describe('useWalletStore invariants', () => {
       isLoadingTransactions: false,
       transactionFilter: 'all',
       transactionsLastUpdated: null,
+      stakePositions: [],
+      isLoadingStakePositions: false,
+      stakePositionsLastUpdated: null,
+      stakePositionsError: null,
       networks: {},
       error: null,
     } as any);
@@ -148,6 +170,72 @@ describe('useWalletStore invariants', () => {
     expect(s.totalValue).toBe(0);
     expect(s.accounts).toEqual([]);
     expect(s.currentAccountIndex).toBe(0);
+  });
+
+  test('lock clears staking positions (wallet-derived state must not survive a lock)', async () => {
+    useWalletStore.setState({
+      isUnlocked: true,
+      stakePositions: [{ positionId: 'StakeAccount111', state: 'active' }],
+      stakePositionsLastUpdated: Date.now(),
+    } as any);
+
+    await useWalletStore.getState().lock();
+    const s = useWalletStore.getState();
+    expect(s.stakePositions).toEqual([]);
+    expect(s.stakePositionsLastUpdated).toBeNull();
+  });
+
+  test('switchNetwork resets staking positions (per-network data)', async () => {
+    useWalletStore.setState({
+      isUnlocked: true,
+      networks: { sepolia: { name: 'Sepolia' }, 'solana-mainnet': { name: 'Solana', type: 'solana' } },
+      stakePositions: [{ positionId: 'StakeAccount111', state: 'active' }],
+      stakePositionsLastUpdated: Date.now(),
+    } as any);
+
+    await useWalletStore.getState().switchNetwork('sepolia');
+    const s = useWalletStore.getState();
+    expect(s.stakePositions).toEqual([]);
+    expect(s.stakePositionsLastUpdated).toBeNull();
+  });
+
+  test('loadStakePositions populates positions from the bridge', async () => {
+    useWalletStore.setState({ isUnlocked: true } as any);
+
+    await useWalletStore.getState().loadStakePositions();
+    const s = useWalletStore.getState();
+    expect(s.stakePositions).toHaveLength(1);
+    expect(s.stakePositions[0].positionId).toBe('StakeAccount111');
+    expect(s.isLoadingStakePositions).toBe(false);
+    expect(s.stakePositionsLastUpdated).not.toBeNull();
+  });
+
+  test('loadStakePositions failure sets stakePositionsError and keeps stale positions', async () => {
+    const { walletBridge } = require('../services');
+    walletBridge.getStakePositions.mockRejectedValueOnce(new Error('rpc down'));
+    useWalletStore.setState({
+      isUnlocked: true,
+      stakePositions: [{ positionId: 'StakeAccount111', state: 'active' }],
+    } as any);
+
+    await useWalletStore.getState().loadStakePositions();
+    const s = useWalletStore.getState();
+    expect(s.stakePositionsError).toBe('rpc down');
+    expect(s.stakePositions).toHaveLength(1);
+    expect(s.isLoadingStakePositions).toBe(false);
+
+    // A subsequent successful load clears the error.
+    await useWalletStore.getState().loadStakePositions();
+    expect(useWalletStore.getState().stakePositionsError).toBeNull();
+  });
+
+  test('loadStakePositions is a no-op when locked', async () => {
+    const { walletBridge } = require('../services');
+    walletBridge.getStakePositions.mockClear();
+    useWalletStore.setState({ isUnlocked: false } as any);
+
+    await useWalletStore.getState().loadStakePositions();
+    expect(walletBridge.getStakePositions).not.toHaveBeenCalled();
   });
 
   test('clearError resets error state', () => {
@@ -449,6 +537,10 @@ describe('useWalletStore importType state', () => {
       isLoadingTransactions: false,
       transactionFilter: 'all',
       transactionsLastUpdated: null,
+      stakePositions: [],
+      isLoadingStakePositions: false,
+      stakePositionsLastUpdated: null,
+      stakePositionsError: null,
       networks: {},
       error: null,
     } as any);

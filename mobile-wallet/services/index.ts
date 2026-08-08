@@ -26,6 +26,15 @@ export type {
   Config,
 } from './WalletBridge';
 
+// Chain-neutral staking types (shared with CLI + extension)
+export type {
+  StakePositionView,
+  ValidatorSummary,
+  StakingCapabilities,
+  StakeActionResult,
+  StakePositionState,
+} from '@wallet/types/staking';
+
 // Price history service for token detail charts
 export {
   getPriceHistory,
