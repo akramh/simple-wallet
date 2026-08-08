@@ -48,6 +48,7 @@
     "url": "https://github.com/akramh/simple-wallet/issues"
   },
   "dependencies": {
+    "@mayanfinance/swap-sdk": "^15.2.0",
     "@noble/secp256k1": "^3.0.0",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.4",

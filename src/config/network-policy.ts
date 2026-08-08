@@ -128,6 +128,17 @@ export const ALLOWED_DOMAINS = [
   "api.tonscan.org",
   "testnet.tonscan.org",
 
+  // === Swap Providers ===
+  // 1inch Classic Swap v6 — same-chain EVM swap quotes/calldata (Bearer
+  // ONEINCH_API_KEY; key travels in a header, never the URL).
+  "api.1inch.dev",
+  // Mayan cross-chain swaps: quotes (keyless), swap status by tx hash, and
+  // the relayer roster the SDK consults for Solana-source swaps. Gasless
+  // modes are disabled in src/swap/mayan.ts, so no other Mayan hosts are hit.
+  "price-api.mayan.finance",
+  "explorer-api.mayan.finance",
+  "relayer-api.mayan.finance",
+
   // Price Providers (CoinGecko / CoinPaprika)
   // Assuming these are used based on common patterns, though not explicitly in small config snippet
   // Adding them to be safe if they are used in price-service.ts

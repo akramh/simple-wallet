@@ -61,7 +61,13 @@ const ALLOWED_DOMAINS = [
     "testnet.tonscan.org",
     "api.coingecko.com",
     "pro-api.coingecko.com",
-    "api.coinpaprika.com"
+    "api.coinpaprika.com",
+    // Swap providers: 1inch (same-chain EVM) + Mayan (cross-chain).
+    // Keep in sync with src/config/network-policy.ts.
+    "api.1inch.dev",
+    "price-api.mayan.finance",
+    "explorer-api.mayan.finance",
+    "relayer-api.mayan.finance"
 ];
 
 // Android: Network Security Config XML

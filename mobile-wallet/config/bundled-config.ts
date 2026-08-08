@@ -228,3 +228,13 @@ export function getCoingeckoApiKey(): string | undefined {
 export function getAlchemyApiKey(): string | undefined {
   return runtimeAlchemyKey ?? Constants.expoConfig?.extra?.alchemyApiKey;
 }
+
+/**
+ * Get the 1inch API key from Expo config. Enables same-chain swaps; cross-
+ * chain swaps (Mayan) work without any key.
+ *
+ * @returns 1inch API key or undefined if not configured.
+ */
+export function getOneInchApiKey(): string | undefined {
+  return Constants.expoConfig?.extra?.oneInchApiKey;
+}

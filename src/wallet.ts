@@ -500,6 +500,44 @@ export class Wallet {
    * @param amount - Amount in token units
    * @param networkKey - Target EVM network key (must exist in config.networks)
    */
+  /**
+   * Build a signer connected to a specific EVM network without changing the
+   * wallet's globally-active network. Callers that issue multiple calls with
+   * the signer (e.g. approve → swap) must call
+   * {@link restoreActiveNetworkProvider} in a `finally` when done — this
+   * method leaves the ad-hoc provider cached as current.
+   *
+   * @param networkKey - Target EVM network key (must exist in config.networks)
+   * @returns A signer for the current account connected to the target RPC
+   * @throws When the wallet is locked or holds no EVM key material
+   */
+  async getEvmSignerForNetwork(
+    networkKey: string
+  ): Promise<ethers.Wallet | ethers.HDNodeWallet> {
+    const targetProvider = await this.ethereumProvider.ensureProvider(networkKey);
+    if (this.importType === 'privateKey') {
+      if (!this.privateKey) {
+        throw new Error('No private key available');
+      }
+      return new ethers.Wallet(this.privateKey, targetProvider);
+    }
+    const derived = this._deriveAccount(this.currentAccountIndex);
+    return derived.connect(targetProvider);
+  }
+
+  /**
+   * Restore the active-network provider after ad-hoc use of another network's
+   * provider (see {@link getEvmSignerForNetwork}). Best-effort: swallows
+   * failures so it can run in `finally` without masking the original error.
+   */
+  async restoreActiveNetworkProvider(): Promise<void> {
+    try {
+      await this.ethereumProvider.ensureProvider(this.config.network);
+    } catch {
+      // Best-effort restore; the next explicit ensureProvider call retries.
+    }
+  }
+
   async sendTokenOnNetwork(
     token: Token,
     toAddress: string,

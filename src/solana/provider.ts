@@ -178,6 +178,15 @@ export class SolanaProvider {
     return this.config.networkKey;
   }
 
+  /**
+   * The primary web3.js Connection, for libraries that require a Connection
+   * object directly (e.g. the Mayan swap SDK). Callers lose this provider's
+   * multi-RPC failover — prefer the wrapped methods for wallet operations.
+   */
+  getPrimaryConnection(): Connection {
+    return this.connections[0];
+  }
+
   async getBalanceLamports(address: string): Promise<number> {
     const publicKey = new PublicKey(address);
     let lastError: Error | undefined;

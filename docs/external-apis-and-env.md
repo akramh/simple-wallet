@@ -19,6 +19,10 @@ one is contacted, and which environment variables configure those calls.
 | Toncenter JSON-RPC | `https://toncenter.com/api/v2/jsonRPC`, `https://testnet.toncenter.com/api/v2/jsonRPC` | TON balances, transaction history, fee estimation, seqno reads, transfer sends, and post-send polling | `TONCENTER_API_KEY`, `TONCENTER_API_KEY_TON_MAINNET`, `TONCENTER_API_KEY_TON_TESTNET`, `VITE_TONCENTER_API_KEY`, `VITE_TONCENTER_API_KEY_TON_MAINNET`, `VITE_TONCENTER_API_KEY_TON_TESTNET` |
 | CoinGecko API | `https://api.coingecko.com/api/v3`, or `https://pro-api.coingecko.com/api/v3` when a key is set | Price fallback, ERC-20 contract price lookups, historical charts, and token metadata | `COINGECKO_API_KEY`, `VITE_COINGECKO_API_KEY` |
 | CoinPaprika API | `https://api.coinpaprika.com/v1` | Third-tier fallback for current prices, historical prices, and token metadata | None |
+| 1inch Classic Swap API v6 | `https://api.1inch.dev/swap/v6.0/<chainId>/{quote,swap,approve/spender}` | Same-chain EVM swap quotes and ready-to-sign calldata. Required for same-chain swaps; without a key they are disabled (capabilities degrade, cross-chain still works). Free tier is ~1 req/sec — UIs debounce quote inputs | `ONEINCH_API_KEY`, `VITE_ONEINCH_API_KEY`, `EXPO_PUBLIC_ONEINCH_API_KEY` (Bearer header; never in the URL) |
+| Mayan quote API | `https://price-api.mayan.finance/v3/quote` (via `@mayanfinance/swap-sdk`) | Cross-chain swap quotes (EVM↔EVM, EVM↔Solana). Keyless | None |
+| Mayan explorer API | `https://explorer-api.mayan.finance/v3/swap/trx/<txHash>` | Cross-chain swap status polling (`clientStatus`: INPROGRESS / COMPLETED / REFUNDED) | None |
+| Mayan relayer API | `https://relayer-api.mayan.finance/v3/active-relayers` | Consulted by the Mayan SDK when building Solana-source swap transactions | None |
 
 ## Explorer Link Hosts
 
@@ -86,6 +90,9 @@ values below. See [alchemy.md](./alchemy.md#entering-the-key-at-runtime).
 | `VITE_TONCENTER_API_KEY_TON_TESTNET` | Extension | Vite-inlined Toncenter testnet API key |
 | `COINGECKO_API_KEY` | CLI, mobile | CoinGecko key for Pro API host and higher rate limits |
 | `VITE_COINGECKO_API_KEY` | Extension | Vite-inlined CoinGecko key |
+| `ONEINCH_API_KEY` | CLI, mobile | 1inch key enabling same-chain EVM swaps (get one free at https://portal.1inch.dev/) |
+| `VITE_ONEINCH_API_KEY` | Extension | Vite-inlined 1inch key for the extension build |
+| `EXPO_PUBLIC_ONEINCH_API_KEY` | Mobile | Mobile fallback source for the 1inch key when `ONEINCH_API_KEY` is not set |
 
 ### Legacy or Effectively Unused Variables
 
