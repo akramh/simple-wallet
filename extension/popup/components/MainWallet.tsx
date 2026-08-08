@@ -18,6 +18,7 @@ import AccountMenu from './AccountMenu';
 import ReceiveView from './ReceiveView';
 import ActivityView from './ActivityView';
 import StakingView from './StakingView';
+import SwapFlowView from './SwapFlowView';
 import AddTokenModal from './AddTokenModal';
 import AssetPickerModal, { type SendableAsset } from './AssetPickerModal';
 import SendTransactionView from './SendTransactionView';
@@ -208,7 +209,7 @@ interface TokenBalance {
   isActivated?: boolean;
 }
 
-type View = 'tokens' | 'activity' | 'receive' | 'send' | 'settings' | 'tokenDetails' | 'stake';
+type View = 'tokens' | 'activity' | 'receive' | 'send' | 'settings' | 'tokenDetails' | 'stake' | 'swap';
 
 interface TokenWithBalance {
   token: Token;
@@ -283,14 +284,23 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
    * staking chains light up without popup changes.
    */
   const [stakingSupported, setStakingSupported] = useState(false);
+  const [swapSupported, setSwapSupported] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    sendMessageWithRetry<{ isStakingSupported?: boolean }>({
+    sendMessageWithRetry<{ isStakingSupported?: boolean; isSwapSupported?: boolean }>({
       type: 'GET_NETWORK_CONFIG',
       payload: { networkKey: network },
     })
-      .then((resp) => { if (!cancelled) setStakingSupported(!!resp?.isStakingSupported); })
-      .catch(() => { if (!cancelled) setStakingSupported(false); });
+      .then((resp) => {
+        if (cancelled) return;
+        setStakingSupported(!!resp?.isStakingSupported);
+        setSwapSupported(!!resp?.isSwapSupported);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setStakingSupported(false);
+        setSwapSupported(false);
+      });
     return () => { cancelled = true; };
   }, [network]);
 
@@ -941,7 +951,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
       )}
 
       {/* Balance + tabs block (account chip lives in Header, unified source). */}
-      {view !== 'settings' && view !== 'send' && view !== 'receive' && view !== 'tokenDetails' && view !== 'stake' && (
+      {view !== 'settings' && view !== 'send' && view !== 'receive' && view !== 'tokenDetails' && view !== 'stake' && view !== 'swap' && (
         <>
           {/* Balance + Actions always above tabs.
            *  Unified view: aggregate USD hero powered by the cross-chain snapshot.
@@ -966,6 +976,7 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
               onSend={() => setView('send')}
               onReceive={() => setView('receive')}
               onStake={stakingSupported ? () => setView('stake') : undefined}
+              onSwap={swapSupported ? () => setView('swap') : undefined}
             />
           )}
 
@@ -1102,6 +1113,16 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
             network={network}
             networks={networks}
             onBack={() => setView('tokens')}
+          />
+        ) : view === 'swap' ? (
+          <SwapFlowView
+            network={network}
+            networks={networks}
+            tokens={portfolio.map((row) => row.token)}
+            onClose={(didSwap) => {
+              setView('tokens');
+              if (didSwap) handleRefresh();
+            }}
           />
         ) : view === 'receive' ? (
           <div className="takeover">

@@ -9,6 +9,7 @@ import React from 'react';
 import sendIcon from '../../../assets/icons/send.svg';
 import receiveIcon from '../../../assets/icons/receive.svg';
 import stakeIcon from '../../../assets/icons/stake.svg';
+import swapIcon from '../../../assets/icons/swap.svg';
 
 interface Props {
   /** Formatted total balance, already USD-prefixed (e.g. "$1,234.56"). */
@@ -25,6 +26,11 @@ interface Props {
    * the active network supports staking (capability-gated, not chain-gated).
    */
   onStake?: () => void;
+  /**
+   * When set, a Swap action tile is rendered. Same capability-gated contract
+   * as onStake — provider coverage decides, not the chain type.
+   */
+  onSwap?: () => void;
 }
 
 export function BalanceCard({
@@ -35,6 +41,7 @@ export function BalanceCard({
   onSend,
   onReceive,
   onStake,
+  onSwap,
 }: Props) {
   const busy = refreshing || pricesLoading;
   return (
@@ -63,6 +70,12 @@ export function BalanceCard({
             <img src={sendIcon} alt="" className="action-icon" />
             <span>Send</span>
           </button>
+          {onSwap && (
+            <button className="action-tile" onClick={onSwap}>
+              <img src={swapIcon} alt="" className="action-icon" />
+              <span>Swap</span>
+            </button>
+          )}
           {onStake && (
             <button className="action-tile" onClick={onStake}>
               <img src={stakeIcon} alt="" className="action-icon" />
