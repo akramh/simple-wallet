@@ -209,12 +209,15 @@ export default function WalletScreen() {
                   onPress={() => navigateOnce(() => router.push('/stake'))}
                 />
               )}
-              <QuickActionButton
-                icon="swap-horizontal"
-                label="Swap"
-                onPress={() => {}}
-                disabled
-              />
+              {/* Capability-gated like Stake: 1inch/Mayan coverage (and the
+                  1inch key) decide availability, not the chain type. */}
+              {walletBridge.isSwapSupported(network) && (
+                <QuickActionButton
+                  icon="swap-horizontal"
+                  label="Swap"
+                  onPress={() => navigateOnce(() => router.push('/swap'))}
+                />
+              )}
               <QuickActionButton
                 icon="card"
                 label="Buy"

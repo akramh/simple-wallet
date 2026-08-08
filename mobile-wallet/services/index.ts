@@ -35,6 +35,18 @@ export type {
   StakePositionState,
 } from '@wallet/types/staking';
 
+// Chain-neutral swap types (shared with CLI + extension)
+export type {
+  SwapCapabilities,
+  SwapQuoteRequest,
+  SwapQuoteView,
+  SwapPhase,
+  SwapExecuteResult,
+  SwapStatusView,
+  SwapStatusState,
+  SwapProviderId,
+} from '@wallet/types/swap';
+
 // Price history service for token detail charts
 export {
   getPriceHistory,

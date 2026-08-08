@@ -53,6 +53,7 @@ export {
   useProfileScreenSelector,
   useSendScreenSelector,
   useStakingScreenSelector,
+  useSwapScreenSelector,
   useUnlockScreenSelector,
   useNetworkSelectScreenSelector,
   useHeaderIdentitySelector,
