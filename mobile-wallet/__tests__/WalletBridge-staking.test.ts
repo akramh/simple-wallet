@@ -207,10 +207,9 @@ describe('WalletBridge staking (unlocked)', () => {
     expect(positions[0].activationEpoch).toBe(5);
   });
 
-  test('getStakePositions degrades to empty array on SDK failure', async () => {
+  test('getStakePositions rethrows on SDK failure (UI must distinguish empty from failed)', async () => {
     mockGetStakePositions.mockRejectedValueOnce(new Error('rpc down'));
-    const positions = await walletBridge.getStakePositions();
-    expect(positions).toEqual([]);
+    await expect(walletBridge.getStakePositions()).rejects.toThrow('rpc down');
   });
 
   test('getStakeValidators degrades to empty array on SDK failure', async () => {

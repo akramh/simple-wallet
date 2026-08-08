@@ -395,6 +395,7 @@ export const useStakingScreenSelector = () =>
       stakePositions: state.stakePositions,
       isLoadingStakePositions: state.isLoadingStakePositions,
       stakePositionsLastUpdated: state.stakePositionsLastUpdated,
+      stakePositionsError: state.stakePositionsError,
       loadStakePositions: state.loadStakePositions,
       stake: state.stake,
       unstake: state.unstake,

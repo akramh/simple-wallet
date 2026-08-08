@@ -109,6 +109,7 @@ describe('useWalletStore invariants', () => {
       stakePositions: [],
       isLoadingStakePositions: false,
       stakePositionsLastUpdated: null,
+      stakePositionsError: null,
       networks: {},
       error: null,
     } as any);
@@ -207,6 +208,25 @@ describe('useWalletStore invariants', () => {
     expect(s.stakePositions[0].positionId).toBe('StakeAccount111');
     expect(s.isLoadingStakePositions).toBe(false);
     expect(s.stakePositionsLastUpdated).not.toBeNull();
+  });
+
+  test('loadStakePositions failure sets stakePositionsError and keeps stale positions', async () => {
+    const { walletBridge } = require('../services');
+    walletBridge.getStakePositions.mockRejectedValueOnce(new Error('rpc down'));
+    useWalletStore.setState({
+      isUnlocked: true,
+      stakePositions: [{ positionId: 'StakeAccount111', state: 'active' }],
+    } as any);
+
+    await useWalletStore.getState().loadStakePositions();
+    const s = useWalletStore.getState();
+    expect(s.stakePositionsError).toBe('rpc down');
+    expect(s.stakePositions).toHaveLength(1);
+    expect(s.isLoadingStakePositions).toBe(false);
+
+    // A subsequent successful load clears the error.
+    await useWalletStore.getState().loadStakePositions();
+    expect(useWalletStore.getState().stakePositionsError).toBeNull();
   });
 
   test('loadStakePositions is a no-op when locked', async () => {
@@ -520,6 +540,7 @@ describe('useWalletStore importType state', () => {
       stakePositions: [],
       isLoadingStakePositions: false,
       stakePositionsLastUpdated: null,
+      stakePositionsError: null,
       networks: {},
       error: null,
     } as any);

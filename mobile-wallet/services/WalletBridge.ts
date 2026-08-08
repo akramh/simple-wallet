@@ -1158,11 +1158,12 @@ class WalletBridge {
 
   /**
    * List the wallet's staking positions on the active (or given) network.
-   * Returns an empty array on fetch errors (errors are logged) so the
-   * staking screen degrades like the transactions list does.
+   * Unlike getTransactions, failures RETHROW: the staking screen must be
+   * able to distinguish "no positions" from "couldn't load positions" —
+   * the store catches and surfaces the error state.
    *
    * @param networkKey - Network to query; defaults to the active network.
-   * @throws If wallet is locked.
+   * @throws If wallet is locked or the positions fetch fails.
    * @async
    */
   async getStakePositions(networkKey?: string): Promise<StakePositionView[]> {
@@ -1172,7 +1173,7 @@ class WalletBridge {
       return await this.service.getStakePositions(networkKey);
     } catch (error) {
       console.error("[WalletBridge] Failed to fetch stake positions:", error);
-      return [];
+      throw error;
     }
   }
 

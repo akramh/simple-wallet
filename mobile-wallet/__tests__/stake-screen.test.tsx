@@ -47,6 +47,7 @@ const mockState: any = {
   stakePositions: [] as any[],
   isLoadingStakePositions: false,
   stakePositionsLastUpdated: null,
+  stakePositionsError: null as string | null,
   loadStakePositions: mockLoadStakePositions,
   stake: mockStake,
   unstake: mockUnstake,
@@ -90,12 +91,35 @@ describe('StakeScreen', () => {
     jest.clearAllMocks();
     mockState.stakePositions = [];
     mockState.isLoadingStakePositions = false;
+    mockState.stakePositionsError = null;
   });
 
   test('renders empty state and loads positions on mount', () => {
     const { getByText } = render(<StakeScreen />);
     expect(getByText('No staking positions yet')).toBeTruthy();
     expect(mockLoadStakePositions).toHaveBeenCalled();
+  });
+
+  test('load failure with no positions shows an error state with retry, not the empty state', () => {
+    mockState.stakePositionsError = 'all RPC endpoints failed';
+    const { getByText, queryByText } = render(<StakeScreen />);
+
+    expect(getByText("Couldn't load staking positions")).toBeTruthy();
+    expect(getByText('all RPC endpoints failed')).toBeTruthy();
+    expect(queryByText('No staking positions yet')).toBeNull();
+
+    mockLoadStakePositions.mockClear();
+    fireEvent.press(getByText('Retry'));
+    expect(mockLoadStakePositions).toHaveBeenCalled();
+  });
+
+  test('load failure with stale positions shows a refresh banner alongside them', () => {
+    mockState.stakePositionsError = 'all RPC endpoints failed';
+    mockState.stakePositions = [activePosition];
+    const { getByText } = render(<StakeScreen />);
+
+    expect(getByText("Couldn't refresh positions — showing the last known state.")).toBeTruthy();
+    expect(getByText('Validator A')).toBeTruthy();
   });
 
   test('renders a position with validator, rounded amount, state, and epoch context', () => {

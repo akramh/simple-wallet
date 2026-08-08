@@ -25,6 +25,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Linking,
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -100,6 +101,7 @@ export default function StakeScreen() {
     balances,
     stakePositions,
     isLoadingStakePositions,
+    stakePositionsError,
     loadStakePositions,
     stake,
     unstake,
@@ -189,18 +191,29 @@ export default function StakeScreen() {
     try {
       const result = await stake(selectedValidator.id, amount.trim());
       setStep('list');
+      const explorerBase = networks[network]?.blockExplorer || 'https://solscan.io';
+      const explorerUrl = `${explorerBase}/tx/${result.txId}${network === 'solana-devnet' ? '?cluster=devnet' : ''}`;
       Alert.alert(
         'Stake submitted',
         `${amount.trim()} ${nativeSymbol} staked with ${validatorLabel(selectedValidator)}.\n\n` +
           `Tx ${result.txId.slice(0, 8)}…${result.txId.slice(-8)}\n\n` +
-          (capabilities?.activationNote ?? '')
+          (capabilities?.activationNote ?? ''),
+        [
+          {
+            text: 'View on explorer',
+            onPress: () => {
+              Linking.openURL(explorerUrl).catch(() => {});
+            },
+          },
+          { text: 'Done', style: 'default' },
+        ]
       );
     } catch (error) {
       Alert.alert('Staking failed', error instanceof Error ? error.message : 'Unknown error');
     } finally {
       setSubmitting(false);
     }
-  }, [selectedValidator, amount, stake, nativeSymbol, capabilities]);
+  }, [selectedValidator, amount, stake, nativeSymbol, capabilities, networks, network]);
 
   const confirmUnstake = useCallback(
     (position: StakePositionView) => {
@@ -291,10 +304,34 @@ export default function StakeScreen() {
             <Text className="text-white font-semibold text-center text-lg">Stake {nativeSymbol}</Text>
           </TouchableOpacity>
 
+          {/* A failed load with stale positions still shows them, with this
+              banner explaining why they may be out of date. */}
+          {stakePositionsError && stakePositions.length > 0 && (
+            <View className="bg-gray-900 border border-red-400/40 rounded-xl p-3 mb-4">
+              <Text className="text-red-400 text-sm">
+                Couldn't refresh positions — showing the last known state.
+              </Text>
+            </View>
+          )}
+
           {isLoadingStakePositions && stakePositions.length === 0 ? (
             <View className="items-center py-12">
               <ActivityIndicator color="#a855f7" />
               <Text className="text-gray-500 mt-4">Loading staking positions…</Text>
+            </View>
+          ) : stakePositionsError && stakePositions.length === 0 ? (
+            <View className="items-center py-12">
+              <Ionicons name="cloud-offline-outline" size={48} color="#4b5563" />
+              <Text className="text-gray-500 mt-4">Couldn't load staking positions</Text>
+              <Text className="text-gray-600 text-sm mt-1 text-center px-6" numberOfLines={3}>
+                {stakePositionsError}
+              </Text>
+              <TouchableOpacity
+                className="bg-gray-800 rounded-xl px-6 py-3 mt-4"
+                onPress={() => loadStakePositions()}
+              >
+                <Text className="text-white font-medium">Retry</Text>
+              </TouchableOpacity>
             </View>
           ) : stakePositions.length === 0 ? (
             <View className="items-center py-12">

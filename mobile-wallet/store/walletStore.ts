@@ -166,6 +166,7 @@ const getLockedState = () => ({
   stakePositions: [],
   isLoadingStakePositions: false,
   stakePositionsLastUpdated: null,
+  stakePositionsError: null,
 });
 
 // ============================================================================
@@ -231,6 +232,8 @@ interface WalletStore {
   stakePositions: StakePositionView[];
   isLoadingStakePositions: boolean;
   stakePositionsLastUpdated: number | null;
+  /** Set when the last positions load failed — lets the UI distinguish "no positions" from "couldn't load". */
+  stakePositionsError: string | null;
 
   // Networks
   networks: Record<string, NetworkConfig>;
@@ -413,6 +416,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   stakePositions: [],
   isLoadingStakePositions: false,
   stakePositionsLastUpdated: null,
+  stakePositionsError: null,
 
   networks: {},
   enabledNetworks: [],
@@ -1024,6 +1028,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         // Positions are per-network; never show another chain's stake data.
         stakePositions: [],
         stakePositionsLastUpdated: null,
+        stakePositionsError: null,
         ...(recentsChanged ? { recentNetworks: nextRecents } : {}),
       });
 
@@ -1127,7 +1132,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     const silent = options?.silent ?? false;
 
     try {
-      if (!silent) set({ isLoadingStakePositions: true });
+      if (!silent) set({ isLoadingStakePositions: true, stakePositionsError: null });
 
       const stakePositions = await walletBridge.getStakePositions();
 
@@ -1136,11 +1141,18 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
           stakePositions,
           isLoadingStakePositions: false,
           stakePositionsLastUpdated: Date.now(),
+          stakePositionsError: null,
         }),
       );
     } catch (error) {
       console.error('[WalletStore] Load stake positions failed:', error);
-      set({ isLoadingStakePositions: false });
+      // Keep any stale positions on screen; the error banner explains why
+      // they may be out of date.
+      set({
+        isLoadingStakePositions: false,
+        stakePositionsError:
+          error instanceof Error ? error.message : 'Failed to load staking positions',
+      });
     }
   },
 
@@ -1280,6 +1292,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         transactionsLastUpdated: null,
         stakePositions: [],
         stakePositionsLastUpdated: null,
+        stakePositionsError: null,
       });
 
       // Refresh data (don't await - can run in background, silently)
@@ -1394,6 +1407,7 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         transactionsLastUpdated: null,
         stakePositions: [],
         stakePositionsLastUpdated: null,
+        stakePositionsError: null,
       });
 
       // Refresh balances and transactions for new account (silent background refresh)
