@@ -39,6 +39,16 @@ export interface StakePositionViewData {
   reserveFormatted?: string;
   totalFormatted: string;
   state: 'pending' | 'activating' | 'active' | 'deactivating' | 'withdrawable' | 'inactive';
+  /**
+   * Epoch the position was staked at; null when the chain doesn't expose it
+   * or the position is undelegated. Mirrors StakePositionView in
+   * src/types/staking.ts — the service worker forwards that shape verbatim.
+   */
+  activationEpoch?: number | null;
+  /** Epoch the unstake was requested at; null when not deactivating. */
+  deactivationEpoch?: number | null;
+  /** The chain's current epoch at fetch time, for "staked N epochs ago" UX. */
+  currentEpoch?: number;
   usdValue?: number;
   lastRewardFormatted?: string;
 }
@@ -367,7 +377,7 @@ function StakingView({ network, networks, onBack }: Props) {
           <div className="loading">Loading staking positions...</div>
         ) : error ? (
           <EmptyState
-            icon="warning"
+            icon="alert-triangle"
             title="Couldn't load positions"
             subtitle={error}
           />
