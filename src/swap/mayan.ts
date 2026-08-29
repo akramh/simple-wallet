@@ -1,10 +1,18 @@
 /**
  * @fileoverview Mayan Finance client (cross-chain swaps: EVM↔EVM, EVM↔Solana).
  *
- * Wraps @mayanfinance/swap-sdk behind a small injectable surface. The real
- * SDK is loaded lazily via dynamic import on first use so the CLI/extension/
- * mobile bundles only pay for it on the swap path, and tests inject a fake
- * `MayanSdkLike` without ever touching the SDK or the network.
+ * Wraps @mayanfinance/swap-sdk behind a small injectable surface, so tests
+ * inject a fake `MayanSdkLike` without ever touching the SDK or the network.
+ *
+ * The SDK is imported STATICALLY on purpose. A lazy `await import()` here
+ * used to defer its evaluation, which made Rollup split the CJS wrapper for
+ * @solana/buffer-layout (a transitive dep shared with @solana/web3.js)
+ * across chunks and emit its export binding as a `let` declared *after* the
+ * assignment. The extension service worker then died with
+ * `ReferenceError: Cannot access 'Gs' before initialization` the first time
+ * the swap path ran. Keep this import static: it makes the SDK evaluate at
+ * worker startup, where a failure is immediate and obvious, instead of
+ * lurking until a user's first swap.
  *
  * Quotes come from price-api.mayan.finance (keyless), execution goes through
  * the SDK (`swapFromEvm` / `swapFromSolana`), and status is polled from the
@@ -25,6 +33,7 @@
  * @module swap/mayan
  */
 
+import * as mayanSdk from '@mayanfinance/swap-sdk';
 import type { Signer } from 'ethers';
 import type { Connection, Transaction, VersionedTransaction } from '@solana/web3.js';
 import type { SwapStatusView } from '../types/swap.js';
@@ -57,7 +66,7 @@ export type SolanaSignCallback = <T extends Transaction | VersionedTransaction>(
 
 /**
  * Structural subset of @mayanfinance/swap-sdk consumed by this module.
- * Tests inject a fake; production resolves the real SDK lazily.
+ * Tests inject a fake; production uses the statically imported SDK.
  */
 export interface MayanSdkLike {
   fetchQuote(
@@ -94,7 +103,7 @@ export interface MayanSdkLike {
 
 /** Options for {@link MayanClient}. */
 export interface MayanClientOptions {
-  /** Injected SDK (test seam). Defaults to a lazy import of the real SDK. */
+  /** Injected SDK (test seam). Defaults to the statically imported SDK. */
   sdk?: MayanSdkLike;
   /** Injectable fetch for explorer status polls (test seam). */
   fetchFn?: typeof fetch;
@@ -124,11 +133,10 @@ export class MayanClient {
     this.explorerBaseUrl = options.explorerBaseUrl ?? 'https://explorer-api.mayan.finance/v3';
   }
 
-  /** Resolve the SDK, importing it on first use. @private */
+  /** Resolve the SDK: the injected fake in tests, else the real module. @private */
   private async getSdk(): Promise<MayanSdkLike> {
     if (!this.sdk) {
-      // Lazy so bundles without a swap flow never load the SDK.
-      this.sdk = (await import('@mayanfinance/swap-sdk')) as unknown as MayanSdkLike;
+      this.sdk = mayanSdk as unknown as MayanSdkLike;
     }
     return this.sdk;
   }
