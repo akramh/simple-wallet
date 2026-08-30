@@ -11,3 +11,4 @@
 export * from './config.js';
 export * from './wallet.js';
 export * from './staking.js';
+export * from './swap.js';

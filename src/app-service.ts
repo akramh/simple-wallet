@@ -63,6 +63,29 @@ import type {
   StakeActionResult,
   StakingCapabilities,
 } from './types/staking.js';
+import type {
+  SwapCapabilities,
+  SwapQuoteRequest,
+  SwapQuoteView,
+  SwapPhase,
+  SwapExecuteResult,
+  SwapStatusView,
+  SwapProviderId,
+} from './types/swap.js';
+import {
+  ONEINCH_NETWORKS,
+  MAYAN_NETWORKS,
+  toOneInchAddress,
+  toMayanAddress,
+  classifySwapPair,
+} from './swap/chains.js';
+import { OneInchClient, resolveOneInchApiKey } from './swap/oneinch.js';
+import { MayanClient, type MayanQuote } from './swap/mayan.js';
+import {
+  sendRawEvmTransaction,
+  getErc20Allowance,
+  approveErc20,
+} from './ethereum/transaction.js';
 import { getSolanaPrice } from './price-service.js';
 import { pricesAvailableForNetwork } from './network-visibility.js';
 import { PublicKey, Keypair } from '@solana/web3.js';
@@ -222,6 +245,12 @@ export class WalletAppService {
   private xrpProvider: XRPProvider | null = null;
   /** TON provider for TON network operations */
   private tonProvider: TonProvider | null = null;
+  /** Injected swap clients (test seam); lazily defaulted when absent */
+  private injectedSwapClients?: { oneinch?: OneInchClient; mayan?: MayanClient };
+  /** Lazily constructed default 1inch client (requires ONEINCH_API_KEY) */
+  private defaultOneInchClient: OneInchClient | null = null;
+  /** Lazily constructed default Mayan client (keyless) */
+  private defaultMayanClient: MayanClient | null = null;
 
   /**
    * Create a new WalletAppService instance.
@@ -246,6 +275,7 @@ export class WalletAppService {
       storage?: StorageAdapter;
       providerFactory?: ProviderFactory;
       builtInTokens?: TokenRegistry;
+      swapClients?: { oneinch?: OneInchClient; mayan?: MayanClient };
     } = {}
   ) {
     if (options.providerFactory) {
@@ -262,6 +292,7 @@ export class WalletAppService {
     // Use provided built-in tokens (e.g., from bundled JSON in extension) or read from storage
     this.builtInTokens = options.builtInTokens ?? this.safeReadRegistry(this.tokenListPath);
     this.customTokens = this.safeReadRegistry(this.customTokenPath);
+    this.injectedSwapClients = options.swapClients;
   }
 
   /**
@@ -2446,6 +2477,651 @@ export class WalletAppService {
       txId: sendResult.signature,
       positionId: stakeAccountAddress,
       feeFormatted: feeEstimate.feeSol,
+    };
+  }
+
+  // ============================================================================
+  // Swaps — chain-neutral API (1inch same-chain, Mayan cross-chain)
+  // ============================================================================
+  //
+  // UIs call ONLY the generic methods (isSwapSupported, getSwapCapabilities,
+  // getSwapQuote, executeSwap, getSwapStatus). Routing is decided by
+  // classifySwapPair: same EVM network → 1inch Classic Swap, different
+  // networks (EVM↔EVM, EVM↔Solana) → Mayan. Adding a provider or chain means
+  // updating src/swap/chains.ts + a dispatch branch here — no UI changes.
+
+  /** How long a quote may be executed after it was fetched. */
+  private static readonly SWAP_QUOTE_TTL_MS = 45_000;
+
+  /** Resolve the 1inch client; null when no API key is available. @private */
+  private getOneInchClient(): OneInchClient | null {
+    if (this.injectedSwapClients?.oneinch) {
+      return this.injectedSwapClients.oneinch;
+    }
+    if (!this.defaultOneInchClient) {
+      const apiKey = resolveOneInchApiKey();
+      if (!apiKey) {
+        return null;
+      }
+      this.defaultOneInchClient = new OneInchClient({ apiKey });
+    }
+    return this.defaultOneInchClient;
+  }
+
+  /** Resolve the Mayan client (keyless — always available). @private */
+  private getMayanClient(): MayanClient {
+    if (this.injectedSwapClients?.mayan) {
+      return this.injectedSwapClients.mayan;
+    }
+    if (!this.defaultMayanClient) {
+      this.defaultMayanClient = new MayanClient();
+    }
+    return this.defaultMayanClient;
+  }
+
+  /**
+   * Whether any swap kind is available with this network as the source.
+   * Used by every surface to gate the Swap menu entry / button.
+   *
+   * @param networkKey - Network to check; defaults to the active network
+   */
+  isSwapSupported(networkKey?: string): boolean {
+    return this.getSwapCapabilities(networkKey).canSwap;
+  }
+
+  /**
+   * What swapping looks like from a source network: which kinds are
+   * available and which destinations are valid. Same-chain capability
+   * additionally requires a 1inch API key — without one it degrades to
+   * cross-chain-only with an explanatory reason, never a throw.
+   *
+   * @param networkKey - Source network; defaults to the active network
+   */
+  getSwapCapabilities(networkKey?: string): SwapCapabilities {
+    const key = networkKey ?? this.config.network;
+    const netConfig = this.config.networks[key];
+    if (!netConfig) {
+      return {
+        canSwap: false, sameChain: false, crossChain: false,
+        destinationNetworkKeys: [],
+        unsupportedReason: `Unknown network '${key}'`,
+      };
+    }
+    if (netConfig.isTestnet) {
+      return {
+        canSwap: false, sameChain: false, crossChain: false,
+        destinationNetworkKeys: [],
+        unsupportedReason: 'Swaps are not available on test networks',
+      };
+    }
+
+    const oneInchListed = key in ONEINCH_NETWORKS;
+    const hasOneInchKey = this.getOneInchClient() !== null;
+    const sameChain = oneInchListed && hasOneInchKey;
+    const crossChain = key in MAYAN_NETWORKS;
+
+    if (!sameChain && !crossChain) {
+      const label = netConfig.name ?? key;
+      return {
+        canSwap: false, sameChain: false, crossChain: false,
+        destinationNetworkKeys: [],
+        unsupportedReason:
+          oneInchListed && !hasOneInchKey
+            ? 'Same-chain swaps require a 1inch API key (set ONEINCH_API_KEY)'
+            : `Swaps are not supported on ${label}`,
+      };
+    }
+
+    // Destinations: self first (when 1inch serves this network), then every
+    // Mayan peer present in this config. Order is the picker's display order.
+    const destinations: string[] = [];
+    if (sameChain) {
+      destinations.push(key);
+    }
+    if (crossChain) {
+      for (const peer of Object.keys(MAYAN_NETWORKS)) {
+        if (peer !== key && this.config.networks[peer]) {
+          destinations.push(peer);
+        }
+      }
+    }
+
+    return {
+      canSwap: true,
+      sameChain,
+      crossChain,
+      destinationNetworkKeys: destinations,
+      unsupportedReason:
+        oneInchListed && !hasOneInchKey
+          ? 'Same-chain swaps require a 1inch API key (set ONEINCH_API_KEY)'
+          : undefined,
+    };
+  }
+
+  /**
+   * Price a swap. Routes to 1inch (same EVM network) or Mayan (cross-chain)
+   * and returns a display-ready quote. The quote expires (`expiresAt`) —
+   * executeSwap refuses stale quotes and the UI must re-quote.
+   *
+   * @param request - Networks, tokens, amount (human units), slippage
+   * @throws Error when the pair is unsupported, the amount is invalid, the
+   *   1inch key is missing (same-chain), or the provider finds no route
+   * @async
+   */
+  async getSwapQuote(request: SwapQuoteRequest): Promise<SwapQuoteView> {
+    const slippagePercent = request.slippagePercent ?? 1;
+    if (!(slippagePercent > 0) || slippagePercent > 50) {
+      throw new Error('Slippage must be between 0 and 50 percent');
+    }
+    const classification = classifySwapPair(
+      request.fromNetworkKey,
+      request.toNetworkKey,
+      this.config
+    );
+    if (classification.kind === 'unsupported') {
+      throw new Error(classification.reason);
+    }
+
+    const amountBaseUnits = this.parseSwapAmount(request.amount, request.fromToken);
+
+    if (classification.kind === 'same-evm') {
+      return this.getOneInchSwapQuote(request, classification.chainId, amountBaseUnits, slippagePercent);
+    }
+    return this.getMayanSwapQuote(request, amountBaseUnits, slippagePercent);
+  }
+
+  /**
+   * Execute a previously fetched quote.
+   *
+   * Password asymmetry (mirrors the send methods): EVM sources sign with the
+   * in-memory unlocked wallet and take NO password; Solana sources derive the
+   * keypair from `options.password` per call — omitting it throws before any
+   * network traffic.
+   *
+   * EVM flow: [allowance check → approve → wait for approval] → submit swap →
+   * return WITHOUT waiting for the swap to mine (poll getSwapStatus).
+   *
+   * @param quote - The quote returned by getSwapQuote (unmodified)
+   * @param options.password - Wallet password; required for Solana sources
+   * @param options.onProgress - Phase callback for progress UI
+   * @throws Error when the quote has expired or prerequisites are missing
+   * @async
+   */
+  async executeSwap(
+    quote: SwapQuoteView,
+    options: { password?: string; onProgress?: (phase: SwapPhase) => void } = {}
+  ): Promise<SwapExecuteResult> {
+    if (Date.now() > quote.expiresAt) {
+      throw new Error('Quote expired — refresh the quote and try again');
+    }
+    const request = quote.request;
+    const classification = classifySwapPair(
+      request.fromNetworkKey,
+      request.toNetworkKey,
+      this.config
+    );
+    if (classification.kind === 'unsupported') {
+      throw new Error(classification.reason);
+    }
+
+    if (classification.kind === 'same-evm') {
+      return this.executeOneInchSwap(quote, classification.chainId, options);
+    }
+    if (this.isNetworkSolana(request.fromNetworkKey)) {
+      if (!options.password) {
+        throw new Error('Password required for Solana swaps');
+      }
+      return this.executeMayanSwapFromSolana(quote, options.password, options.onProgress);
+    }
+    return this.executeMayanSwapFromEvm(quote, options);
+  }
+
+  /**
+   * Point-in-time status of a submitted swap. Single-shot — polling loops
+   * live in the UI surfaces.
+   *
+   * @param query.provider - Which provider executed the swap
+   * @param query.txId - Source-chain tx hash (EVM) or signature (Solana)
+   * @param query.fromNetworkKey - Source network (1inch receipt lookups)
+   * @async
+   */
+  async getSwapStatus(query: {
+    provider: SwapProviderId;
+    txId: string;
+    fromNetworkKey: string;
+  }): Promise<SwapStatusView> {
+    if (query.provider === 'mayan') {
+      return this.getMayanClient().getStatus(query.txId);
+    }
+    // 1inch: the swap is a single source-chain tx — the receipt is the truth.
+    try {
+      const provider = await this.wallet.ethereumProvider.ensureProvider(query.fromNetworkKey);
+      const receipt = await provider.getTransactionReceipt(query.txId);
+      if (!receipt) {
+        return { state: 'pending' };
+      }
+      return receipt.status === 1
+        ? { state: 'completed', destTxId: query.txId }
+        : { state: 'failed', detail: 'Swap transaction reverted' };
+    } finally {
+      await this.wallet.restoreActiveNetworkProvider();
+    }
+  }
+
+  // ---- Shared swap helpers ----------------------------------------------
+
+  /** Parse a human-unit amount into base units, validating it. @private */
+  private parseSwapAmount(amount: string, token: Token): bigint {
+    let baseUnits: bigint;
+    try {
+      baseUnits = ethers.parseUnits(amount.trim(), token.decimals);
+    } catch {
+      throw new Error('Invalid swap amount');
+    }
+    if (baseUnits <= 0n) {
+      throw new Error('Swap amount must be greater than 0');
+    }
+    return baseUnits;
+  }
+
+  /** Trim a decimal string for display (max 6 fractional digits). @private */
+  private formatSwapAmount(value: string): string {
+    const [whole, frac = ''] = value.split('.');
+    const trimmedFrac = frac.slice(0, 6).replace(/0+$/, '');
+    return trimmedFrac ? `${whole}.${trimmedFrac}` : whole;
+  }
+
+  /** Display rate line "1 SRC ≈ X DST". @private */
+  private formatSwapRate(
+    amountIn: string,
+    amountOut: string,
+    fromSymbol: string,
+    toSymbol: string
+  ): string {
+    const input = Number.parseFloat(amountIn);
+    const output = Number.parseFloat(amountOut);
+    if (!Number.isFinite(input) || !Number.isFinite(output) || input <= 0) {
+      return '';
+    }
+    const rate = output / input;
+    const digits = rate >= 1 ? 4 : 6;
+    return `1 ${fromSymbol} ≈ ${rate.toFixed(digits)} ${toSymbol}`;
+  }
+
+  /**
+   * Best-effort EVM fee line from a gas amount and current fee data.
+   * Empty string when estimation fails — fees never block quoting.
+   * @private
+   */
+  private async estimateEvmFeeFormatted(networkKey: string, gasUnits: number): Promise<string> {
+    try {
+      const provider = await this.wallet.ethereumProvider.ensureProvider(networkKey);
+      const feeData = await provider.getFeeData();
+      const perGas = feeData.maxFeePerGas ?? feeData.gasPrice;
+      if (!perGas) {
+        return '';
+      }
+      const cost = ethers.formatEther(perGas * BigInt(gasUnits));
+      const nativeSymbol = this.config.networks[networkKey]?.nativeSymbol ?? 'ETH';
+      return `~${this.formatSwapAmount(cost)} ${nativeSymbol}`;
+    } catch {
+      return '';
+    } finally {
+      await this.wallet.restoreActiveNetworkProvider();
+    }
+  }
+
+  /**
+   * The wallet's own address on a destination network — swaps always deliver
+   * to the same wallet in v1.
+   * @private
+   */
+  private resolveSwapDestinationAddress(networkKey: string): string {
+    if (this.isNetworkSolana(networkKey)) {
+      const info = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
+      if (!info?.address) {
+        throw new Error('This wallet has no Solana address for the destination chain');
+      }
+      return info.address;
+    }
+    return this.getEvmAddress();
+  }
+
+  /** The wallet's EVM address, derivable even when the signer is idle. @private */
+  private getEvmAddress(): string {
+    if (this.wallet.wallet) {
+      return this.wallet.wallet.address;
+    }
+    if (this.wallet.importType === 'mnemonic') {
+      return this.wallet._deriveAccount(this.wallet.getCurrentAccountIndex()).address;
+    }
+    throw new Error('This wallet has no EVM address');
+  }
+
+  /**
+   * ERC-20 allowance for `spender`, read on-chain. Restores the active
+   * provider afterwards. Returns MaxUint for native tokens (no approval).
+   * @private
+   */
+  private async getSwapAllowance(
+    networkKey: string,
+    token: Token,
+    spender: string
+  ): Promise<bigint> {
+    if (token.address === '') {
+      return ethers.MaxUint256;
+    }
+    try {
+      const provider = await this.wallet.ethereumProvider.ensureProvider(networkKey);
+      return await getErc20Allowance(provider, token.address, this.getEvmAddress(), spender);
+    } finally {
+      await this.wallet.restoreActiveNetworkProvider();
+    }
+  }
+
+  // ---- 1inch (same-chain EVM) -------------------------------------------
+
+  private async getOneInchSwapQuote(
+    request: SwapQuoteRequest,
+    chainId: number,
+    amountBaseUnits: bigint,
+    slippagePercent: number
+  ): Promise<SwapQuoteView> {
+    const client = this.getOneInchClient();
+    if (!client) {
+      throw new Error('Same-chain swaps require a 1inch API key (set ONEINCH_API_KEY)');
+    }
+    const src = toOneInchAddress(request.fromToken);
+    const dst = toOneInchAddress(request.toToken);
+    const quote = await client.getQuote(chainId, src, dst, amountBaseUnits.toString());
+
+    const spender = await client.getSpender(chainId);
+    const allowance = await this.getSwapAllowance(request.fromNetworkKey, request.fromToken, spender);
+    const needsApproval = allowance < amountBaseUnits;
+
+    const dstAmount = BigInt(quote.dstAmount);
+    const slippageBps = BigInt(Math.round(slippagePercent * 100));
+    const minOut = (dstAmount * (10_000n - slippageBps)) / 10_000n;
+
+    const amountInFormatted = this.formatSwapAmount(request.amount.trim());
+    const amountOutFormatted = this.formatSwapAmount(
+      ethers.formatUnits(dstAmount, request.toToken.decimals)
+    );
+    const gasUnits = quote.gas ?? 250_000;
+
+    return {
+      provider: 'oneinch',
+      fromNetworkKey: request.fromNetworkKey,
+      toNetworkKey: request.toNetworkKey,
+      fromTokenSymbol: request.fromToken.symbol,
+      toTokenSymbol: request.toToken.symbol,
+      amountInFormatted,
+      amountOutFormatted,
+      minAmountOutFormatted: this.formatSwapAmount(
+        ethers.formatUnits(minOut, request.toToken.decimals)
+      ),
+      rateFormatted: this.formatSwapRate(
+        amountInFormatted, amountOutFormatted,
+        request.fromToken.symbol, request.toToken.symbol
+      ),
+      feeFormatted: await this.estimateEvmFeeFormatted(request.fromNetworkKey, gasUnits),
+      needsApproval,
+      approvalSpender: needsApproval ? spender : undefined,
+      expiresAt: Date.now() + WalletAppService.SWAP_QUOTE_TTL_MS,
+      // Calldata is fetched fresh at execute time; only display data rides along.
+      raw: { dstAmount: quote.dstAmount, gas: gasUnits },
+      request: { ...request, slippagePercent },
+    };
+  }
+
+  private async executeOneInchSwap(
+    quote: SwapQuoteView,
+    chainId: number,
+    options: { onProgress?: (phase: SwapPhase) => void }
+  ): Promise<SwapExecuteResult> {
+    const request = quote.request;
+    this.assertEvmNetworkForWallet(request.fromNetworkKey);
+    const client = this.getOneInchClient();
+    if (!client) {
+      throw new Error('Same-chain swaps require a 1inch API key (set ONEINCH_API_KEY)');
+    }
+
+    const amountBaseUnits = this.parseSwapAmount(request.amount, request.fromToken);
+    const signer = await this.wallet.getEvmSignerForNetwork(request.fromNetworkKey);
+    try {
+      const approvalTxId = await this.ensureSwapAllowance(
+        signer,
+        request.fromToken,
+        () => client.getSpender(chainId),
+        amountBaseUnits,
+        options.onProgress
+      );
+
+      options.onProgress?.('submitting-swap');
+      const swapTx = await client.getSwapTx(
+        chainId,
+        toOneInchAddress(request.fromToken),
+        toOneInchAddress(request.toToken),
+        amountBaseUnits.toString(),
+        await signer.getAddress(),
+        request.slippagePercent ?? 1
+      );
+      const sent = await sendRawEvmTransaction(signer, {
+        to: swapTx.to,
+        data: swapTx.data,
+        value: BigInt(swapTx.value),
+        // 1inch's gas figure is an estimate; the bump absorbs state drift
+        // between calldata construction and inclusion.
+        gasLimit: (BigInt(swapTx.gas) * 12n) / 10n,
+      });
+      options.onProgress?.('swap-submitted');
+
+      return {
+        provider: 'oneinch',
+        txId: sent.hash,
+        approvalTxId,
+        fromNetworkKey: request.fromNetworkKey,
+        toNetworkKey: request.toNetworkKey,
+      };
+    } finally {
+      await this.wallet.restoreActiveNetworkProvider();
+    }
+  }
+
+  /**
+   * Ensure the spender can move `amount` of `token`: check the allowance and
+   * send + wait for an exact-amount approval when it falls short. Returns the
+   * approval tx hash, or undefined when no approval was needed.
+   * @private
+   */
+  private async ensureSwapAllowance(
+    signer: ethers.Wallet | ethers.HDNodeWallet,
+    token: Token,
+    getSpender: () => Promise<string>,
+    amount: bigint,
+    onProgress?: (phase: SwapPhase) => void
+  ): Promise<string | undefined> {
+    if (token.address === '') {
+      return undefined;
+    }
+    onProgress?.('checking-allowance');
+    const spender = await getSpender();
+    const owner = await signer.getAddress();
+    const allowance = await getErc20Allowance(signer.provider!, token.address, owner, spender);
+    if (allowance >= amount) {
+      return undefined;
+    }
+    onProgress?.('approving');
+    const approval = await approveErc20(signer, token.address, spender, amount);
+    // The swap tx spends this allowance — it must be mined first.
+    await approval.wait();
+    onProgress?.('approval-confirmed');
+    return approval.hash;
+  }
+
+  // ---- Mayan (cross-chain) ----------------------------------------------
+
+  private async getMayanSwapQuote(
+    request: SwapQuoteRequest,
+    amountBaseUnits: bigint,
+    slippagePercent: number
+  ): Promise<SwapQuoteView> {
+    const mayan = this.getMayanClient();
+    const quote = await mayan.fetchQuote({
+      amountIn64: amountBaseUnits.toString(),
+      fromToken: toMayanAddress(request.fromToken),
+      fromChain: MAYAN_NETWORKS[request.fromNetworkKey],
+      toToken: toMayanAddress(request.toToken),
+      toChain: MAYAN_NETWORKS[request.toNetworkKey],
+      slippageBps: Math.round(slippagePercent * 100),
+    });
+
+    const fromIsEvm = !this.isNetworkSolana(request.fromNetworkKey);
+    let needsApproval = false;
+    let approvalSpender: string | undefined;
+    if (fromIsEvm && request.fromToken.address !== '') {
+      approvalSpender = await mayan.getForwarderAddress();
+      const allowance = await this.getSwapAllowance(
+        request.fromNetworkKey,
+        request.fromToken,
+        approvalSpender
+      );
+      needsApproval = allowance < amountBaseUnits;
+    }
+
+    // Mayan quote amounts are already human units.
+    const amountInFormatted = this.formatSwapAmount(request.amount.trim());
+    const amountOutFormatted = this.formatSwapAmount(String(quote.expectedAmountOut));
+    let feeFormatted = '';
+    if (fromIsEvm) {
+      feeFormatted = await this.estimateEvmFeeFormatted(request.fromNetworkKey, 400_000);
+    } else {
+      try {
+        const estimate = await this.getSolanaProviderForNetwork(request.fromNetworkKey).estimateFee();
+        feeFormatted = `~${estimate.feeSol} SOL`;
+      } catch {
+        // Fee display is best-effort.
+      }
+    }
+
+    // Respect Mayan's own deadline when it is sooner than our TTL.
+    let expiresAt = Date.now() + WalletAppService.SWAP_QUOTE_TTL_MS;
+    const deadlineSec = Number(quote.deadline64);
+    if (Number.isFinite(deadlineSec) && deadlineSec > 0) {
+      expiresAt = Math.min(expiresAt, deadlineSec * 1000);
+    }
+
+    return {
+      provider: 'mayan',
+      fromNetworkKey: request.fromNetworkKey,
+      toNetworkKey: request.toNetworkKey,
+      fromTokenSymbol: request.fromToken.symbol,
+      toTokenSymbol: request.toToken.symbol,
+      amountInFormatted,
+      amountOutFormatted,
+      minAmountOutFormatted: this.formatSwapAmount(String(quote.minAmountOut)),
+      rateFormatted: this.formatSwapRate(
+        amountInFormatted, amountOutFormatted,
+        request.fromToken.symbol, request.toToken.symbol
+      ),
+      feeFormatted,
+      // clientRelayerFeeSuccess is denominated in USD (Mayan explorer convention).
+      bridgeFeeFormatted:
+        typeof quote.clientRelayerFeeSuccess === 'number'
+          ? `$${quote.clientRelayerFeeSuccess.toFixed(2)} relayer fee`
+          : undefined,
+      etaSeconds: quote.etaSeconds,
+      needsApproval,
+      approvalSpender: needsApproval ? approvalSpender : undefined,
+      expiresAt,
+      raw: quote,
+      request: { ...request, slippagePercent },
+    };
+  }
+
+  private async executeMayanSwapFromEvm(
+    quote: SwapQuoteView,
+    options: { onProgress?: (phase: SwapPhase) => void }
+  ): Promise<SwapExecuteResult> {
+    const request = quote.request;
+    this.assertEvmNetworkForWallet(request.fromNetworkKey);
+    const mayan = this.getMayanClient();
+    const mayanQuote = quote.raw as MayanQuote;
+    const amountBaseUnits = this.parseSwapAmount(request.amount, request.fromToken);
+    const destinationAddress = this.resolveSwapDestinationAddress(request.toNetworkKey);
+
+    const signer = await this.wallet.getEvmSignerForNetwork(request.fromNetworkKey);
+    try {
+      const approvalTxId = await this.ensureSwapAllowance(
+        signer,
+        request.fromToken,
+        () => mayan.getForwarderAddress(),
+        amountBaseUnits,
+        options.onProgress
+      );
+
+      options.onProgress?.('submitting-swap');
+      const result = await mayan.swapFromEvm(
+        mayanQuote,
+        await signer.getAddress(),
+        destinationAddress,
+        signer
+      );
+      options.onProgress?.('swap-submitted');
+
+      return {
+        provider: 'mayan',
+        txId: result.txHash,
+        approvalTxId,
+        fromNetworkKey: request.fromNetworkKey,
+        toNetworkKey: request.toNetworkKey,
+      };
+    } finally {
+      await this.wallet.restoreActiveNetworkProvider();
+    }
+  }
+
+  private async executeMayanSwapFromSolana(
+    quote: SwapQuoteView,
+    password: string,
+    onProgress?: (phase: SwapPhase) => void
+  ): Promise<SwapExecuteResult> {
+    const request = quote.request;
+    const mayan = this.getMayanClient();
+    const mayanQuote = quote.raw as MayanQuote;
+    const destinationAddress = this.resolveSwapDestinationAddress(request.toNetworkKey);
+
+    const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
+    if (!solInfo?.address) {
+      throw new Error('No Solana address available');
+    }
+    const provider = this.getSolanaProviderForNetwork(request.fromNetworkKey);
+    // Keypair lives only in this frame; the sign callback closes over it and
+    // nothing here retains it after executeSwap returns.
+    const keypair = this.getSolanaSigningKeypair(password);
+
+    onProgress?.('submitting-swap');
+    const result = await mayan.swapFromSolana(
+      mayanQuote,
+      solInfo.address,
+      destinationAddress,
+      async <T extends import('@solana/web3.js').Transaction | import('@solana/web3.js').VersionedTransaction>(tx: T): Promise<T> => {
+        if ('version' in tx) {
+          tx.sign([keypair]);
+        } else {
+          tx.partialSign(keypair);
+        }
+        return tx;
+      },
+      provider.getPrimaryConnection()
+    );
+    onProgress?.('swap-submitted');
+
+    return {
+      provider: 'mayan',
+      txId: result.signature,
+      fromNetworkKey: request.fromNetworkKey,
+      toNetworkKey: request.toNetworkKey,
     };
   }
 

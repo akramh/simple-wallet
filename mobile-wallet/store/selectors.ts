@@ -404,6 +404,28 @@ export const useStakingScreenSelector = () =>
   );
 
 /**
+ * Swap screen selector — quote state and the chain-neutral swap actions.
+ * Token/network/amount wizard state stays local to the screen; `prices` is
+ * deliberately excluded so background price ticks don't re-render the wizard.
+ */
+export const useSwapScreenSelector = () =>
+  useWalletStore(
+    useShallow((state) => ({
+      isUnlocked: state.isUnlocked,
+      network: state.network,
+      networks: state.networks,
+      balances: state.balances,
+      swapQuote: state.swapQuote,
+      isLoadingSwapQuote: state.isLoadingSwapQuote,
+      swapQuoteError: state.swapQuoteError,
+      swapPhase: state.swapPhase,
+      loadSwapQuote: state.loadSwapQuote,
+      clearSwapQuote: state.clearSwapQuote,
+      executeSwap: state.executeSwap,
+    }))
+  );
+
+/**
  * Unlock screen selector - subscribes to auth state
  */
 export const useUnlockScreenSelector = () =>

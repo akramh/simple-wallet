@@ -1187,6 +1187,11 @@ async function mainMenu(walletName: string | null): Promise<void> {
   if (walletService.isStakingSupported(config.network)) {
     menuChoices.push(ui.menuChoice('Stake', 'Stake and manage staking positions', 'stake'));
   }
+  // Swap is capability-gated the same way: 1inch/Mayan coverage (and the
+  // 1inch key) decide availability, not chain type.
+  if (walletService.isSwapSupported(config.network)) {
+    menuChoices.push(ui.menuChoice('Swap', 'Exchange tokens, same-chain or cross-chain', 'swap'));
+  }
   menuChoices.push(
     new inquirer.Separator(ui.menuSeparator().line),
     ui.menuChoice('Switch Network', 'Change active blockchain', 'network'),
@@ -1213,6 +1218,9 @@ async function mainMenu(walletName: string | null): Promise<void> {
       break;
     case 'stake':
       await stakeMenu(currentWalletName);
+      break;
+    case 'swap':
+      await swapMenu(currentWalletName);
       break;
     case 'receive':
       await showReceiveAddress(currentWalletName);
@@ -3734,6 +3742,267 @@ async function withdrawStakeFlow(position: { positionId: string; totalFormatted:
 }
 
 // ============================================================================
+// Swap Flows
+// ============================================================================
+
+/**
+ * Swap wizard: pick source token → destination network → destination token →
+ * amount, fetch a quote, confirm, execute, and poll status to a terminal
+ * state. Same-chain pairs route to 1inch, cross-chain to Mayan — the routing
+ * lives in WalletAppService; this flow only renders what it is told.
+ *
+ * The source network is always the active network (switch first to swap from
+ * another chain). A password is prompted only when the source is Solana —
+ * EVM sources sign with the in-memory unlocked wallet.
+ *
+ * @param walletName - Name of the currently loaded wallet
+ */
+async function swapMenu(walletName: string | null): Promise<void> {
+  currentWalletName = walletName;
+  const netConfig = config.networks[config.network];
+
+  ui.clearScreen();
+  ui.showHeader(walletName, wallet.currentAccountIndex, netConfig.name, walletService.getAddress());
+  ui.showSection('Swap');
+
+  const caps = walletService.getSwapCapabilities();
+  if (!caps.canSwap) {
+    ui.showWarning(caps.unsupportedReason ?? 'Swaps are not available on this network');
+    await inquirer.prompt<{ continue: string }>([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+    if (process.env.NODE_ENV === 'test') return;
+    await mainMenu(currentWalletName);
+    return;
+  }
+  if (caps.unsupportedReason) {
+    // canSwap with a reason == partial capability (e.g. same-chain disabled
+    // because ONEINCH_API_KEY is missing).
+    ui.showInfo(caps.unsupportedReason);
+  }
+
+  // Step 1: source token on the active network.
+  const sourceTokens = walletService.getTokensForNetwork(config.network);
+  const { fromSymbol } = await inquirer.prompt<{ fromSymbol: string }>([
+    {
+      type: 'list',
+      name: 'fromSymbol',
+      message: 'Token to swap from:',
+      loop: false,
+      pageSize: 20,
+      choices: [
+        ...sourceTokens.map((t) => ({
+          name: `${t.symbol}${t.type === 'native' ? ' (native)' : ''}`,
+          value: t.symbol,
+        })),
+        { name: 'Cancel', value: '' },
+      ],
+    },
+  ]);
+  if (!fromSymbol) {
+    ui.showWarning('Swap cancelled');
+    if (process.env.NODE_ENV === 'test') return;
+    await mainMenu(currentWalletName);
+    return;
+  }
+  const fromToken = walletService.findTokenBySymbol(config.network, fromSymbol)!;
+
+  // Step 2: destination network, from the capability matrix.
+  const { toNetworkKey } = await inquirer.prompt<{ toNetworkKey: string }>([
+    {
+      type: 'list',
+      name: 'toNetworkKey',
+      message: 'Destination network:',
+      loop: false,
+      pageSize: 20,
+      choices: [
+        ...caps.destinationNetworkKeys.map((key) => ({
+          name:
+            key === config.network
+              ? `${config.networks[key]?.name ?? key} (same network)`
+              : config.networks[key]?.name ?? key,
+          value: key,
+        })),
+        { name: 'Cancel', value: '' },
+      ],
+    },
+  ]);
+  if (!toNetworkKey) {
+    ui.showWarning('Swap cancelled');
+    if (process.env.NODE_ENV === 'test') return;
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  // Step 3: destination token; a same-network swap into the same token is
+  // meaningless, so it is filtered out.
+  const destTokens = walletService
+    .getTokensForNetwork(toNetworkKey)
+    .filter((t) => !(toNetworkKey === config.network && t.symbol === fromToken.symbol));
+  const { toSymbol } = await inquirer.prompt<{ toSymbol: string }>([
+    {
+      type: 'list',
+      name: 'toSymbol',
+      message: 'Token to receive:',
+      loop: false,
+      pageSize: 20,
+      choices: [
+        ...destTokens.map((t) => ({
+          name: `${t.symbol}${t.type === 'native' ? ' (native)' : ''}`,
+          value: t.symbol,
+        })),
+        { name: 'Cancel', value: '' },
+      ],
+    },
+  ]);
+  if (!toSymbol) {
+    ui.showWarning('Swap cancelled');
+    if (process.env.NODE_ENV === 'test') return;
+    await mainMenu(currentWalletName);
+    return;
+  }
+  const toToken = destTokens.find((t) => t.symbol === toSymbol)!;
+
+  // Step 4: amount.
+  const { amount } = await inquirer.prompt<{ amount?: string }>([
+    {
+      type: 'input',
+      name: 'amount',
+      message: `Amount of ${fromToken.symbol} to swap (empty to cancel):`,
+      validate: (input: string) => {
+        if (!input || input.trim() === '') return true;
+        if (!/^\d+(\.\d+)?$/.test(input.trim())) return 'Enter a valid numeric amount';
+        if (parseFloat(input) <= 0) return 'Amount must be greater than 0';
+        return true;
+      },
+    },
+  ]);
+  if (!amount || amount.trim() === '') {
+    ui.showWarning('Swap cancelled');
+    if (process.env.NODE_ENV === 'test') return;
+    await mainMenu(currentWalletName);
+    return;
+  }
+
+  try {
+    ui.showLoading('Fetching quote...');
+    const quote = await walletService.getSwapQuote({
+      fromNetworkKey: config.network,
+      fromToken,
+      toNetworkKey,
+      toToken,
+      amount: amount.trim(),
+    });
+
+    // Quote card.
+    console.log('');
+    console.log(chalk.gray('You pay:      ') + chalk.white(`${quote.amountInFormatted} ${quote.fromTokenSymbol}`) + chalk.gray(` on ${config.networks[quote.fromNetworkKey]?.name ?? quote.fromNetworkKey}`));
+    console.log(chalk.gray('You receive:  ') + chalk.white(`~${quote.amountOutFormatted} ${quote.toTokenSymbol}`) + chalk.gray(` on ${config.networks[quote.toNetworkKey]?.name ?? quote.toNetworkKey}`));
+    console.log(chalk.gray('Minimum:      ') + chalk.white(`${quote.minAmountOutFormatted} ${quote.toTokenSymbol}`));
+    if (quote.rateFormatted) console.log(chalk.gray('Rate:         ') + chalk.white(quote.rateFormatted));
+    if (quote.feeFormatted) console.log(chalk.gray('Network fee:  ') + chalk.white(quote.feeFormatted));
+    if (quote.bridgeFeeFormatted) console.log(chalk.gray('Bridge fee:   ') + chalk.white(quote.bridgeFeeFormatted));
+    if (typeof quote.etaSeconds === 'number') console.log(chalk.gray('Estimated:    ') + chalk.white(`~${Math.max(1, Math.round(quote.etaSeconds / 60))} min to complete`));
+    console.log(chalk.gray('Via:          ') + chalk.white(quote.provider === 'oneinch' ? '1inch' : 'Mayan'));
+    if (quote.needsApproval) {
+      ui.showInfo(`Requires a token approval first — 2 transactions will be sent.`);
+    }
+    console.log('');
+
+    const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+      { type: 'confirm', name: 'confirm', message: 'Confirm & Swap?', default: false },
+    ]);
+    if (!confirm) {
+      ui.showWarning('Swap cancelled');
+      if (process.env.NODE_ENV === 'test') return;
+      await mainMenu(currentWalletName);
+      return;
+    }
+
+    // Solana sources derive a signing keypair per call; EVM signs in memory.
+    const password = walletService.isNetworkSolana(config.network)
+      ? await ensureMasterPassword()
+      : undefined;
+
+    const result = await walletService.executeSwap(quote, {
+      password,
+      onProgress: (phase) => {
+        const label: Record<string, string> = {
+          'checking-allowance': 'Checking token allowance...',
+          'approving': 'Sending approval transaction...',
+          'approval-confirmed': 'Approval confirmed',
+          'submitting-swap': 'Submitting swap...',
+          'swap-submitted': 'Swap submitted',
+        };
+        ui.showLoading(label[phase] ?? phase);
+      },
+    });
+
+    ui.showSuccess('Swap submitted');
+    console.log('');
+    if (result.approvalTxId) {
+      console.log(chalk.gray('Approval tx: ') + chalk.magenta(result.approvalTxId));
+    }
+    console.log(chalk.gray('Swap tx:     ') + chalk.magenta(result.txId));
+    console.log('');
+
+    await pollSwapUntilTerminal(result);
+  } catch (error) {
+    ui.showError(`Swap failed: ${(error as Error).message}`);
+  }
+
+  await inquirer.prompt<{ continue: string }>([{ type: 'input', name: 'continue', message: 'Press Enter to continue...' }]);
+  if (process.env.NODE_ENV === 'test') return;
+  await mainMenu(currentWalletName);
+}
+
+/**
+ * Poll a submitted swap until it completes, refunds, or fails. Bounded to
+ * 30 minutes; skipped entirely under NODE_ENV=test (single status check).
+ *
+ * @param result - The executeSwap result to track
+ */
+async function pollSwapUntilTerminal(result: {
+  provider: 'oneinch' | 'mayan';
+  txId: string;
+  fromNetworkKey: string;
+}): Promise<void> {
+  const POLL_INTERVAL_MS = 10_000;
+  const MAX_POLL_MS = 30 * 60 * 1000;
+  const startedAt = Date.now();
+
+  ui.showLoading(result.provider === 'mayan' ? 'Waiting for cross-chain completion...' : 'Waiting for confirmation...');
+  for (;;) {
+    let status;
+    try {
+      status = await walletService.getSwapStatus(result);
+    } catch {
+      // Transient status failures shouldn't kill the loop.
+      status = { state: 'pending' as const };
+    }
+    if (status.state === 'completed') {
+      ui.showSuccess('Swap completed');
+      if (status.destTxId && status.destTxId !== result.txId) {
+        console.log(chalk.gray('Destination tx: ') + chalk.magenta(status.destTxId));
+      }
+      return;
+    }
+    if (status.state === 'refunded') {
+      ui.showWarning('Swap could not complete — funds were refunded on the source chain');
+      return;
+    }
+    if (status.state === 'failed') {
+      ui.showError(status.detail ?? 'Swap transaction failed');
+      return;
+    }
+    if (process.env.NODE_ENV === 'test') return;
+    if (Date.now() - startedAt > MAX_POLL_MS) {
+      ui.showInfo('Still in progress — check the transaction later; funds are safe either way.');
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+}
+
+// ============================================================================
 // CLI Execution
 // ============================================================================
 
@@ -3764,5 +4033,6 @@ export {
   changeNetwork,
   manageTokens,
   checkPortfolioAllNetworks,
-  stakeMenu
+  stakeMenu,
+  swapMenu
 };

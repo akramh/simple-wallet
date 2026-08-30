@@ -37,6 +37,14 @@ export default defineConfig({
       closeBundle() {
         const distDir = path.resolve(__dirname, 'dist-extension');
 
+        // closeBundle also fires when the build failed before anything was
+        // written to disk. Touching the output dir here would throw a
+        // misleading ENOENT that masks the real rollup error, so bail out
+        // and let that error surface instead.
+        if (!fs.existsSync(distDir)) {
+          return;
+        }
+
         // Move sidepanel.html to root
         const srcHtml = path.join(distDir, 'extension/sidepanel/sidepanel.html');
         const destHtml = path.join(distDir, 'sidepanel.html');

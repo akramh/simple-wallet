@@ -36,6 +36,15 @@ import type {
   StakingCapabilities,
   StakeActionResult,
 } from "@wallet/types/staking";
+import type {
+  SwapCapabilities,
+  SwapQuoteRequest,
+  SwapQuoteView,
+  SwapPhase,
+  SwapExecuteResult,
+  SwapStatusView,
+  SwapProviderId,
+} from "@wallet/types/swap";
 import { installConsoleRedactor } from "@wallet/utils/redact-logs";
 import { setRuntimeAlchemyKey } from "../config/bundled-config";
 import {
@@ -1274,6 +1283,114 @@ class WalletBridge {
       this.sessionPassword!,
       networkKey,
     );
+  }
+
+  // ============================================================================
+  // Swap (chain-neutral passthrough to WalletAppService)
+  // ============================================================================
+  //
+  // Routing (same-chain 1inch vs cross-chain Mayan) lives in WalletAppService.
+  // The UI never sees or supplies a password: executeSwap injects the
+  // in-memory session password for Solana-source swaps, exactly as the
+  // staking methods do. EVM sources need no password at all.
+
+  /**
+   * Whether swapping is available from a network. Returns false (never
+   * throws) when the wallet is locked so screens can render a disabled
+   * affordance.
+   *
+   * @param networkKey - Source network to check; defaults to the active network.
+   */
+  isSwapSupported(networkKey?: string): boolean {
+    if (!this._isUnlocked || !this.service) {
+      return false;
+    }
+    try {
+      return this.service.isSwapSupported(networkKey);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Swap capabilities for a source network: which kinds are available and
+   * which destination networks are valid. Drives the destination picker.
+   *
+   * @param networkKey - Source network; defaults to the active network.
+   * @throws If the wallet is locked.
+   */
+  getSwapCapabilities(networkKey?: string): SwapCapabilities {
+    this.requireUnlocked();
+    return this.service.getSwapCapabilities(networkKey);
+  }
+
+  /**
+   * Tokens selectable as a swap destination on a network. Unlike the send
+   * flow this is NOT balance-filtered — you can swap into a token you hold
+   * none of.
+   *
+   * @param networkKey - Destination network.
+   * @throws If the wallet is locked.
+   */
+  getSwapDestTokens(networkKey: string): Token[] {
+    this.requireUnlocked();
+    return this.service.getTokensForNetwork(networkKey);
+  }
+
+  /**
+   * Price a swap. The returned quote carries an `expiresAt`; executeSwap
+   * refuses stale quotes, so screens must re-quote rather than retry.
+   *
+   * @param request - Networks, tokens, amount (human units), slippage.
+   * @throws If the wallet is locked, the pair is unsupported, or no route exists.
+   * @async
+   */
+  async getSwapQuote(request: SwapQuoteRequest): Promise<SwapQuoteView> {
+    this.requireUnlocked();
+    this.resetAutoLockTimer();
+    return this.service.getSwapQuote(request);
+  }
+
+  /**
+   * Execute a quote. Sends an approval transaction first when the quote
+   * requires one, then the swap; returns once the swap is broadcast (it may
+   * still be settling — poll getSwapStatus).
+   *
+   * @param quote - Quote returned by getSwapQuote, unmodified.
+   * @param onProgress - Optional phase callback for progress UI.
+   * @throws If the wallet is locked or the quote has expired.
+   * @async
+   */
+  async executeSwap(
+    quote: SwapQuoteView,
+    onProgress?: (phase: SwapPhase) => void,
+  ): Promise<SwapExecuteResult> {
+    this.requireUnlocked();
+    this.resetAutoLockTimer();
+    // Only Solana sources need the password; passing it unconditionally is
+    // harmless but we keep the asymmetry explicit to match the service layer.
+    const needsPassword = this.service.isNetworkSolana(quote.request.fromNetworkKey);
+    return this.service.executeSwap(quote, {
+      password: needsPassword ? this.sessionPassword! : undefined,
+      onProgress,
+    });
+  }
+
+  /**
+   * Point-in-time status of a submitted swap. Single-shot — the status
+   * screen owns the polling interval.
+   *
+   * @param query - Provider, source tx id, and source network.
+   * @throws If the wallet is locked.
+   * @async
+   */
+  async getSwapStatus(query: {
+    provider: SwapProviderId;
+    txId: string;
+    fromNetworkKey: string;
+  }): Promise<SwapStatusView> {
+    this.requireUnlocked();
+    return this.service.getSwapStatus(query);
   }
 
   /**

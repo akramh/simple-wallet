@@ -22,6 +22,7 @@
  * - GET_NETWORKS, GET_SHOW_TESTNETS, SET_SHOW_TESTNETS
  * - GET_STAKE_POSITIONS, GET_STAKE_VALIDATORS, GET_STAKING_CAPABILITIES
  * - ESTIMATE_STAKE_FEE, STAKE, UNSTAKE, WITHDRAW_STAKE (chain-neutral; payload carries networkKey)
+ * - GET_SWAP_CAPABILITIES, GET_SWAP_DEST_TOKENS, GET_SWAP_QUOTE, EXECUTE_SWAP, GET_SWAP_STATUS
  * - ETH_ACCOUNTS, ETH_REQUEST_ACCOUNTS, ETH_SEND_TRANSACTION
  * - PERSONAL_SIGN, ETH_SIGN_TYPED_DATA_V4, PERSONAL_EC_RECOVER
  * - GET_SECRET_PHRASE, GET_PRIVATE_KEY, CHANGE_PASSWORD
@@ -2078,6 +2079,81 @@ function startBitcoinConfirmationPolling(txid: string, networkKey: string): void
 }
 
 // ============================================================================
+// Swap Status Polling
+// ============================================================================
+
+const swapStatusPollers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Poll a submitted swap until it reaches a terminal state, broadcasting
+ * SWAP_STATUS so an open popup can update live. Cross-chain swaps settle on
+ * the destination chain minutes after the source tx mines, so this runs well
+ * past the source-chain confirmation the send flow polls for.
+ *
+ * @param provider - Which swap provider executed the swap
+ * @param txId - Source-chain transaction hash / signature
+ * @param networkKey - Source network (1inch receipt lookups need it)
+ */
+function startSwapStatusPolling(
+  provider: 'oneinch' | 'mayan',
+  txId: string,
+  networkKey: string
+): void {
+  if (swapStatusPollers.has(txId)) return;
+  if (!walletService) return;
+
+  const startedAt = Date.now();
+  // Mayan relays can take minutes; give up after 30 so a stuck swap doesn't
+  // keep the worker awake forever. Funds are safe either way — the popup can
+  // re-poll on demand via GET_SWAP_STATUS.
+  const maxMs = 30 * 60 * 1000;
+  const intervalMs = 10 * 1000;
+
+  const timer = setInterval(async () => {
+    const stop = () => {
+      clearInterval(timer);
+      swapStatusPollers.delete(txId);
+    };
+    try {
+      if (Date.now() - startedAt > maxMs) {
+        stop();
+        return;
+      }
+      const status = await walletService!.getSwapStatus({ provider, txId, fromNetworkKey: networkKey });
+      if (status.state === 'pending') return;
+
+      stop();
+      chrome.runtime.sendMessage({
+        type: 'SWAP_STATUS',
+        payload: { txId, ...status }
+      }).catch(() => {
+        // Popup may not be open — the terminal state is still recorded below.
+      });
+
+      if (transactionHistory) {
+        transactionHistory.updateTransactionStatus(
+          txId,
+          status.state === 'completed' ? TransactionStatus.CONFIRMED : TransactionStatus.FAILED,
+          undefined,
+          status.state === 'completed' ? undefined : status.detail
+        );
+      }
+      broadcastTransactionStatus(
+        txId,
+        status.state === 'completed' ? 'confirmed' : 'failed',
+        networkKey,
+        undefined,
+        status.state === 'completed' ? undefined : status.detail
+      );
+    } catch {
+      // Transient status failures shouldn't kill the loop; retry next tick.
+    }
+  }, intervalMs);
+
+  swapStatusPollers.set(txId, timer);
+}
+
+// ============================================================================
 // Solana Confirmation Polling
 // ============================================================================
 
@@ -3165,7 +3241,10 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
         tonNetwork: isTon ? (netConfigData as any).tonNetwork : undefined,
         // UIs gate the Stake affordance on this capability flag, never on a
         // chain check — new staking chains light up without popup changes.
-        isStakingSupported: walletService.isStakingSupported(netConfigNetwork)
+        isStakingSupported: walletService.isStakingSupported(netConfigNetwork),
+        // Same contract for Swap: provider coverage (and the 1inch key)
+        // decide availability, not the chain type.
+        isSwapSupported: walletService.isSwapSupported(netConfigNetwork)
       };
     }
 
@@ -3250,6 +3329,126 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
       startSolanaConfirmationPolling(result.txId, stakeNetwork);
 
       return { result };
+    }
+
+    // ==========================================================================
+    // Swaps (chain-neutral protocol → WalletAppService swap API)
+    // ==========================================================================
+    //
+    // Routing (same-chain 1inch vs cross-chain Mayan) lives entirely in
+    // WalletAppService; these cases only marshal payloads. The popup never
+    // supplies a password — Solana-source swaps sign with the session
+    // password held here, exactly like the Solana branch of SEND_TRANSACTION.
+
+    case 'GET_SWAP_CAPABILITIES': {
+      if (!walletService) throw new Error('Wallet not initialized');
+      const capabilities = walletService.getSwapCapabilities(payload?.networkKey);
+      return { capabilities };
+    }
+
+    case 'GET_SWAP_DEST_TOKENS': {
+      if (!walletService) throw new Error('Wallet not initialized');
+      if (!payload?.networkKey) throw new Error('networkKey is required');
+      // Destination tokens are not balance-filtered (unlike GET_SENDABLE_ASSETS)
+      // — you can swap into a token you hold none of.
+      const tokens = walletService.getTokensForNetwork(payload.networkKey);
+      return { tokens };
+    }
+
+    case 'GET_SWAP_QUOTE': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      if (!walletService) throw new Error('Wallet not initialized');
+      resetAutoLockTimer();
+      const quote = await walletService.getSwapQuote(payload.request);
+      return { quote };
+    }
+
+    case 'EXECUTE_SWAP': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      if (!walletService) throw new Error('Wallet not initialized');
+      resetAutoLockTimer();
+
+      const swapQuote = payload?.quote;
+      if (!swapQuote?.request) {
+        throw new Error('A swap quote is required');
+      }
+      const swapNetwork = swapQuote.request.fromNetworkKey;
+      const swapNetConfig = walletService.config.networks[swapNetwork];
+      if (!swapNetConfig) {
+        throw new Error(`Unknown network: ${swapNetwork}`);
+      }
+
+      // Only Solana sources need a password (the EVM signer is already
+      // unlocked in memory) — demand it just for that case.
+      let swapPassword: string | undefined;
+      if (walletService.isNetworkSolana(swapNetwork)) {
+        const sessionPassword = getSessionPassword();
+        if (!sessionPassword) {
+          throw new Error('Session password not available. Please unlock wallet again.');
+        }
+        swapPassword = sessionPassword;
+      }
+
+      const swapResult = await walletService.executeSwap(swapQuote, {
+        password: swapPassword,
+        onProgress: (phase) => {
+          chrome.runtime.sendMessage({
+            type: 'SWAP_PROGRESS',
+            payload: { phase }
+          }).catch(() => {
+            // Popup may not be open — progress is advisory only.
+          });
+        }
+      });
+
+      // Record both transactions so the activity feed shows the approval and
+      // the swap, matching what the user was told would be sent.
+      const swapFromAddress =
+        walletService.getAddressForChain(walletService.isNetworkSolana(swapNetwork) ? 'solana' : 'evm')
+        || walletService.getAddress();
+      if (transactionHistory) {
+        if (swapResult.approvalTxId) {
+          transactionHistory.addTransaction({
+            hash: swapResult.approvalTxId,
+            from: swapFromAddress,
+            to: swapQuote.approvalSpender || '',
+            value: '',
+            network: swapNetwork,
+            status: TransactionStatus.PENDING,
+            type: TransactionType.CONTRACT_INTERACTION,
+            timestamp: Date.now(),
+            tokenSymbol: swapQuote.fromTokenSymbol || '',
+            tokenAddress: swapQuote.request.fromToken?.address || ''
+          });
+        }
+        transactionHistory.addTransaction({
+          hash: swapResult.txId,
+          from: swapFromAddress,
+          to: swapQuote.approvalSpender || '',
+          value: swapQuote.amountInFormatted || '',
+          network: swapNetwork,
+          status: TransactionStatus.PENDING,
+          type: TransactionType.CONTRACT_INTERACTION,
+          timestamp: Date.now(),
+          tokenSymbol: swapQuote.fromTokenSymbol || '',
+          tokenAddress: swapQuote.request.fromToken?.address || ''
+        });
+      }
+      broadcastTransactionStatus(swapResult.txId, 'pending', swapNetwork);
+      startSwapStatusPolling(swapResult.provider, swapResult.txId, swapNetwork);
+
+      return { result: swapResult };
+    }
+
+    case 'GET_SWAP_STATUS': {
+      if (!isUnlocked) throw new Error('Wallet is locked');
+      if (!walletService) throw new Error('Wallet not initialized');
+      const status = await walletService.getSwapStatus({
+        provider: payload.provider,
+        txId: payload.txId,
+        fromNetworkKey: payload.fromNetworkKey
+      });
+      return { status };
     }
 
     case 'GET_GAS_ESTIMATE': {

@@ -33,6 +33,11 @@ import {
   SendTransactionResult,
   StakePositionView,
   StakeActionResult,
+  SwapCapabilities,
+  SwapQuoteRequest,
+  SwapQuoteView,
+  SwapPhase,
+  SwapExecuteResult,
 } from '../services';
 import { batchUpdates } from '../utils';
 import { isNetworkCompatible } from '../utils/networkCompatibility';
@@ -167,6 +172,12 @@ const getLockedState = () => ({
   isLoadingStakePositions: false,
   stakePositionsLastUpdated: null,
   stakePositionsError: null,
+  // A quote is priced for a specific wallet, pair, and moment — it must never
+  // outlive the unlocked session that produced it.
+  swapQuote: null,
+  isLoadingSwapQuote: false,
+  swapQuoteError: null,
+  swapPhase: null,
 });
 
 // ============================================================================
@@ -234,6 +245,12 @@ interface WalletStore {
   stakePositionsLastUpdated: number | null;
   /** Set when the last positions load failed — lets the UI distinguish "no positions" from "couldn't load". */
   stakePositionsError: string | null;
+  /** Current swap quote, or null when none has been fetched yet. */
+  swapQuote: SwapQuoteView | null;
+  isLoadingSwapQuote: boolean;
+  swapQuoteError: string | null;
+  /** Latest execution phase broadcast by executeSwap, or null when idle. */
+  swapPhase: SwapPhase | null;
 
   // Networks
   networks: Record<string, NetworkConfig>;
@@ -361,7 +378,17 @@ interface WalletStore {
   unstake: (positionId: string) => Promise<StakeActionResult>;
   /** Withdraw a fully deactivated position back to the wallet. */
   withdrawStake: (positionId: string) => Promise<StakeActionResult>;
-  
+
+  /**
+   * Fetch a swap quote. Stores it (and any error) for the swap screen;
+   * quotes expire, so the screen re-quotes rather than reusing a stale one.
+   */
+  loadSwapQuote: (request: SwapQuoteRequest) => Promise<void>;
+  /** Clear the current quote, phase, and error (on step change / unmount). */
+  clearSwapQuote: () => void;
+  /** Execute the stored quote; schedules a balance refresh on success. */
+  executeSwap: (quote: SwapQuoteView) => Promise<SwapExecuteResult>;
+
   clearError: () => void;
 }
 
@@ -417,6 +444,10 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
   isLoadingStakePositions: false,
   stakePositionsLastUpdated: null,
   stakePositionsError: null,
+  swapQuote: null,
+  isLoadingSwapQuote: false,
+  swapQuoteError: null,
+  swapPhase: null,
 
   networks: {},
   enabledNetworks: [],
@@ -1029,6 +1060,11 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         stakePositions: [],
         stakePositionsLastUpdated: null,
         stakePositionsError: null,
+        // A quote is bound to a specific network pair — never carry one
+        // across a network switch.
+        swapQuote: null,
+        swapQuoteError: null,
+        swapPhase: null,
         ...(recentsChanged ? { recentNetworks: nextRecents } : {}),
       });
 
@@ -1197,6 +1233,46 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
     }
   },
 
+  loadSwapQuote: async (request: SwapQuoteRequest) => {
+    if (!get().isUnlocked) return;
+    try {
+      set({ isLoadingSwapQuote: true, swapQuoteError: null });
+      const swapQuote = await walletBridge.getSwapQuote(request);
+      set({ swapQuote, isLoadingSwapQuote: false, swapQuoteError: null });
+    } catch (error) {
+      console.error('[WalletStore] Swap quote failed:', error);
+      // Drop the stale quote — showing an old price next to a fresh error
+      // would invite the user to act on a number that no longer holds.
+      set({
+        swapQuote: null,
+        isLoadingSwapQuote: false,
+        swapQuoteError:
+          error instanceof Error ? error.message : 'Failed to fetch a swap quote',
+      });
+    }
+  },
+
+  clearSwapQuote: () => {
+    set({ swapQuote: null, isLoadingSwapQuote: false, swapQuoteError: null, swapPhase: null });
+  },
+
+  executeSwap: async (quote: SwapQuoteView) => {
+    try {
+      set({ swapPhase: null });
+      const result = await walletBridge.executeSwap(quote, (phase) => set({ swapPhase: phase }));
+      // Source balance drops as soon as the swap tx lands; the destination
+      // side may take minutes on cross-chain routes.
+      setTimeout(() => get().refreshBalances({ silent: true, force: true }), 3000);
+      return result;
+    } catch (error) {
+      console.error('[WalletStore] Swap failed:', error);
+      set({ error: error instanceof Error ? error.message : 'Swap failed' });
+      throw error;
+    } finally {
+      set({ swapPhase: null });
+    }
+  },
+
   setTransactionFilter: (filter: 'all' | 'sent' | 'received') => {
     set({ transactionFilter: filter });
   },
@@ -1293,6 +1369,9 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         stakePositions: [],
         stakePositionsLastUpdated: null,
         stakePositionsError: null,
+        swapQuote: null,
+        swapQuoteError: null,
+        swapPhase: null,
       });
 
       // Refresh data (don't await - can run in background, silently)
@@ -1408,6 +1487,9 @@ export const useWalletStore = create<WalletStore>((set, get) => ({
         stakePositions: [],
         stakePositionsLastUpdated: null,
         stakePositionsError: null,
+        swapQuote: null,
+        swapQuoteError: null,
+        swapPhase: null,
       });
 
       // Refresh balances and transactions for new account (silent background refresh)
