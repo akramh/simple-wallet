@@ -63,6 +63,46 @@ export function quoteSecondsRemaining(expiresAt, now) {
 }
 
 /**
+ * Estimate the next epoch boundary from the current slot offset.
+ *
+ * Solana targets roughly 400ms slots, so this is presentation guidance rather
+ * than a chain guarantee. Invalid or complete epoch data returns null.
+ *
+ * @param {number | undefined} slotIndex - Current slot offset within the epoch.
+ * @param {number | undefined} slotsInEpoch - Total slots in the current epoch.
+ * @param {number} now - Current Unix timestamp in milliseconds.
+ * @param {number} averageSlotMs - Display estimate per remaining slot.
+ * @returns {number | null} Estimated boundary timestamp in milliseconds.
+ */
+export function estimateEpochBoundaryAt(
+  slotIndex,
+  slotsInEpoch,
+  now,
+  averageSlotMs = 400,
+) {
+  if (!Number.isFinite(slotIndex) || !Number.isFinite(slotsInEpoch) ||
+      !Number.isFinite(now) || !Number.isFinite(averageSlotMs) ||
+      slotIndex < 0 || slotsInEpoch <= 0 || slotIndex >= slotsInEpoch || averageSlotMs <= 0) {
+    return null;
+  }
+  return now + (slotsInEpoch - slotIndex) * averageSlotMs;
+}
+
+/**
+ * Calculate bounded epoch progress for display.
+ *
+ * @param {number | undefined} slotIndex - Current slot offset within the epoch.
+ * @param {number | undefined} slotsInEpoch - Total slots in the current epoch.
+ * @returns {number | null} Progress percentage from 0 through 100.
+ */
+export function epochProgressPercent(slotIndex, slotsInEpoch) {
+  if (!Number.isFinite(slotIndex) || !Number.isFinite(slotsInEpoch) || slotsInEpoch <= 0) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, slotIndex / slotsInEpoch * 100));
+}
+
+/**
  * Resolve the permitted primary action for a staking position.
  *
  * @param {string} state - Chain-neutral staking lifecycle state.

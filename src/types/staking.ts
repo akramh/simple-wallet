@@ -58,6 +58,20 @@ export interface ValidatorSummary {
   delinquent: boolean;
 }
 
+/** One inflation reward paid to a staking position. */
+export interface StakeRewardView {
+  /** Reward amount formatted in the chain's native unit. */
+  amountFormatted: string;
+  /** Epoch the reward belongs to. */
+  epoch: number;
+  /** Slot at which the reward became effective, when provided by the chain. */
+  effectiveSlot?: number;
+  /** Stake-account balance immediately after the reward, formatted in native units. */
+  postBalanceFormatted?: string;
+  /** Validator commission applied to the reward, when provided by the chain. */
+  commissionPercent?: number | null;
+}
+
 /**
  * A single staking position as rendered by the UIs.
  *
@@ -96,10 +110,38 @@ export interface StakePositionView {
   deactivationEpoch?: number | null;
   /** The chain's current epoch at fetch time, for "staked N epochs ago" UX. */
   currentEpoch?: number;
+  /** Current slot offset within the epoch, used for progress and timing estimates. */
+  currentEpochSlot?: number;
+  /** Total slots in the current epoch. */
+  slotsInEpoch?: number;
   /** USD value of the total balance; undefined when prices are unavailable (testnets). */
   usdValue?: number;
   /** Most recent reward amount, formatted in native units, when cheaply available. */
   lastRewardFormatted?: string;
+  /** Metadata for the most recent reward, when the RPC indexes it. */
+  lastReward?: StakeRewardView;
+  /** Staker authority controlling delegation changes, when exposed by the chain. */
+  stakerAuthority?: string;
+  /** Withdrawer authority controlling fund recovery, when exposed by the chain. */
+  withdrawerAuthority?: string;
+}
+
+/** Detailed, on-demand staking position data used by the extension detail view. */
+export interface StakePositionDetailsView extends StakePositionView {
+  /** Earliest indexed activity for the stake account, used as its creation reference. */
+  accountCreatedAt?: number;
+  /** Transaction signature for the earliest indexed stake-account activity. */
+  accountCreationSignature?: string;
+  /** Slot containing the earliest indexed stake-account activity. */
+  accountCreationSlot?: number;
+  /** Approximate historical native-token price nearest account creation. */
+  priceAtCreationUsd?: number;
+  /** Timestamp of the historical price sample used for the approximation. */
+  priceAtCreationSampledAt?: number;
+  /** Approximate USD value of the delegated amount at account creation. */
+  valueAtCreationUsd?: number;
+  /** Recent inflation rewards, newest first. */
+  rewardHistory: StakeRewardView[];
 }
 
 /** Result of a staking action (stake / unstake / withdraw). */

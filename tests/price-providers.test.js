@@ -543,6 +543,38 @@ describe('AlchemyPriceProvider', () => {
     setAlchemyApiKey(undefined);
   });
 
+  it('getAlchemyHistoricalPriceAt returns the sample nearest the requested time', async () => {
+    let capturedUrl = '';
+    let capturedBody = null;
+    globalThis.fetch = async (url, init) => {
+      capturedUrl = url;
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        json: async () => ({
+          symbol: 'SOL',
+          currency: 'usd',
+          data: [
+            { value: '48.25', timestamp: '2024-01-01T09:00:00Z' },
+            { value: '49.50', timestamp: '2024-01-01T10:00:00Z' },
+          ],
+        }),
+      };
+    };
+
+    const { getAlchemyHistoricalPriceAt, setAlchemyApiKey } = await import('../dist/price-providers/alchemy.js');
+    setAlchemyApiKey('test-key-history');
+    const target = Date.parse('2024-01-01T09:50:00Z');
+    const result = await getAlchemyHistoricalPriceAt('sol', target);
+
+    assert.deepStrictEqual(result, { price: 49.5, timestamp: Date.parse('2024-01-01T10:00:00Z') });
+    assert.strictEqual(capturedUrl, 'https://api.g.alchemy.com/prices/v1/test-key-history/tokens/historical');
+    assert.strictEqual(capturedBody.symbol, 'SOL');
+    assert.strictEqual(capturedBody.interval, '1h');
+    assert.strictEqual(capturedBody.withMarketData, false);
+    setAlchemyApiKey(undefined);
+  });
+
   it('getCurrentPrice throws when ALCHEMY_API_KEY is not set', async () => {
     const { AlchemyPriceProvider, setAlchemyApiKey } = await import('../dist/price-providers/alchemy.js');
     setAlchemyApiKey(undefined);
@@ -713,4 +745,3 @@ describe('Provider registration order', () => {
     priceProviderManager.clearCache();
   });
 });
-

@@ -59,6 +59,8 @@ import {
 } from './solana/index.js';
 import type {
   StakePositionView,
+  StakePositionDetailsView,
+  StakeRewardView,
   ValidatorSummary,
   StakeActionResult,
   StakingCapabilities,
@@ -87,6 +89,7 @@ import {
   approveErc20,
 } from './ethereum/transaction.js';
 import { getSolanaPrice } from './price-service.js';
+import { getAlchemyHistoricalPriceAt } from './price-providers/index.js';
 import { pricesAvailableForNetwork } from './network-visibility.js';
 import { PublicKey, Keypair } from '@solana/web3.js';
 // @ts-ignore
@@ -2030,6 +2033,62 @@ export class WalletAppService {
   }
 
   /**
+   * Fetch one staking position with on-demand activity, historical price, and
+   * recent reward enrichment for a detail view.
+   *
+   * @param positionId - Opaque staking position identifier.
+   * @param networkKey - Network to query; defaults to the active network.
+   * @returns Detailed position data with best-effort optional enrichments.
+   * @throws Error when staking is unsupported or the position is not owned.
+   * @async
+   */
+  async getStakePositionDetails(
+    positionId: string,
+    networkKey?: string,
+  ): Promise<StakePositionDetailsView> {
+    const key = networkKey ?? this.config.network;
+    this.assertStakingSupported(key);
+    const positions = await this.getSolanaStakePositions(key);
+    const position = positions.find((candidate) => candidate.positionId === positionId);
+    if (!position) throw new Error('Staking position not found for this wallet');
+
+    const provider = this.getSolanaProviderForNetwork(key);
+    const [activity, rewardHistory] = await Promise.all([
+      provider.getAccountFirstActivity(positionId).catch(() => null),
+      provider.getInflationRewardHistory(positionId, position.currentEpoch ?? 0, 5)
+        .catch(() => []),
+    ]);
+    const historicalPrice = activity?.timestamp
+      ? await this.getSolUsdPriceAt(key, activity.timestamp)
+      : null;
+    const delegatedAmount = Number(position.amountFormatted);
+
+    return {
+      ...position,
+      accountCreatedAt: activity?.timestamp,
+      accountCreationSignature: activity?.signature,
+      accountCreationSlot: activity?.slot,
+      priceAtCreationUsd: historicalPrice?.price,
+      priceAtCreationSampledAt: historicalPrice?.timestamp,
+      valueAtCreationUsd:
+        historicalPrice && Number.isFinite(delegatedAmount)
+          ? delegatedAmount * historicalPrice.price
+          : undefined,
+      rewardHistory: rewardHistory
+        .filter((reward) => reward.amountLamports > 0)
+        .map((reward): StakeRewardView => ({
+          amountFormatted: lamportsToSol(reward.amountLamports),
+          epoch: reward.epoch,
+          effectiveSlot: reward.effectiveSlot,
+          postBalanceFormatted: reward.postBalanceLamports === undefined
+            ? undefined
+            : lamportsToSol(reward.postBalanceLamports),
+          commissionPercent: reward.commissionPercent,
+        })),
+    };
+  }
+
+  /**
    * List validators available to stake with on a network, sorted by activated
    * stake descending (delinquent validators last).
    *
@@ -2182,6 +2241,19 @@ export class WalletAppService {
     }
   }
 
+  /** Best-effort historical SOL price sample; never blocks stake details. */
+  private async getSolUsdPriceAt(
+    networkKey: string,
+    timestamp: number,
+  ): Promise<{ price: number; timestamp: number } | null> {
+    if (!pricesAvailableForNetwork(this.config.networks[networkKey])) return null;
+    try {
+      return await getAlchemyHistoricalPriceAt('SOL', timestamp);
+    } catch {
+      return null;
+    }
+  }
+
   private async getSolanaStakePositions(networkKey: string): Promise<StakePositionView[]> {
     const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
     if (!solInfo) {
@@ -2203,9 +2275,9 @@ export class WalletAppService {
     }
 
     // Rewards are display-only; fallback RPCs may not index them — soft-fail.
-    let rewards: Array<number | null> = positions.map(() => null);
+    let rewards: Awaited<ReturnType<SolanaProvider['getInflationRewards']>> = positions.map(() => null);
     try {
-      rewards = await provider.getInflationRewardLamports(
+      rewards = await provider.getInflationRewards(
         positions.map((p) => p.stakeAccountAddress)
       );
     } catch {
@@ -2240,10 +2312,23 @@ export class WalletAppService {
         activationEpoch: position.activationEpoch,
         deactivationEpoch: position.deactivationEpoch,
         currentEpoch: epochInfo.epoch,
+        currentEpochSlot: epochInfo.slotIndex,
+        slotsInEpoch: epochInfo.slotsInEpoch,
         usdValue:
           price !== null ? (position.totalLamports / 1_000_000_000) * price : undefined,
         lastRewardFormatted:
-          typeof reward === 'number' && reward > 0 ? lamportsToSol(reward) : undefined,
+          reward && reward.amountLamports > 0 ? lamportsToSol(reward.amountLamports) : undefined,
+        lastReward: reward && reward.amountLamports > 0 ? {
+          amountFormatted: lamportsToSol(reward.amountLamports),
+          epoch: reward.epoch,
+          effectiveSlot: reward.effectiveSlot,
+          postBalanceFormatted: reward.postBalanceLamports === undefined
+            ? undefined
+            : lamportsToSol(reward.postBalanceLamports),
+          commissionPercent: reward.commissionPercent,
+        } : undefined,
+        stakerAuthority: position.stakerAuthority || undefined,
+        withdrawerAuthority: position.withdrawerAuthority || undefined,
       };
     });
   }
