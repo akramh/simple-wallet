@@ -1,27 +1,38 @@
 /**
- * @fileoverview Staking overview for the extension popup/sidepanel.
+ * @fileoverview Single-canvas staking portfolio for the extension popup and
+ * sidepanel.
  *
- * Lists the wallet's staking positions on the active network (validator,
- * amount, lifecycle state, USD value, APY) and dispatches unstake / withdraw
- * actions. Opens StakeFlowView for new stakes. Consumes only the
- * chain-neutral staking message protocol — no Solana-specific concepts.
+ * Positions stay compact and scannable while lifecycle details and destructive
+ * actions move into an in-app confirmation sheet shared with the stake flow.
  *
  * @responsibilities
- * - Fetch and render staking positions via GET_STAKE_POSITIONS
- * - Gate Unstake (active/activating) and Withdraw (withdrawable) per state
- * - Dispatch UNSTAKE / WITHDRAW_STAKE and surface results
+ * - Fetch staking positions and capability gates for the active network
+ * - Summarize staked value, rewards, and weighted validator yield
+ * - Dispatch unstake and withdraw requests after an explicit in-app review
  *
  * @security
- * - No secrets handled in UI; signing happens in the service worker via the
- *   session password
+ * - No secrets or signing material are handled in UI state.
+ * - Unstake and withdraw signing remains isolated in the service worker.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { sendMessageWithRetry } from '../utils/messaging';
-import { EmptyState, ScreenHeader } from './ui';
+import { stakingPositionAction } from '../utils/swapStake.js';
 import StakeFlowView from './StakeFlowView';
+import {
+  AssetMark,
+  FlowButton,
+  FlowCallout,
+  FlowDetailRow,
+  FlowDetails,
+  FlowHeader,
+  FlowSheet,
+  StatusPill,
+} from './SwapStakeUI';
+import { Icon } from './ui';
+import solIcon from '../../assets/img/solana-logo.svg';
 
-/** Mirror of src/types/staking.ts StakePositionView (structural). */
+/** Chain-neutral staking position shape returned by the service worker. */
 export interface StakePositionViewData {
   networkKey: string;
   chain: string;
@@ -39,20 +50,14 @@ export interface StakePositionViewData {
   reserveFormatted?: string;
   totalFormatted: string;
   state: 'pending' | 'activating' | 'active' | 'deactivating' | 'withdrawable' | 'inactive';
-  /**
-   * Epoch the position was staked at; null when the chain doesn't expose it
-   * or the position is undelegated. Mirrors StakePositionView in
-   * src/types/staking.ts — the service worker forwards that shape verbatim.
-   */
   activationEpoch?: number | null;
-  /** Epoch the unstake was requested at; null when not deactivating. */
   deactivationEpoch?: number | null;
-  /** The chain's current epoch at fetch time, for "staked N epochs ago" UX. */
   currentEpoch?: number;
   usdValue?: number;
   lastRewardFormatted?: string;
 }
 
+/** Staking operations exposed by the active network implementation. */
 export interface StakingCapabilitiesData {
   canStake: boolean;
   canUnstake: boolean;
@@ -65,229 +70,74 @@ export interface StakingCapabilitiesData {
 interface Props {
   network: string;
   networks: Record<string, any>;
+  availableBalance?: string;
+  nativePriceUsd?: number | null;
   onBack: () => void;
 }
 
-const STATE_COLORS: Record<string, string> = {
-  active: '#22c55e',
-  activating: '#eab308',
-  deactivating: '#eab308',
-  withdrawable: '#38bdf8',
-  pending: '#eab308',
-  inactive: '#9ca3af',
+type PendingAction = {
+  type: 'UNSTAKE' | 'WITHDRAW_STAKE';
+  position: StakePositionViewData;
 };
 
-/** Compact validator label: name when known, else truncated id. */
-export function validatorLabel(v: { name: string | null; id: string }): string {
-  if (v.name) return v.name;
-  if (!v.id) return 'Undelegated';
-  return `${v.id.slice(0, 4)}…${v.id.slice(-4)}`;
+/**
+ * Return a compact validator label while preserving the original identifier.
+ *
+ * @param validator - Validator identity returned by the staking provider.
+ * @returns Validator name, an undelegated label, or a truncated identifier.
+ */
+export function validatorLabel(validator: { name: string | null; id: string }): string {
+  if (validator.name) return validator.name;
+  if (!validator.id) return 'Undelegated';
+  return `${validator.id.slice(0, 4)}…${validator.id.slice(-4)}`;
 }
 
-function formatUsd(value?: number): string | null {
-  if (typeof value !== 'number') return null;
+function formatUsd(value: number): string {
   if (value > 0 && value < 0.01) return '<$0.01';
   return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-/** Trim trailing zeros from a fixed-decimal amount for display. */
-function trimAmount(amount: string): string {
-  if (!amount.includes('.')) return amount;
-  return amount.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
-}
-
-/**
- * Round a native-unit amount for display. Core amounts arrive as 9-decimal
- * fixed strings; showing them raw is what made the cards feel cramped.
- * Values smaller than the cutoff render as "<0.0001"-style so dust never
- * shows as a bare 0.
- */
-function formatAmountDisplay(amount: string, maxDecimals: number = 4): string {
-  const n = parseFloat(amount);
-  if (!Number.isFinite(n)) return trimAmount(amount);
-  if (n === 0) return '0';
+function formatAmount(amount: string, maxDecimals = 4): string {
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric)) return amount;
+  if (numeric === 0) return '0';
   const cutoff = 1 / 10 ** maxDecimals;
-  if (Math.abs(n) < cutoff) return `<${cutoff.toFixed(maxDecimals)}`;
-  return n.toLocaleString('en-US', { maximumFractionDigits: maxDecimals });
+  if (Math.abs(numeric) < cutoff) return `<${cutoff.toFixed(maxDecimals)}`;
+  return numeric.toLocaleString('en-US', { maximumFractionDigits: maxDecimals });
 }
 
-/** One label/value line inside a position card. */
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '3px 0' }}>
-      <span style={{ opacity: 0.6, fontSize: 12 }}>{label}</span>
-      <span style={{ fontSize: 12, textAlign: 'right', wordBreak: 'break-all' }}>{value}</span>
-    </div>
-  );
-}
-
-/** Rounded state badge (colored dot + label). */
-function StatePill({ state }: { state: string }) {
-  const color = STATE_COLORS[state] || '#9ca3af';
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '2px 10px',
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 600,
-        textTransform: 'uppercase',
-        letterSpacing: '0.04em',
-        color,
-        background: `${color}1f`,
-        border: `1px solid ${color}55`,
-      }}
-    >
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
-      {state}
-    </span>
-  );
+function positionHint(position: StakePositionViewData): string | null {
+  if (position.state === 'activating') return 'Activates at the next epoch boundary';
+  if (position.state === 'deactivating') return 'Withdraw unlocks after deactivation';
+  if (position.state === 'withdrawable') return 'Ready to return to your wallet';
+  if (position.validator.delinquent) return 'Validator is currently delinquent';
+  return null;
 }
 
 /**
- * A single staking position card: validator + state up top, the staked
- * amount as the hero line, then labeled detail rows (epochs, reserve, APY,
- * reward, account) and state-gated actions.
- */
-function PositionCard({
-  position: p,
-  nativeSymbol,
-  busy,
-  onUnstake,
-  onWithdraw,
-}: {
-  position: StakePositionViewData;
-  nativeSymbol: string;
-  busy: boolean;
-  onUnstake: () => void;
-  onWithdraw: () => void;
-}) {
-  const usd = formatUsd(p.usdValue);
-  const canUnstake = p.state === 'active' || p.state === 'activating';
-  const canWithdraw = p.state === 'withdrawable';
-  const hasEpochs = typeof p.activationEpoch === 'number';
-  const epochsAgo =
-    hasEpochs && typeof p.currentEpoch === 'number'
-      ? p.currentEpoch - (p.activationEpoch as number)
-      : null;
-
-  return (
-    <div
-      style={{
-        border: '1px solid rgba(128,128,128,0.25)',
-        borderRadius: 12,
-        padding: 14,
-      }}
-    >
-      {/* Header: validator identity + lifecycle state */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {validatorLabel(p.validator)}
-        </span>
-        <StatePill state={p.state} />
-      </div>
-
-      {/* Hero amount */}
-      <div style={{ marginTop: 10, marginBottom: 10 }}>
-        <div style={{ fontSize: 20, fontWeight: 700 }}>
-          {formatAmountDisplay(p.totalFormatted)} {nativeSymbol}
-        </div>
-        {usd && <div style={{ opacity: 0.6, fontSize: 12, marginTop: 2 }}>{usd}</div>}
-      </div>
-
-      {/* Details */}
-      <div style={{ borderTop: '1px solid rgba(128,128,128,0.18)', paddingTop: 8 }}>
-        {hasEpochs && (
-          <DetailRow
-            label="Staked at epoch"
-            value={
-              <>
-                {p.activationEpoch}
-                {epochsAgo !== null && epochsAgo >= 0 && (
-                  <span style={{ opacity: 0.6 }}>
-                    {' '}({epochsAgo === 0 ? 'this epoch' : `${epochsAgo} epoch${epochsAgo === 1 ? '' : 's'} ago`})
-                  </span>
-                )}
-              </>
-            }
-          />
-        )}
-        {typeof p.deactivationEpoch === 'number' && (
-          <DetailRow label="Unstaked at epoch" value={p.deactivationEpoch} />
-        )}
-        {typeof p.currentEpoch === 'number' && (
-          <DetailRow label="Current epoch" value={p.currentEpoch} />
-        )}
-        {p.reserveFormatted && (
-          <DetailRow label="Rent reserve" value={`${formatAmountDisplay(p.reserveFormatted, 6)} ${nativeSymbol}`} />
-        )}
-        {p.validator.apyPercent !== null && (
-          <DetailRow label="APY" value={`${p.validator.apyPercent.toFixed(1)}%`} />
-        )}
-        {p.validator.commissionPercent !== null && (
-          <DetailRow label="Commission" value={`${p.validator.commissionPercent}%`} />
-        )}
-        {p.lastRewardFormatted && (
-          <DetailRow label="Last reward" value={`+${formatAmountDisplay(p.lastRewardFormatted, 6)} ${nativeSymbol}`} />
-        )}
-        <DetailRow label="Stake account" value={`${p.positionId.slice(0, 6)}…${p.positionId.slice(-6)}`} />
-      </div>
-
-      {/* State-gated actions / hints */}
-      {(canUnstake || canWithdraw) && (
-        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-          {canUnstake && (
-            <button className="btn btn-secondary" style={{ flex: 1 }} disabled={busy} onClick={onUnstake}>
-              {busy ? 'Unstaking…' : 'Unstake'}
-            </button>
-          )}
-          {canWithdraw && (
-            <button className="btn btn-primary" style={{ flex: 1 }} disabled={busy} onClick={onWithdraw}>
-              {busy ? 'Withdrawing…' : 'Withdraw'}
-            </button>
-          )}
-        </div>
-      )}
-      {p.state === 'activating' && (
-        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.6 }}>
-          Activates at the next epoch boundary
-        </div>
-      )}
-      {p.state === 'deactivating' && (
-        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.6 }}>
-          Withdraw unlocks after the next epoch boundary
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Staking overview screen.
+ * Render the redesigned staking portfolio and action sheets.
  *
- * @param props - Component props
- * @returns Staking view component
+ * @param props - Active network context, native balance/price, and back handler.
+ * @returns Staking overview or the single-canvas new-stake flow.
  */
-function StakingView({ network, networks, onBack }: Props) {
+function StakingView({ network, networks, availableBalance, nativePriceUsd, onBack }: Props) {
   const [positions, setPositions] = useState<StakePositionViewData[]>([]);
   const [capabilities, setCapabilities] = useState<StakingCapabilitiesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; message: string } | null>(null);
   const [showStakeFlow, setShowStakeFlow] = useState(false);
-  /** positionId of an action in flight; disables that row's button. */
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [actingOn, setActingOn] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const nativeSymbol = networks[network]?.nativeSymbol || 'SOL';
+  const nativeIcon = nativeSymbol === 'SOL' ? solIcon : null;
 
   const loadPositions = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [positionsResp, capsResp] = await Promise.all([
+      const [positionsResponse, capabilitiesResponse] = await Promise.all([
         sendMessageWithRetry<{ positions?: StakePositionViewData[]; error?: string }>({
           type: 'GET_STAKE_POSITIONS',
           payload: { networkKey: network },
@@ -297,12 +147,12 @@ function StakingView({ network, networks, onBack }: Props) {
           payload: { networkKey: network },
         }),
       ]);
-      if (positionsResp?.error) throw new Error(positionsResp.error);
-      setPositions(positionsResp?.positions || []);
-      if (capsResp?.capabilities) setCapabilities(capsResp.capabilities);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load staking positions');
+      if (positionsResponse?.error) throw new Error(positionsResponse.error);
+      setPositions(positionsResponse?.positions ?? []);
+      setCapabilities(capabilitiesResponse?.capabilities ?? null);
+    } catch (loadError: any) {
       setPositions([]);
+      setError(loadError?.message || 'Failed to load staking positions');
     } finally {
       setLoading(false);
     }
@@ -312,29 +162,49 @@ function StakingView({ network, networks, onBack }: Props) {
     loadPositions();
   }, [loadPositions]);
 
-  const runAction = async (type: 'UNSTAKE' | 'WITHDRAW_STAKE', position: StakePositionViewData) => {
-    const confirmText = type === 'UNSTAKE'
-      ? `Unstake ${formatAmountDisplay(position.totalFormatted)} ${nativeSymbol} from ${validatorLabel(position.validator)}?` +
-        (capabilities ? `\n\n${capabilities.deactivationNote}` : '')
-      : `Withdraw ${formatAmountDisplay(position.totalFormatted)} ${nativeSymbol} back to your wallet?`;
-    if (!window.confirm(confirmText)) return;
+  const summary = useMemo(() => {
+    const total = positions.reduce((sum, position) => sum + (Number(position.totalFormatted) || 0), 0);
+    const rewards = positions.reduce((sum, position) => sum + (Number(position.lastRewardFormatted) || 0), 0);
+    const weightedYield = positions.reduce((sum, position) => {
+      const amount = Number(position.totalFormatted) || 0;
+      return sum + amount * (position.validator.apyPercent ?? 0);
+    }, 0);
+    const fallbackUsd = nativePriceUsd === null || nativePriceUsd === undefined ? null : total * nativePriceUsd;
+    const reportedUsd = positions.reduce((sum, position) => sum + (position.usdValue ?? 0), 0);
+    const hasReportedUsd = positions.some((position) => position.usdValue !== undefined);
+    return {
+      total,
+      rewards,
+      apy: total > 0 ? weightedYield / total : 0,
+      usd: hasReportedUsd ? reportedUsd : fallbackUsd,
+    };
+  }, [nativePriceUsd, positions]);
 
+  const confirmAction = async () => {
+    if (!pendingAction) return;
+    const { type, position } = pendingAction;
     setActingOn(position.positionId);
     setNotice(null);
     try {
-      const resp = await sendMessageWithRetry<{ result?: { txId: string }; error?: string }>({
+      const response = await sendMessageWithRetry<{ result?: { txId: string }; error?: string }>({
         type,
         payload: { positionId: position.positionId, networkKey: network },
       });
-      if (resp?.error) throw new Error(resp.error);
-      setNotice(
-        type === 'UNSTAKE'
-          ? 'Unstake submitted. The position deactivates at the next epoch boundary.'
-          : 'Withdraw submitted. Funds return to your balance once confirmed.'
-      );
+      if (response?.error) throw new Error(response.error);
+      setPendingAction(null);
+      setNotice({
+        tone: 'success',
+        message: type === 'UNSTAKE'
+          ? 'Unstake submitted. This position will unlock after deactivation.'
+          : 'Withdrawal submitted. Funds will return after confirmation.',
+      });
       await loadPositions();
-    } catch (err: any) {
-      setNotice(`${type === 'UNSTAKE' ? 'Unstake' : 'Withdraw'} failed: ${err?.message || 'unknown error'}`);
+    } catch (actionError: any) {
+      setPendingAction(null);
+      setNotice({
+        tone: 'danger',
+        message: `${type === 'UNSTAKE' ? 'Unstake' : 'Withdrawal'} failed: ${actionError?.message || 'unknown error'}`,
+      });
     } finally {
       setActingOn(null);
     }
@@ -346,6 +216,8 @@ function StakingView({ network, networks, onBack }: Props) {
         network={network}
         networks={networks}
         capabilities={capabilities}
+        availableBalance={availableBalance}
+        nativePriceUsd={nativePriceUsd}
         onClose={(didStake) => {
           setShowStakeFlow(false);
           if (didStake) loadPositions();
@@ -354,54 +226,156 @@ function StakingView({ network, networks, onBack }: Props) {
     );
   }
 
+  const actionPosition = pendingAction?.position;
+  const isUnstake = pendingAction?.type === 'UNSTAKE';
+
   return (
-    <div className="takeover">
-      <ScreenHeader title="Staking" onBack={onBack} />
-
-      <div style={{ padding: '0 16px 16px' }}>
-        <button
-          className="btn btn-primary"
-          style={{ width: '100%', marginBottom: 12 }}
-          onClick={() => setShowStakeFlow(true)}
-        >
-          Stake {nativeSymbol}
-        </button>
-
-        {notice && (
-          <div className="activity-fallback-chip" style={{ marginBottom: 8 }}>
-            <span>{notice}</span>
+    <div className="swap-stake-screen">
+      <FlowHeader title="Staking" onBack={onBack} />
+      <main className="swap-stake-scroll staking-redesign">
+        <section className="staking-redesign-summary">
+          <div className="staking-redesign-summary__label">
+            <span>Total staked</span>
+            <StatusPill state="active" label={`${positions.length} position${positions.length === 1 ? '' : 's'}`} />
           </div>
+          <div className="staking-redesign-summary__amount">
+            <AssetMark label={nativeSymbol} src={nativeIcon} size="large" />
+            <div>
+              <strong>{formatAmount(String(summary.total))} <span>{nativeSymbol}</span></strong>
+              <small>{summary.usd === null ? 'USD value unavailable' : formatUsd(summary.usd)}</small>
+            </div>
+          </div>
+          <div className="staking-redesign-summary__stats">
+            <div><small>Avg. APY</small><strong>{summary.apy ? `${summary.apy.toFixed(1)}%` : '—'}</strong></div>
+            <div><small>Latest rewards</small><strong>{summary.rewards ? `+${formatAmount(String(summary.rewards), 6)} ${nativeSymbol}` : '—'}</strong></div>
+          </div>
+        </section>
+
+        {capabilities && (!capabilities.canUnstake || !capabilities.canWithdraw) && (
+          <FlowCallout tone="warning" title="Network lifecycle limits">
+            {!capabilities.canUnstake
+              ? 'Unstaking is currently unavailable. Existing positions remain visible.'
+              : 'Withdrawal is currently unavailable until the network enables it.'}
+          </FlowCallout>
         )}
+
+        {!loading && !capabilities && (
+          <FlowCallout tone="warning" title="Staking actions unavailable">
+            Couldn’t verify this network’s staking capabilities. Your existing positions remain visible.
+          </FlowCallout>
+        )}
+
+        {notice && <FlowCallout tone={notice.tone}>{notice.message}</FlowCallout>}
+
+        <div className="staking-redesign-section-heading">
+          <span>Your positions</span>
+          <button type="button" onClick={loadPositions} disabled={loading} aria-label="Refresh staking positions">
+            <Icon name="refresh" size={14} className={loading ? 'swap-stake-spinner' : ''} decorative />
+          </button>
+        </div>
 
         {loading ? (
-          <div className="loading">Loading staking positions...</div>
+          <div className="staking-redesign-state"><Icon name="loader" size={20} className="swap-stake-spinner" decorative />Loading positions…</div>
         ) : error ? (
-          <EmptyState
-            icon="alert-triangle"
-            title="Couldn't load positions"
-            subtitle={error}
-          />
+          <div className="staking-redesign-state is-error">
+            <Icon name="alert-triangle" size={20} decorative />
+            <strong>Couldn’t load positions</strong>
+            <span>{error}</span>
+            <FlowButton variant="secondary" onClick={loadPositions}>Try again</FlowButton>
+          </div>
         ) : positions.length === 0 ? (
-          <EmptyState
-            icon="clipboard"
-            title="No staking positions yet"
-            subtitle={`Stake ${nativeSymbol} with a validator to start earning rewards.`}
-          />
+          <div className="staking-redesign-state">
+            <span className="staking-redesign-state__mark"><Icon name="wallet" size={23} decorative /></span>
+            <strong>No staking positions yet</strong>
+            <span>Stake {nativeSymbol} with a validator to start earning rewards.</span>
+          </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {positions.map((p) => (
-              <PositionCard
-                key={p.positionId}
-                position={p}
-                nativeSymbol={nativeSymbol}
-                busy={actingOn === p.positionId}
-                onUnstake={() => runAction('UNSTAKE', p)}
-                onWithdraw={() => runAction('WITHDRAW_STAKE', p)}
-              />
-            ))}
+          <div className="staking-redesign-list">
+            {positions.map((position) => {
+              const action = capabilities ? stakingPositionAction(position.state, capabilities) : null;
+              const hint = positionHint(position);
+              return (
+                <article className="staking-redesign-position" key={position.positionId}>
+                  <div className="staking-redesign-position__top">
+                    <AssetMark label={validatorLabel(position.validator)} />
+                    <div className="staking-redesign-position__identity">
+                      <strong>{validatorLabel(position.validator)}</strong>
+                      <small>{position.validator.commissionPercent === null ? 'Validator' : `${position.validator.commissionPercent}% commission`}</small>
+                    </div>
+                    <StatusPill state={position.state} />
+                  </div>
+                  <div className="staking-redesign-position__value">
+                    <div>
+                      <strong>{formatAmount(position.totalFormatted)} {nativeSymbol}</strong>
+                      <small>{position.usdValue === undefined ? 'Staked balance' : formatUsd(position.usdValue)}</small>
+                    </div>
+                    <div>
+                      <strong className="is-success">{position.validator.apyPercent === null ? '—' : `${position.validator.apyPercent.toFixed(1)}%`}</strong>
+                      <small>APY</small>
+                    </div>
+                  </div>
+                  {hint && <div className={`staking-redesign-position__hint ${position.validator.delinquent ? 'is-danger' : ''}`}>{hint}</div>}
+                  <div className="staking-redesign-position__footer">
+                    <span>{position.positionId.slice(0, 6)}…{position.positionId.slice(-5)}</span>
+                    {action === 'unstake' && (
+                      <button type="button" disabled={actingOn === position.positionId} onClick={() => setPendingAction({ type: 'UNSTAKE', position })}>Unstake</button>
+                    )}
+                    {action === 'withdraw' && (
+                      <button type="button" disabled={actingOn === position.positionId} onClick={() => setPendingAction({ type: 'WITHDRAW_STAKE', position })}>Withdraw</button>
+                    )}
+                    {!action && (position.state === 'active' || position.state === 'activating') && capabilities?.canUnstake === false && (
+                      <span className="is-disabled">Unstaking unavailable</span>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
-      </div>
+      </main>
+
+      <footer className="swap-stake-footer">
+        <FlowButton disabled={capabilities?.canStake !== true} onClick={() => setShowStakeFlow(true)}>
+          <Icon name="plus" size={16} decorative /> {capabilities ? `Stake ${nativeSymbol}` : 'Staking unavailable'}
+        </FlowButton>
+      </footer>
+
+      <FlowSheet
+        open={!!pendingAction}
+        onClose={() => { if (!actingOn) setPendingAction(null); }}
+        title={isUnstake ? 'Review unstake' : 'Review withdrawal'}
+        size="medium"
+        footer={actingOn ? (
+          <FlowButton loading>{isUnstake ? 'Unstaking…' : 'Withdrawing…'}</FlowButton>
+        ) : (
+          <div className="swap-stake-sheet-actions">
+            <FlowButton variant="secondary" onClick={() => setPendingAction(null)}>Cancel</FlowButton>
+            <FlowButton variant={isUnstake ? 'danger' : 'primary'} onClick={confirmAction}>
+              {isUnstake ? 'Confirm unstake' : 'Confirm withdrawal'}
+            </FlowButton>
+          </div>
+        )}
+      >
+        {actionPosition && (
+          <div className="stake-review">
+            <div className="stake-review__hero">
+              <strong>{formatAmount(actionPosition.totalFormatted)} <span>{nativeSymbol}</span></strong>
+              {actionPosition.usdValue !== undefined && <small>{formatUsd(actionPosition.usdValue)}</small>}
+            </div>
+            <FlowDetails>
+              <FlowDetailRow label="Validator" value={validatorLabel(actionPosition.validator)} />
+              <FlowDetailRow label="Stake account" value={`${actionPosition.positionId.slice(0, 7)}…${actionPosition.positionId.slice(-7)}`} />
+              <FlowDetailRow label="Current state" value={actionPosition.state} />
+              {actionPosition.currentEpoch !== undefined && <FlowDetailRow label="Current epoch" value={actionPosition.currentEpoch} />}
+            </FlowDetails>
+            <FlowCallout tone={isUnstake ? 'warning' : 'info'}>
+              {isUnstake
+                ? capabilities?.deactivationNote || 'Unstaking begins deactivation. Funds are not immediately spendable.'
+                : 'This returns the unlocked stake and rent reserve to your wallet.'}
+            </FlowCallout>
+          </div>
+        )}
+      </FlowSheet>
     </div>
   );
 }

@@ -1,28 +1,46 @@
 /**
- * @fileoverview Swap wizard for the extension popup/sidepanel.
+ * @fileoverview Single-canvas swap experience for the extension popup and
+ * sidepanel.
  *
- * Four steps: pick the source token (active network), pick the destination
- * network from the capability matrix and the token on it, enter an amount
- * (debounced re-quote), then confirm. Dispatches the chain-neutral swap
- * messages; routing (same-chain 1inch vs cross-chain Mayan) and all signing
- * happen in the service worker.
+ * Token and network choices, settings, and review happen in bottom sheets so
+ * the amount and live quote remain the stable center of the flow. Routing,
+ * quoting, approval, signing, and status still cross the chain-neutral
+ * service-worker message boundary.
  *
  * @responsibilities
- * - Fetch capabilities and destination tokens via GET_SWAP_CAPABILITIES /
- *   GET_SWAP_DEST_TOKENS
- * - Debounce quote requests (the 1inch free tier is ~1 req/sec)
- * - Surface approval requirements, execution phases, and terminal status
+ * - Fetch swap capabilities, destination tokens, and debounced live quotes
+ * - Surface quote expiry, slippage, approval phases, and terminal status
+ * - Keep same-chain and cross-chain routing visible on one canvas
  *
  * @security
- * - No secrets handled in UI. Solana-source swaps are signed in the service
- *   worker with the session password; the popup never sees or asks for it.
- * - Quotes expire; the confirm step re-quotes rather than submitting a stale
- *   quote, which the service layer would reject anyway.
+ * - No secrets are handled by this UI; signing stays in the service worker.
+ * - Expired quotes cannot be submitted and must be explicitly refreshed.
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sendMessageWithRetry } from '../utils/messaging';
-import { ScreenHeader } from './ui';
+import {
+  AmountCard,
+  AssetMark,
+  AssetPill,
+  FlowButton,
+  FlowCallout,
+  FlowDetailRow,
+  FlowDetails,
+  FlowHeader,
+  FlowSheet,
+} from './SwapStakeUI';
+import { Icon } from './ui';
+import { quoteSecondsRemaining, validateSwapAmount } from '../utils/swapStake.js';
+import solIcon from '../../assets/img/solana-logo.svg';
+import ethIcon from '../../assets/img/eth_logo.svg';
+import usdcIcon from '../../assets/img/icon-usdc.png';
+import usdtIcon from '../../assets/img/usdt.svg';
+import bnbIcon from '../../assets/img/bnb.svg';
+import polIcon from '../../assets/img/pol-token.svg';
+import baseIcon from '../../assets/img/base.svg';
+import arbitrumIcon from '../../assets/img/arbitrum.svg';
+import optimismIcon from '../../assets/img/optimism-logo.svg';
 
 interface TokenData {
   symbol: string;
@@ -30,6 +48,11 @@ interface TokenData {
   type?: string;
   address: string;
   decimals: number;
+  balance?: string;
+  price?: number | null;
+  value?: number;
+  logoURI?: string;
+  icon?: string;
 }
 
 interface SwapCapabilitiesData {
@@ -57,7 +80,7 @@ interface SwapQuoteData {
   approvalSpender?: string;
   expiresAt: number;
   raw: unknown;
-  request: unknown;
+  request: { slippagePercent?: number } & Record<string, unknown>;
 }
 
 interface SwapResultData {
@@ -71,107 +94,314 @@ interface SwapResultData {
 interface Props {
   network: string;
   networks: Record<string, any>;
-  /** Tokens on the active (source) network. */
+  /** Tokens on the active source network, optionally enriched with balances and USD prices. */
   tokens: TokenData[];
-  /** Called on exit; didSwap=true when a swap was submitted. */
+  /** Called on exit; didSwap=true once a swap transaction was submitted. */
   onClose: (didSwap: boolean) => void;
 }
 
-type Step = 'source' | 'destination' | 'amount' | 'confirm' | 'result';
+type SheetName = 'source' | 'destination' | 'settings' | 'review' | null;
+type SwapStatus = { state: 'pending' | 'completed' | 'refunded' | 'failed'; destTxId?: string; detail?: string };
 
-/** Human labels for the execution phases broadcast by the service worker. */
+const SYMBOL_ICONS: Record<string, string> = {
+  SOL: solIcon,
+  ETH: ethIcon,
+  WETH: ethIcon,
+  USDC: usdcIcon,
+  USDT: usdtIcon,
+  BNB: bnbIcon,
+  POL: polIcon,
+  MATIC: polIcon,
+};
+
+const NETWORK_ICONS: Record<string, string> = {
+  'solana-mainnet': solIcon,
+  'solana-devnet': solIcon,
+  mainnet: ethIcon,
+  sepolia: ethIcon,
+  base: baseIcon,
+  arbitrum: arbitrumIcon,
+  optimism: optimismIcon,
+  polygon: polIcon,
+  bsc: bnbIcon,
+};
+
 const PHASE_LABELS: Record<string, string> = {
-  'checking-allowance': 'Checking token allowance…',
-  'approving': 'Approve the token spend…',
+  'checking-allowance': 'Checking allowance',
+  approving: 'Approve token',
   'approval-confirmed': 'Approval confirmed',
-  'submitting-swap': 'Submitting swap…',
+  'submitting-swap': 'Submitting swap',
   'swap-submitted': 'Swap submitted',
 };
 
+const PHASE_ORDER = ['checking-allowance', 'approving', 'approval-confirmed', 'submitting-swap', 'swap-submitted'];
+
+function tokenKey(token: TokenData): string {
+  return `${token.symbol}-${token.address}`;
+}
+
+function tokenIcon(token: TokenData | null): string | null {
+  if (!token) return null;
+  return token.logoURI || SYMBOL_ICONS[token.symbol.toUpperCase()] || null;
+}
+
+function displayBalance(value?: string): string | undefined {
+  if (value === undefined) return undefined;
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return value;
+  return amount.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+
+function formatUsd(amount: string, price?: number | null): string | undefined {
+  const value = Number(amount) * Number(price);
+  if (!Number.isFinite(value) || price === null || price === undefined) return undefined;
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function truncateId(value: string): string {
+  if (value.length <= 16) return value;
+  return `${value.slice(0, 7)}…${value.slice(-7)}`;
+}
+
+function PhaseTracker({ phase }: { phase: string | null }) {
+  const current = phase ? PHASE_ORDER.indexOf(phase) : -1;
+  const steps = [
+    { key: 'checking-allowance', label: 'Allowance' },
+    { key: 'approving', label: 'Approve' },
+    { key: 'submitting-swap', label: 'Swap' },
+  ];
+  return (
+    <div className="swap-phase-tracker" aria-label="Swap progress">
+      {steps.map((step, index) => {
+        const stepIndex = PHASE_ORDER.indexOf(step.key);
+        const done = current > stepIndex || (step.key === 'approving' && current >= PHASE_ORDER.indexOf('approval-confirmed'));
+        const active = phase === step.key;
+        return (
+          <React.Fragment key={step.key}>
+            <div className={`swap-phase-tracker__step ${done ? 'is-done' : ''} ${active ? 'is-active' : ''}`}>
+              <span>{done ? <Icon name="check" size={11} decorative /> : active ? <Icon name="loader" size={11} decorative /> : index + 1}</span>
+              <strong>{step.label}</strong>
+            </div>
+            {index < steps.length - 1 && <i className={done ? 'is-done' : ''} />}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function TokenRows({
+  tokens,
+  loading,
+  query,
+  onQuery,
+  onPick,
+}: {
+  tokens: TokenData[];
+  loading?: boolean;
+  query: string;
+  onQuery: (query: string) => void;
+  onPick: (token: TokenData) => void;
+}) {
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return tokens;
+    return tokens.filter((token) => token.symbol.toLowerCase().includes(normalized) || token.name.toLowerCase().includes(normalized));
+  }, [query, tokens]);
+
+  return (
+    <>
+      <label className="swap-stake-search">
+        <Icon name="search" size={16} decorative />
+        <input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search name or symbol" />
+      </label>
+      <div className="swap-stake-picker-list">
+        {loading ? (
+          <div className="swap-stake-picker-empty">Loading tokens…</div>
+        ) : filtered.length ? filtered.map((token) => (
+          <button type="button" className="swap-stake-picker-row" key={tokenKey(token)} onClick={() => onPick(token)}>
+            <AssetMark label={token.symbol} src={tokenIcon(token)} />
+            <span className="swap-stake-picker-row__main">
+              <strong>{token.symbol}{token.type === 'native' && <em>Native</em>}</strong>
+              <small>{token.name}</small>
+            </span>
+            {token.balance !== undefined && (
+              <span className="swap-stake-picker-row__value">
+                <strong>{displayBalance(token.balance)}</strong>
+                <small>{formatUsd(token.balance, token.price) ?? ''}</small>
+              </span>
+            )}
+          </button>
+        )) : (
+          <div className="swap-stake-picker-empty">No tokens match “{query}”.</div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function SwapResult({
+  result,
+  status,
+  quote,
+  fromToken,
+  toToken,
+  networks,
+  onDone,
+}: {
+  result: SwapResultData;
+  status: SwapStatus | null;
+  quote: SwapQuoteData;
+  fromToken: TokenData;
+  toToken: TokenData;
+  networks: Record<string, any>;
+  onDone: () => void;
+}) {
+  const state = status?.state ?? 'pending';
+  const destinationName = networks[result.toNetworkKey]?.name || result.toNetworkKey;
+  const meta = {
+    pending: { title: 'Swap in progress', tone: 'warning' as const, note: `Settling on ${destinationName}. Cross-chain delivery may take a few minutes.` },
+    completed: { title: 'Swap complete', tone: 'success' as const, note: `${toToken.symbol} has arrived on ${destinationName}.` },
+    refunded: { title: 'Swap refunded', tone: 'warning' as const, note: `${fromToken.symbol} was returned on the source chain because the route could not complete.` },
+    failed: { title: 'Swap failed', tone: 'danger' as const, note: 'The source transaction failed. Only a network fee may have been charged.' },
+  }[state];
+  const explorerBase = networks[result.fromNetworkKey]?.blockExplorer;
+  const explorerUrl = explorerBase ? `${explorerBase.replace(/\/$/, '')}/tx/${result.txId}` : null;
+
+  return (
+    <div className="swap-stake-screen">
+      <FlowHeader title="Swap" onBack={onDone} />
+      <main className="swap-stake-result">
+        <div className={`swap-stake-result__icon is-${meta.tone}`}>
+          <Icon name={state === 'completed' ? 'check' : state === 'failed' ? 'alert-triangle' : state === 'refunded' ? 'refresh' : 'loader'} size={27} decorative />
+        </div>
+        <h2>{meta.title}</h2>
+        <p>{status?.detail || meta.note}</p>
+        <FlowDetails>
+          <FlowDetailRow label="Paid" value={`${quote.amountInFormatted} ${fromToken.symbol}`} strike={state === 'refunded'} />
+          <FlowDetailRow label="Received" value={state === 'completed' ? `${quote.amountOutFormatted} ${toToken.symbol}` : '—'} accent={state === 'completed' ? 'success' : 'muted'} />
+          <FlowDetailRow label="Route" value={quote.provider === 'oneinch' ? '1inch' : 'Mayan'} />
+          {result.approvalTxId && <FlowDetailRow label="Approval tx" value={truncateId(result.approvalTxId)} />}
+          <FlowDetailRow label="Transaction" value={truncateId(result.txId)} />
+          {status?.destTxId && status.destTxId !== result.txId && <FlowDetailRow label="Destination tx" value={truncateId(status.destTxId)} />}
+        </FlowDetails>
+      </main>
+      <footer className={`swap-stake-footer ${explorerUrl ? 'swap-stake-footer--split' : ''}`.trim()}>
+        {explorerUrl && <FlowButton variant="secondary" onClick={() => window.open(explorerUrl, '_blank')}>Explorer</FlowButton>}
+        <FlowButton onClick={onDone}>Done</FlowButton>
+      </footer>
+    </div>
+  );
+}
+
 /**
- * Swap wizard.
+ * Render the live, single-canvas swap flow.
  *
- * @param props - Component props
- * @returns Swap flow component
+ * @param props - Active network, network config, source assets, and exit callback.
+ * @returns Swap canvas with picker, review, settings, and result sheets.
  */
 function SwapFlowView({ network, networks, tokens, onClose }: Props) {
-  const [step, setStep] = useState<Step>('source');
   const [capabilities, setCapabilities] = useState<SwapCapabilitiesData | null>(null);
-  const [fromToken, setFromToken] = useState<TokenData | null>(null);
-  const [toNetworkKey, setToNetworkKey] = useState<string>('');
+  const [fromToken, setFromToken] = useState<TokenData | null>(tokens[0] ?? null);
+  const [toNetworkKey, setToNetworkKey] = useState(network);
   const [destTokens, setDestTokens] = useState<TokenData[]>([]);
   const [destTokensLoading, setDestTokensLoading] = useState(false);
   const [toToken, setToToken] = useState<TokenData | null>(null);
   const [amount, setAmount] = useState('');
-  const [amountError, setAmountError] = useState<string | null>(null);
+  const [slippage, setSlippage] = useState(1);
+  const [sheet, setSheet] = useState<SheetName>(null);
+  const [sourceQuery, setSourceQuery] = useState('');
+  const [destinationQuery, setDestinationQuery] = useState('');
   const [quote, setQuote] = useState<SwapQuoteData | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
   const [submitting, setSubmitting] = useState(false);
   const [phase, setPhase] = useState<string | null>(null);
-  const [result, setResult] = useState<SwapResultData | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ state: string; destTxId?: string; detail?: string } | null>(null);
+  const [result, setResult] = useState<SwapResultData | null>(null);
+  const [status, setStatus] = useState<SwapStatus | null>(null);
+  const quoteRequestId = useRef(0);
 
-  const networkLabel = useCallback(
-    (key: string) => networks[key]?.name || key,
-    [networks]
-  );
+  const networkLabel = useCallback((key: string) => networks[key]?.name || key, [networks]);
+  const sourceBalance = fromToken?.balance;
+  const amountError = amount ? validateSwapAmount(amount, sourceBalance) : null;
+  const destinationKeys = capabilities?.destinationNetworkKeys ?? [];
+  const crossChain = toNetworkKey !== network;
+  const secondsLeft = quote ? quoteSecondsRemaining(quote.expiresAt, now) : 0;
+  const quoteExpired = !!quote && secondsLeft === 0;
+
+  useEffect(() => {
+    if (!fromToken && tokens.length) setFromToken(tokens[0]);
+  }, [fromToken, tokens]);
 
   useEffect(() => {
     let cancelled = false;
-    sendMessageWithRetry<{ capabilities?: SwapCapabilitiesData; error?: string }>({
+    sendMessageWithRetry<{ capabilities?: SwapCapabilitiesData }>({
       type: 'GET_SWAP_CAPABILITIES',
       payload: { networkKey: network },
-    })
-      .then((resp) => { if (!cancelled) setCapabilities(resp?.capabilities || null); })
-      .catch(() => { if (!cancelled) setCapabilities(null); });
+    }).then((response) => {
+      if (cancelled) return;
+      const next = response?.capabilities ?? null;
+      setCapabilities(next);
+      if (next?.destinationNetworkKeys.length) {
+        setToNetworkKey((current) => next.destinationNetworkKeys.includes(current)
+          ? current
+          : next.destinationNetworkKeys[0]);
+      }
+    }).catch(() => { if (!cancelled) setCapabilities(null); });
     return () => { cancelled = true; };
   }, [network]);
 
-  // Destination tokens are fetched per selected network — you can swap into a
-  // token you hold none of, so this can't reuse the sendable-assets list.
   useEffect(() => {
     if (!toNetworkKey) return;
     let cancelled = false;
     setDestTokensLoading(true);
-    setDestTokens([]);
-    sendMessageWithRetry<{ tokens?: TokenData[]; error?: string }>({
+    sendMessageWithRetry<{ tokens?: TokenData[] }>({
       type: 'GET_SWAP_DEST_TOKENS',
       payload: { networkKey: toNetworkKey },
-    })
-      .then((resp) => { if (!cancelled) setDestTokens(resp?.tokens || []); })
-      .catch(() => { if (!cancelled) setDestTokens([]); })
-      .finally(() => { if (!cancelled) setDestTokensLoading(false); });
+    }).then((response) => {
+      if (cancelled) return;
+      const nextTokens = response?.tokens ?? [];
+      setDestTokens(nextTokens);
+      setToToken((current) => {
+        const currentStillExists = current && nextTokens.some((token) => tokenKey(token) === tokenKey(current));
+        if (currentStillExists) return current;
+        return nextTokens.find((token) => !(toNetworkKey === network && token.symbol === fromToken?.symbol)) ?? null;
+      });
+    }).catch(() => {
+      if (!cancelled) {
+        setDestTokens([]);
+        setToToken(null);
+      }
+    }).finally(() => { if (!cancelled) setDestTokensLoading(false); });
     return () => { cancelled = true; };
-  }, [toNetworkKey]);
+  }, [fromToken?.symbol, network, toNetworkKey]);
 
-  // Listen for execution progress broadcast by the service worker.
   useEffect(() => {
     const listener = (message: any) => {
-      if (message?.type === 'SWAP_PROGRESS') {
-        setPhase(message.payload?.phase ?? null);
-      } else if (message?.type === 'SWAP_STATUS') {
-        setStatus(message.payload ?? null);
-      }
+      if (message?.type === 'SWAP_PROGRESS') setPhase(message.payload?.phase ?? null);
+      if (message?.type === 'SWAP_STATUS') setStatus(message.payload ?? null);
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
-  const validateAmount = (value: string): string | null => {
-    if (!/^\d+(\.\d+)?$/.test(value.trim())) return 'Enter a valid numeric amount';
-    const num = parseFloat(value);
-    if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
-    return null;
-  };
+  useEffect(() => {
+    if (!quote) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [quote]);
 
   const fetchQuote = useCallback(async () => {
-    if (!fromToken || !toToken || !toNetworkKey) return;
+    if (!fromToken || !toToken || !toNetworkKey || !amount || validateSwapAmount(amount, fromToken.balance)) return;
+    const requestId = ++quoteRequestId.current;
     setQuoteLoading(true);
     setQuoteError(null);
+    setQuote(null);
     try {
-      const resp = await sendMessageWithRetry<{ quote?: SwapQuoteData; error?: string }>({
+      const response = await sendMessageWithRetry<{ quote?: SwapQuoteData; error?: string }>({
         type: 'GET_SWAP_QUOTE',
         payload: {
           request: {
@@ -180,377 +410,209 @@ function SwapFlowView({ network, networks, tokens, onClose }: Props) {
             toNetworkKey,
             toToken,
             amount: amount.trim(),
+            slippagePercent: slippage,
           },
         },
       });
-      if (resp?.error) throw new Error(resp.error);
-      if (!resp?.quote) throw new Error('No quote returned');
-      setQuote(resp.quote);
-    } catch (err: any) {
-      setQuote(null);
-      setQuoteError(err?.message || 'Could not fetch a quote');
+      if (requestId !== quoteRequestId.current) return;
+      if (response?.error) throw new Error(response.error);
+      if (!response?.quote) throw new Error('No quote returned');
+      setQuote(response.quote);
+      setNow(Date.now());
+    } catch (error: any) {
+      if (requestId === quoteRequestId.current) setQuoteError(error?.message || 'Could not fetch a quote');
     } finally {
-      setQuoteLoading(false);
+      if (requestId === quoteRequestId.current) setQuoteLoading(false);
     }
-  }, [fromToken, toToken, toNetworkKey, network, amount]);
+  }, [amount, fromToken, network, slippage, toNetworkKey, toToken]);
 
-  // Debounced quoting on the confirm step. 1inch's free tier is ~1 req/sec,
-  // so every keystroke must not become a request.
   useEffect(() => {
-    if (step !== 'confirm') return;
-    const timer = setTimeout(() => { fetchQuote(); }, 400);
-    return () => clearTimeout(timer);
-  }, [step, fetchQuote]);
+    if (!amount || amountError || !fromToken || !toToken) {
+      quoteRequestId.current += 1;
+      setQuote(null);
+      setQuoteLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(fetchQuote, 500);
+    return () => window.clearTimeout(timer);
+  }, [amount, amountError, fetchQuote, fromToken, toToken]);
+
+  const selectableDestTokens = useMemo(
+    () => destTokens.filter((token) => !(toNetworkKey === network && token.symbol === fromToken?.symbol)),
+    [destTokens, fromToken?.symbol, network, toNetworkKey]
+  );
+
+  const chooseDestinationNetwork = (key: string) => {
+    setToNetworkKey(key);
+    setToToken(null);
+    setDestinationQuery('');
+    setQuote(null);
+  };
+
+  const flipTokens = () => {
+    if (crossChain || !fromToken || !toToken) return;
+    const nextSource = tokens.find((token) => tokenKey(token) === tokenKey(toToken)) ?? toToken;
+    const nextDestination = destTokens.find((token) => tokenKey(token) === tokenKey(fromToken)) ?? fromToken;
+    setFromToken(nextSource);
+    setToToken(nextDestination);
+  };
+
+  const pickPercent = (percent: number) => {
+    const balance = Number(fromToken?.balance);
+    if (!Number.isFinite(balance)) return;
+    setAmount(String(+(balance * percent / 100).toFixed(Math.min(fromToken?.decimals ?? 6, 6))));
+  };
 
   const submitSwap = async () => {
-    if (!quote) return;
+    if (!quote || quoteExpired) return;
     setSubmitting(true);
     setSubmitError(null);
     setPhase(null);
     try {
-      // Re-quote when the current one has aged out rather than submitting a
-      // stale quote the service layer would reject.
-      let effectiveQuote = quote;
-      if (Date.now() > quote.expiresAt) {
-        const refreshed = await sendMessageWithRetry<{ quote?: SwapQuoteData; error?: string }>({
-          type: 'GET_SWAP_QUOTE',
-          payload: {
-            request: {
-              fromNetworkKey: network,
-              fromToken,
-              toNetworkKey,
-              toToken,
-              amount: amount.trim(),
-            },
-          },
-        });
-        if (refreshed?.error) throw new Error(refreshed.error);
-        if (!refreshed?.quote) throw new Error('Quote expired — try again');
-        effectiveQuote = refreshed.quote;
-        setQuote(refreshed.quote);
-      }
-
-      const resp = await sendMessageWithRetry<{ result?: SwapResultData; error?: string }>({
+      const response = await sendMessageWithRetry<{ result?: SwapResultData; error?: string }>({
         type: 'EXECUTE_SWAP',
-        payload: { quote: effectiveQuote },
+        payload: { quote },
       });
-      if (resp?.error) throw new Error(resp.error);
-      if (!resp?.result?.txId) throw new Error('No transaction id returned');
-      setResult(resp.result);
-      setStep('result');
-    } catch (err: any) {
-      setSubmitError(err?.message || 'Swap failed');
+      if (response?.error) throw new Error(response.error);
+      if (!response?.result?.txId) throw new Error('No transaction id returned');
+      setResult(response.result);
+      setStatus({ state: 'pending' });
+      setSheet(null);
+    } catch (error: any) {
+      setSubmitError(error?.message || 'Swap failed');
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Same-network swaps into the same token are meaningless.
-  const selectableDestTokens = useMemo(
-    () => destTokens.filter((t) => !(toNetworkKey === network && t.symbol === fromToken?.symbol)),
-    [destTokens, toNetworkKey, network, fromToken]
-  );
+  if (result && quote && fromToken && toToken) {
+    return (
+      <SwapResult result={result} status={status} quote={quote} fromToken={fromToken} toToken={toToken} networks={networks} onDone={() => onClose(true)} />
+    );
+  }
 
-  const destinationKeys = capabilities?.destinationNetworkKeys ?? [];
-
-  const goBack = () => {
-    if (step === 'destination') setStep('source');
-    else if (step === 'amount') setStep('destination');
-    else if (step === 'confirm') setStep('amount');
-    else onClose(step === 'result');
-  };
+  const quoteSecondary = quoteLoading ? 'Updating quote…' : quote ? formatUsd(quote.amountOutFormatted, toToken?.price) : undefined;
 
   return (
-    <div className="takeover">
-      <ScreenHeader title="Swap" onBack={goBack} />
-
-      <div style={{ padding: '0 16px 16px' }}>
+    <div className="swap-stake-screen">
+      <FlowHeader
+        title="Swap"
+        onBack={() => onClose(false)}
+        right={(
+          <button className="swap-stake-icon-button is-raised" type="button" onClick={() => setSheet('settings')} aria-label="Swap settings">
+            <Icon name="settings" size={16} decorative />
+          </button>
+        )}
+      />
+      <main className="swap-stake-scroll">
         {capabilities && !capabilities.canSwap && (
-          <div className="activity-fallback-chip" style={{ marginBottom: 12 }}>
-            <span>{capabilities.unsupportedReason || 'Swaps are not available on this network'}</span>
+          <FlowCallout tone="info" title="Swaps unavailable">{capabilities.unsupportedReason || 'Swaps are not available on this network.'}</FlowCallout>
+        )}
+        <div className="swap-canvas">
+          <AmountCard
+            label="You pay"
+            value={amount}
+            onChange={setAmount}
+            asset={<AssetPill symbol={fromToken?.symbol || '—'} src={tokenIcon(fromToken)} onClick={() => { setSourceQuery(''); setSheet('source'); }} />}
+            balance={displayBalance(fromToken?.balance)}
+            onMax={fromToken?.balance !== undefined ? () => setAmount(fromToken.balance || '') : undefined}
+            onPercent={fromToken?.balance !== undefined ? pickPercent : undefined}
+            secondary={formatUsd(amount, fromToken?.price)}
+            error={amountError}
+          />
+          <div className="swap-canvas__flip">
+            <button type="button" onClick={flipTokens} disabled={crossChain || !toToken} title={crossChain ? 'Cross-chain swaps are one-directional' : 'Flip assets'}>
+              <Icon name="arrow-down-left" size={16} decorative />
+            </button>
+          </div>
+          <AmountCard
+            label="You receive"
+            value={quote?.amountOutFormatted || ''}
+            readOnly
+            asset={<AssetPill symbol={toToken?.symbol || '—'} src={tokenIcon(toToken)} networkLabel={crossChain ? networkLabel(toNetworkKey) : undefined} onClick={() => { setDestinationQuery(''); setSheet('destination'); }} />}
+            secondary={quoteSecondary}
+          />
+        </div>
+        <button className="swap-destination-card" type="button" onClick={() => setSheet('destination')}>
+          <AssetMark label={networkLabel(toNetworkKey)} src={NETWORK_ICONS[toNetworkKey]} size="small" />
+          <span><small>Receive on</small><strong>{networkLabel(toNetworkKey)}</strong></span>
+          <em className={crossChain ? 'is-cross-chain' : 'is-same-chain'}>{crossChain ? 'Cross-chain' : 'Same network'}</em>
+          <Icon name="chevron-right" size={15} decorative />
+        </button>
+        {quote && (
+          <FlowDetails>
+            <FlowDetailRow label="Rate" value={quote.rateFormatted} />
+            <FlowDetailRow label="Minimum received" hint="Guaranteed after max slippage" value={`${quote.minAmountOutFormatted} ${quote.toTokenSymbol}`} />
+            <FlowDetailRow label="Network fee" value={quote.feeFormatted} />
+            {quote.bridgeFeeFormatted && <FlowDetailRow label="Bridge fee" hint="Mayan relayer fee" value={quote.bridgeFeeFormatted} />}
+            {typeof quote.etaSeconds === 'number' && <FlowDetailRow label="Estimated time" value={`~${Math.max(1, Math.round(quote.etaSeconds / 60))} min`} />}
+            <FlowDetailRow label="Route" value={quote.provider === 'oneinch' ? '1inch' : 'Mayan'} accent="muted" />
+            <FlowDetailRow label="Quote expires" value={quoteExpired ? 'Expired' : `${secondsLeft}s`} accent={quoteExpired || secondsLeft <= 10 ? 'warning' : undefined} />
+          </FlowDetails>
+        )}
+        {quote?.needsApproval && <FlowCallout title="Two transactions required">{quote.fromTokenSymbol} needs a one-time spend approval before the swap.</FlowCallout>}
+        {quoteExpired && <FlowCallout tone="warning" title="Quote expired" icon="refresh">Refresh to get current pricing before you swap.</FlowCallout>}
+        {quoteError && <FlowCallout tone="danger" title="Quote unavailable">{quoteError}</FlowCallout>}
+      </main>
+      <footer className="swap-stake-footer">
+        {quoteExpired ? (
+          <FlowButton variant="secondary" onClick={fetchQuote} loading={quoteLoading}><Icon name="refresh" size={15} decorative /> Refresh quote</FlowButton>
+        ) : (
+          <FlowButton disabled={!quote || quoteLoading || !!amountError || !capabilities?.canSwap} onClick={() => setSheet('review')} loading={quoteLoading}>
+            {quoteLoading ? 'Updating quote…' : quote ? 'Review swap' : amount ? 'Get quote' : 'Enter an amount'}
+          </FlowButton>
+        )}
+      </footer>
+      <FlowSheet open={sheet === 'source'} onClose={() => setSheet(null)} title="Swap from">
+        <TokenRows tokens={tokens.filter((token) => !(toNetworkKey === network && token.symbol === toToken?.symbol))} query={sourceQuery} onQuery={setSourceQuery} onPick={(token) => { setFromToken(token); setSheet(null); }} />
+      </FlowSheet>
+      <FlowSheet open={sheet === 'destination'} onClose={() => setSheet(null)} title="Receive" subtitle="Pick a network, then a token">
+        <div className="swap-network-tabs">
+          {destinationKeys.map((key) => (
+            <button className={key === toNetworkKey ? 'is-active' : ''} type="button" key={key} onClick={() => chooseDestinationNetwork(key)}>
+              <AssetMark label={networkLabel(key)} src={NETWORK_ICONS[key]} size="small" />
+              {networkLabel(key)}{key !== network && <span>↗</span>}
+            </button>
+          ))}
+        </div>
+        <TokenRows tokens={selectableDestTokens} loading={destTokensLoading} query={destinationQuery} onQuery={setDestinationQuery} onPick={(token) => { setToToken(token); setSheet(null); }} />
+      </FlowSheet>
+      <FlowSheet open={sheet === 'settings'} onClose={() => setSheet(null)} title="Swap settings" size="small" footer={<FlowButton onClick={() => setSheet(null)}>Done</FlowButton>}>
+        <div className="swap-settings">
+          <label>Max slippage</label>
+          <div>{[0.1, 0.5, 1, 3].map((value) => <button type="button" className={slippage === value ? 'is-active' : ''} key={value} onClick={() => setSlippage(value)}>{value}%</button>)}</div>
+          <FlowCallout tone={slippage >= 3 ? 'warning' : 'info'}>{slippage >= 3 ? 'High slippage can return meaningfully less than quoted in volatile markets.' : 'The swap reverts if the price moves more than this before execution.'}</FlowCallout>
+        </div>
+      </FlowSheet>
+      <FlowSheet
+        open={sheet === 'review'}
+        onClose={() => { if (!submitting) setSheet(null); }}
+        title="Review swap"
+        footer={submitting ? <FlowButton loading>{PHASE_LABELS[phase || ''] || 'Submitting swap'}…</FlowButton> : (
+          <div className="swap-stake-sheet-actions"><FlowButton variant="secondary" onClick={() => setSheet(null)}>Cancel</FlowButton><FlowButton onClick={submitSwap}>{quote?.needsApproval ? 'Approve & swap' : 'Confirm swap'}</FlowButton></div>
+        )}
+      >
+        {quote && fromToken && toToken && (
+          <div className="swap-review">
+            <div className="swap-review__assets">
+              <div><span><AssetMark label={fromToken.symbol} src={tokenIcon(fromToken)} size="small" /> {networkLabel(network)}</span><strong>{quote.amountInFormatted}</strong><small>{fromToken.symbol}</small></div>
+              <Icon name="arrow-up-right" size={16} decorative />
+              <div><span>{networkLabel(toNetworkKey)} <AssetMark label={toToken.symbol} src={tokenIcon(toToken)} size="small" /></span><strong>{quote.amountOutFormatted}</strong><small>{toToken.symbol}</small></div>
+            </div>
+            {quote.needsApproval && <PhaseTracker phase={phase} />}
+            <FlowDetails>
+              <FlowDetailRow label="Rate" value={quote.rateFormatted} />
+              <FlowDetailRow label="Minimum received" value={`${quote.minAmountOutFormatted} ${quote.toTokenSymbol}`} />
+              <FlowDetailRow label="Max slippage" value={`${quote.request.slippagePercent ?? slippage}%`} />
+              <FlowDetailRow label="Network fee" value={quote.feeFormatted} />
+              {quote.bridgeFeeFormatted && <FlowDetailRow label="Bridge fee" value={quote.bridgeFeeFormatted} />}
+              <FlowDetailRow label="Route" value={quote.provider === 'oneinch' ? '1inch' : 'Mayan'} />
+            </FlowDetails>
+            {crossChain && <FlowCallout>Cross-chain swaps settle on {networkLabel(toNetworkKey)} after the source transaction confirms.</FlowCallout>}
+            {submitError && <FlowCallout tone="danger" title="Swap failed">{submitError}</FlowCallout>}
           </div>
         )}
-
-        {step === 'source' && (
-          <>
-            <div className="form-group">
-              <label>Token to swap from</label>
-            </div>
-            <div className="transaction-list" style={{ maxHeight: 320, overflowY: 'auto' }}>
-              {tokens.map((t) => (
-                <div
-                  key={`${t.symbol}-${t.address}`}
-                  className="transaction-item"
-                  onClick={() => { setFromToken(t); setStep('destination'); }}
-                >
-                  <div className="tx-content">
-                    <div className="tx-row-primary">
-                      <span className="tx-type">{t.symbol}</span>
-                      <span className="tx-amount-value">{t.type === 'native' ? 'Native' : ''}</span>
-                    </div>
-                    <div className="tx-row-secondary">
-                      <span className="tx-address">{t.name}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {step === 'destination' && (
-          <>
-            <div className="form-group">
-              <label>Destination network</label>
-            </div>
-            <div className="transaction-list" style={{ maxHeight: 200, overflowY: 'auto' }}>
-              {destinationKeys.map((key) => (
-                <div
-                  key={key}
-                  className="transaction-item"
-                  onClick={() => { setToNetworkKey(key); setToToken(null); }}
-                >
-                  <div className="tx-content">
-                    <div className="tx-row-primary">
-                      <span className="tx-type">{networkLabel(key)}</span>
-                      <span className="tx-amount-value">
-                        {key === network ? 'Same network' : 'Cross-chain'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {toNetworkKey && (
-              <>
-                <div className="form-group" style={{ marginTop: 12 }}>
-                  <label>Token to receive on {networkLabel(toNetworkKey)}</label>
-                </div>
-                {destTokensLoading ? (
-                  <div className="loading">Loading tokens...</div>
-                ) : (
-                  <div className="transaction-list" style={{ maxHeight: 220, overflowY: 'auto' }}>
-                    {selectableDestTokens.map((t) => (
-                      <div
-                        key={`${t.symbol}-${t.address}`}
-                        className="transaction-item"
-                        onClick={() => { setToToken(t); setStep('amount'); }}
-                      >
-                        <div className="tx-content">
-                          <div className="tx-row-primary">
-                            <span className="tx-type">{t.symbol}</span>
-                            <span className="tx-amount-value">{t.type === 'native' ? 'Native' : ''}</span>
-                          </div>
-                          <div className="tx-row-secondary">
-                            <span className="tx-address">{t.name}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    {selectableDestTokens.length === 0 && (
-                      <div className="tx-row-secondary" style={{ padding: 8 }}>
-                        <span className="tx-address">No tokens available on this network.</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-          </>
-        )}
-
-        {step === 'amount' && fromToken && toToken && (
-          <>
-            <div className="form-group">
-              <label>Swapping</label>
-              <div className="asset-picker-chip" style={{ cursor: 'default' }}>
-                <span className="asset-picker-chip__main">
-                  <span className="asset-picker-chip__symbol">
-                    {fromToken.symbol} → {toToken.symbol}
-                  </span>
-                  <span className="asset-picker-chip__network">
-                    {networkLabel(network)} → {networkLabel(toNetworkKey)}
-                  </span>
-                </span>
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label>Amount ({fromToken.symbol})</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder={`0.0 ${fromToken.symbol}`}
-                value={amount}
-                onChange={(e) => { setAmount(e.target.value); setAmountError(null); }}
-              />
-              {amountError && <div className="tx-error-inline">{amountError}</div>}
-            </div>
-
-            <button
-              className="btn btn-primary"
-              style={{ width: '100%' }}
-              onClick={() => {
-                const err = validateAmount(amount);
-                if (err) { setAmountError(err); return; }
-                setQuote(null);
-                setStep('confirm');
-              }}
-            >
-              Get quote
-            </button>
-          </>
-        )}
-
-        {step === 'confirm' && fromToken && toToken && (
-          <>
-            <div className="form-group">
-              <label>Confirm swap</label>
-              <div className="transaction-item" style={{ cursor: 'default' }}>
-                <div className="tx-content">
-                  <div className="tx-row-primary">
-                    <span className="tx-type">You pay</span>
-                    <span className="tx-amount-value">{amount.trim()} {fromToken.symbol}</span>
-                  </div>
-                  <div className="tx-row-secondary">
-                    <span className="tx-address">on {networkLabel(network)}</span>
-                  </div>
-                  <div className="tx-row-primary">
-                    <span className="tx-type">You receive</span>
-                    <span className="tx-amount-value">
-                      {quoteLoading ? '…' : quote ? `~${quote.amountOutFormatted} ${quote.toTokenSymbol}` : '—'}
-                    </span>
-                  </div>
-                  <div className="tx-row-secondary">
-                    <span className="tx-address">on {networkLabel(toNetworkKey)}</span>
-                  </div>
-                  {quote && (
-                    <>
-                      <div className="tx-row-secondary">
-                        <span className="tx-address">Minimum received</span>
-                        <span className="tx-time">{quote.minAmountOutFormatted} {quote.toTokenSymbol}</span>
-                      </div>
-                      {quote.rateFormatted && (
-                        <div className="tx-row-secondary">
-                          <span className="tx-address">Rate</span>
-                          <span className="tx-time">{quote.rateFormatted}</span>
-                        </div>
-                      )}
-                      {quote.feeFormatted && (
-                        <div className="tx-row-secondary">
-                          <span className="tx-address">Network fee</span>
-                          <span className="tx-time">{quote.feeFormatted}</span>
-                        </div>
-                      )}
-                      {quote.bridgeFeeFormatted && (
-                        <div className="tx-row-secondary">
-                          <span className="tx-address">Bridge fee</span>
-                          <span className="tx-time">{quote.bridgeFeeFormatted}</span>
-                        </div>
-                      )}
-                      {typeof quote.etaSeconds === 'number' && (
-                        <div className="tx-row-secondary">
-                          <span className="tx-address">Estimated time</span>
-                          <span className="tx-time">~{Math.max(1, Math.round(quote.etaSeconds / 60))} min</span>
-                        </div>
-                      )}
-                      <div className="tx-row-secondary">
-                        <span className="tx-address">Via</span>
-                        <span className="tx-time">{quote.provider === 'oneinch' ? '1inch' : 'Mayan'}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {quote?.needsApproval && (
-              <div className="activity-fallback-chip" style={{ marginBottom: 12 }}>
-                <span>Requires a token approval first — 2 transactions will be sent.</span>
-              </div>
-            )}
-
-            {quoteError && <div className="tx-error-inline" style={{ marginBottom: 8 }}>{quoteError}</div>}
-            {submitError && <div className="tx-error-inline" style={{ marginBottom: 8 }}>{submitError}</div>}
-            {submitting && phase && (
-              <div className="activity-fallback-chip" style={{ marginBottom: 12 }}>
-                <span>{PHASE_LABELS[phase] ?? phase}</span>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-secondary" style={{ flex: 1 }} disabled={submitting} onClick={() => setStep('amount')}>
-                Back
-              </button>
-              <button
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-                disabled={submitting || quoteLoading || !quote}
-                onClick={submitSwap}
-              >
-                {submitting ? 'Swapping…' : 'Confirm & Swap'}
-              </button>
-            </div>
-          </>
-        )}
-
-        {step === 'result' && result && (
-          <>
-            <div className="form-group">
-              <label>Swap submitted</label>
-              <div className="transaction-item" style={{ cursor: 'default' }}>
-                <div className="tx-content">
-                  <div className="tx-row-primary">
-                    <span className="tx-type">
-                      {status?.state === 'completed'
-                        ? 'Completed'
-                        : status?.state === 'refunded'
-                          ? 'Refunded'
-                          : status?.state === 'failed'
-                            ? 'Failed'
-                            : 'In progress'}
-                    </span>
-                    <span className="tx-amount-value">{amount.trim()} {fromToken?.symbol}</span>
-                  </div>
-                  {result.approvalTxId && (
-                    <div className="tx-row-secondary">
-                      <span className="tx-address">
-                        Approval {result.approvalTxId.slice(0, 8)}…{result.approvalTxId.slice(-8)}
-                      </span>
-                    </div>
-                  )}
-                  <div className="tx-row-secondary">
-                    <span className="tx-address">Tx {result.txId.slice(0, 8)}…{result.txId.slice(-8)}</span>
-                  </div>
-                  {status?.destTxId && status.destTxId !== result.txId && (
-                    <div className="tx-row-secondary">
-                      <span className="tx-address">
-                        Destination {status.destTxId.slice(0, 8)}…{status.destTxId.slice(-8)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {result.provider === 'mayan' && status?.state !== 'completed' && (
-              <div className="activity-fallback-chip" style={{ marginBottom: 12 }}>
-                <span>Cross-chain swaps settle on the destination chain a few minutes after the source transaction confirms.</span>
-              </div>
-            )}
-            {status?.detail && (
-              <div className="activity-fallback-chip" style={{ marginBottom: 12 }}>
-                <span>{status.detail}</span>
-              </div>
-            )}
-
-            <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => onClose(true)}>
-              Done
-            </button>
-          </>
-        )}
-      </div>
+      </FlowSheet>
     </div>
   );
 }

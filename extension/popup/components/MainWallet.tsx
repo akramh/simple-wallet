@@ -250,6 +250,26 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
   const [totalBalance, setTotalBalance] = useState<string>('$0.00');
   const [tokenPrices, setTokenPrices] = useState<Record<string, number | null>>({});
   const [pricesLoading, setPricesLoading] = useState(false);
+  const nativePortfolioRow = useMemo(
+    () => portfolio.find(({ token }) => token.type === 'native'),
+    [portfolio]
+  );
+  const nativePriceUsd = useMemo(() => {
+    if (!nativePortfolioRow) return null;
+    const priceKey = getTokenPriceKey(nativePortfolioRow.token);
+    return priceKey ? tokenPrices[priceKey] ?? null : null;
+  }, [nativePortfolioRow, tokenPrices]);
+  const swapAssets = useMemo(
+    () => portfolio.map(({ token, balance }) => {
+      const priceKey = getTokenPriceKey(token);
+      return {
+        ...token,
+        balance,
+        price: priceKey ? tokenPrices[priceKey] ?? null : null,
+      };
+    }),
+    [portfolio, tokenPrices]
+  );
 
   // Send form state
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
@@ -1112,13 +1132,15 @@ function MainWallet({ address, network, walletName, importType, privateKeyType, 
           <StakingView
             network={network}
             networks={networks}
+            availableBalance={nativePortfolioRow?.balance}
+            nativePriceUsd={nativePriceUsd}
             onBack={() => setView('tokens')}
           />
         ) : view === 'swap' ? (
           <SwapFlowView
             network={network}
             networks={networks}
-            tokens={portfolio.map((row) => row.token)}
+            tokens={swapAssets}
             onClose={(didSwap) => {
               setView('tokens');
               if (didSwap) handleRefresh();

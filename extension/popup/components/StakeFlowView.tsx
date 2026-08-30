@@ -1,26 +1,38 @@
 /**
- * @fileoverview New-stake wizard for the extension popup/sidepanel.
+ * @fileoverview Single-canvas new-stake experience for the extension popup
+ * and sidepanel.
  *
- * Three steps: pick a validator (list sorted by activated stake descending,
- * each row showing the delegated amount, with search + manual address
- * entry), enter an amount, confirm with fee and activation-delay context.
- * Dispatches the chain-neutral STAKE message; signing happens in the service
- * worker.
+ * Amount and validator stay on one canvas. Validator discovery, manual vote
+ * address entry, and transaction review use bottom sheets shared with swap.
  *
  * @responsibilities
- * - Fetch and filter validators via GET_STAKE_VALIDATORS
- * - Validate the stake amount against the network minimum
- * - Submit STAKE and surface the resulting transaction
+ * - Fetch and filter validators without blocking manual address entry
+ * - Validate the network minimum and optional available balance inline
+ * - Estimate fees, review activation timing, and submit STAKE messages
  *
  * @security
- * - No secrets handled in UI; the service worker signs with the session
- *   password
+ * - No signing material is handled here; the service worker signs with the
+ *   in-memory session password.
+ * - Solana vote addresses remain case-sensitive and are never normalized.
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { sendMessageWithRetry } from '../utils/messaging';
-import { ScreenHeader } from './ui';
+import {
+  AmountCard,
+  AssetMark,
+  AssetPill,
+  FlowButton,
+  FlowCallout,
+  FlowDetailRow,
+  FlowDetails,
+  FlowHeader,
+  FlowSheet,
+} from './SwapStakeUI';
+import { Icon } from './ui';
+import { isValidSolanaVoteAddress, validateStakeAmount } from '../utils/swapStake.js';
 import { validatorLabel, type StakingCapabilitiesData } from './StakingView';
+import solIcon from '../../assets/img/solana-logo.svg';
 
 interface ValidatorData {
   id: string;
@@ -35,27 +47,37 @@ interface Props {
   network: string;
   networks: Record<string, any>;
   capabilities: StakingCapabilitiesData | null;
-  /** Called on exit; didStake=true when a stake was submitted. */
+  /** Available native balance in human units, when already loaded by the wallet view. */
+  availableBalance?: string;
+  /** Native asset price in USD, when already loaded by the wallet view. */
+  nativePriceUsd?: number | null;
+  /** Called on exit; didStake=true once a stake transaction was submitted. */
   onClose: (didStake: boolean) => void;
 }
 
-type Step = 'validator' | 'amount' | 'confirm' | 'result';
+function formatAmount(value: number, maxDecimals = 4): string {
+  return value.toLocaleString('en-US', { maximumFractionDigits: maxDecimals });
+}
+
+function truncateId(value: string): string {
+  if (value.length <= 16) return value;
+  return `${value.slice(0, 7)}…${value.slice(-7)}`;
+}
 
 /**
- * New-stake wizard.
+ * Render the single-canvas stake flow.
  *
- * @param props - Component props
- * @returns Stake flow component
+ * @param props - Active network, capability data, optional balance/price, and exit callback.
+ * @returns Stake canvas with validator and review sheets.
  */
-function StakeFlowView({ network, networks, capabilities, onClose }: Props) {
-  const [step, setStep] = useState<Step>('validator');
+function StakeFlowView({ network, networks, capabilities, availableBalance, nativePriceUsd, onClose }: Props) {
   const [validators, setValidators] = useState<ValidatorData[]>([]);
   const [validatorsLoading, setValidatorsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [manualVote, setManualVote] = useState('');
   const [selected, setSelected] = useState<ValidatorData | null>(null);
   const [amount, setAmount] = useState('');
-  const [amountError, setAmountError] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<'validator' | 'review' | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ txId: string; positionId?: string } | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -63,315 +85,259 @@ function StakeFlowView({ network, networks, capabilities, onClose }: Props) {
 
   const nativeSymbol = networks[network]?.nativeSymbol || 'SOL';
   const minStake = capabilities?.minStakeFormatted ?? '0';
+  const amountError = amount ? validateStakeAmount(amount, minStake, availableBalance, nativeSymbol) : null;
+  const numericAmount = Number(amount) || 0;
+  const yearlyReward = selected?.apyPercent === null || selected?.apyPercent === undefined
+    ? null
+    : numericAmount * selected.apyPercent / 100;
+  const usdValue = nativePriceUsd === null || nativePriceUsd === undefined
+    ? undefined
+    : `$${(numericAmount * nativePriceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const resp = await sendMessageWithRetry<{ validators?: ValidatorData[]; error?: string }>({
-          type: 'GET_STAKE_VALIDATORS',
-          payload: { networkKey: network },
-        });
-        if (!cancelled) setValidators(resp?.validators || []);
-      } catch {
-        // Validator discovery failing must not dead-end the flow — the
-        // manual vote-address entry below still works.
-        if (!cancelled) setValidators([]);
-      } finally {
-        if (!cancelled) setValidatorsLoading(false);
-      }
-    })();
+    sendMessageWithRetry<{ validators?: ValidatorData[] }>({
+      type: 'GET_STAKE_VALIDATORS',
+      payload: { networkKey: network },
+    }).then((response) => {
+      if (cancelled) return;
+      const next = response?.validators ?? [];
+      setValidators(next);
+      setSelected((current) => current ?? next[0] ?? null);
+    }).catch(() => {
+      if (!cancelled) setValidators([]);
+    }).finally(() => {
+      if (!cancelled) setValidatorsLoading(false);
+    });
     return () => { cancelled = true; };
   }, [network]);
 
-  // Best-effort fee for the confirm step — parity with CLI/mobile. Null
-  // renders as a pending ellipsis; staking never blocks on the estimate.
   useEffect(() => {
-    if (step !== 'confirm') return;
     let cancelled = false;
-    setFeeEstimate(null);
-    sendMessageWithRetry<{ fee?: string; error?: string }>({
+    sendMessageWithRetry<{ fee?: string }>({
       type: 'ESTIMATE_STAKE_FEE',
       payload: { networkKey: network },
-    })
-      .then((resp) => { if (!cancelled && resp?.fee) setFeeEstimate(resp.fee); })
-      .catch(() => { /* leave the pending ellipsis */ });
+    }).then((response) => {
+      if (!cancelled && response?.fee) setFeeEstimate(response.fee);
+    }).catch(() => { /* Best effort: the review remains usable without an estimate. */ });
     return () => { cancelled = true; };
-  }, [step, network]);
+  }, [network]);
 
   const filteredValidators = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return validators;
-    return validators.filter(
-      (v) => (v.name || '').toLowerCase().includes(q) || v.id.toLowerCase().includes(q)
+    const query = search.trim().toLowerCase();
+    if (!query) return validators;
+    return validators.filter((validator) =>
+      (validator.name || '').toLowerCase().includes(query) || validator.id.toLowerCase().includes(query)
     );
-  }, [validators, search]);
+  }, [search, validators]);
 
-  const isValidVoteAddress = (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value.trim());
-
-  const chooseManual = () => {
-    const trimmed = manualVote.trim();
-    if (!isValidVoteAddress(trimmed)) return;
+  const chooseManualValidator = () => {
+    const id = manualVote.trim();
+    if (!isValidSolanaVoteAddress(id)) return;
     setSelected({
-      id: trimmed,
+      id,
       name: null,
       commissionPercent: null,
       apyPercent: null,
       activatedStakeFormatted: null,
       delinquent: false,
     });
-    setStep('amount');
+    setSheet(null);
   };
 
-  const validateAmount = (value: string): string | null => {
-    if (!/^\d+(\.\d+)?$/.test(value.trim())) return 'Enter a valid numeric amount';
-    const num = parseFloat(value);
-    if (isNaN(num) || num <= 0) return 'Amount must be greater than 0';
-    if (num < parseFloat(minStake)) return `Minimum stake is ${minStake} ${nativeSymbol}`;
-    return null;
+  const pickPercent = (percent: number) => {
+    const balance = Number(availableBalance);
+    if (!Number.isFinite(balance)) return;
+    const spendable = Math.max(0, balance - 0.01);
+    setAmount(String(+(spendable * percent / 100).toFixed(4)));
   };
 
   const submitStake = async () => {
-    if (!selected) return;
+    if (!selected || amountError || !amount) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const resp = await sendMessageWithRetry<{ result?: { txId: string; positionId?: string }; error?: string }>({
+      const response = await sendMessageWithRetry<{ result?: { txId: string; positionId?: string }; error?: string }>({
         type: 'STAKE',
         payload: { validatorId: selected.id, amount: amount.trim(), networkKey: network },
       });
-      if (resp?.error) throw new Error(resp.error);
-      if (!resp?.result?.txId) throw new Error('No transaction id returned');
-      setResult(resp.result);
-      setStep('result');
-    } catch (err: any) {
-      setSubmitError(err?.message || 'Staking failed');
+      if (response?.error) throw new Error(response.error);
+      if (!response?.result?.txId) throw new Error('No transaction id returned');
+      setResult(response.result);
+      setSheet(null);
+    } catch (error: any) {
+      setSubmitError(error?.message || 'Staking failed');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const explorerUrl = result
-    ? `${networks[network]?.blockExplorer || 'https://solscan.io'}/tx/${result.txId}${network === 'solana-devnet' ? '?cluster=devnet' : ''}`
-    : null;
+  if (result) {
+    const explorerBase = networks[network]?.blockExplorer || 'https://solscan.io';
+    const explorerUrl = `${explorerBase.replace(/\/$/, '')}/tx/${result.txId}${network === 'solana-devnet' ? '?cluster=devnet' : ''}`;
+    return (
+      <div className="swap-stake-screen">
+        <FlowHeader title={`Stake ${nativeSymbol}`} onBack={() => onClose(true)} />
+        <main className="swap-stake-result">
+          <div className="swap-stake-result__icon is-success"><Icon name="check" size={27} decorative /></div>
+          <h2>Stake submitted</h2>
+          <p>{capabilities?.activationNote || 'Your stake activates after the network confirms the transaction.'}</p>
+          <FlowDetails>
+            <FlowDetailRow label="Amount" value={`${amount.trim()} ${nativeSymbol}`} />
+            <FlowDetailRow label="Validator" value={selected ? validatorLabel(selected) : '—'} />
+            <FlowDetailRow label="Transaction" value={truncateId(result.txId)} />
+            {result.positionId && <FlowDetailRow label="Stake account" value={truncateId(result.positionId)} />}
+          </FlowDetails>
+        </main>
+        <footer className="swap-stake-footer swap-stake-footer--split">
+          <FlowButton variant="secondary" onClick={() => window.open(explorerUrl, '_blank')}>Explorer</FlowButton>
+          <FlowButton onClick={() => onClose(true)}>Done</FlowButton>
+        </footer>
+      </div>
+    );
+  }
+
+  const canReview = !!selected && !!amount && !amountError && capabilities?.canStake === true;
 
   return (
-    <div className="takeover">
-      <ScreenHeader
-        title={`Stake ${nativeSymbol}`}
-        onBack={() => {
-          if (step === 'amount') setStep('validator');
-          else if (step === 'confirm') setStep('amount');
-          else onClose(step === 'result');
-        }}
-      />
-
-      <div style={{ padding: '0 16px 16px' }}>
-        {step === 'validator' && (
-          <>
-            <div className="form-group">
-              <label>Choose a validator</label>
-              <input
-                type="text"
-                placeholder="Search by name or vote address…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-
-            {validatorsLoading ? (
-              <div className="loading">Loading validators...</div>
-            ) : (
-              <div className="transaction-list" style={{ maxHeight: 300, overflowY: 'auto' }}>
-                {filteredValidators.map((v) => (
-                  <div
-                    key={v.id}
-                    className="transaction-item"
-                    onClick={() => { setSelected(v); setStep('amount'); }}
-                  >
-                    <div className="tx-content">
-                      <div className="tx-row-primary">
-                        <span className="tx-type">{validatorLabel(v)}</span>
-                        <span className="tx-amount-value">
-                          {v.apyPercent !== null ? `${v.apyPercent.toFixed(1)}% APY` : 'APY n/a'}
-                        </span>
-                      </div>
-                      <div className="tx-row-secondary">
-                        {/* Pre-formatted display string ("430,800") — render
-                            verbatim; falls back to the vote address for
-                            manual entries where stake is unknown. */}
-                        <span className="tx-address">
-                          {v.activatedStakeFormatted !== null
-                            ? `${v.activatedStakeFormatted} ${nativeSymbol}`
-                            : `${v.id.slice(0, 8)}…${v.id.slice(-8)}`}
-                        </span>
-                        <span className="tx-time">
-                          {v.commissionPercent !== null ? `${v.commissionPercent}% fee` : ''}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {filteredValidators.length === 0 && (
-                  <div className="tx-row-secondary" style={{ padding: 8 }}>
-                    <span className="tx-address">No validators match — enter a vote address below.</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="form-group" style={{ marginTop: 12 }}>
-              <label>Or enter a vote address</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  type="text"
-                  placeholder="Validator vote address (base58)"
-                  value={manualVote}
-                  onChange={(e) => setManualVote(e.target.value)}
-                  style={{ flex: 1 }}
-                />
-                <button
-                  className="btn btn-secondary"
-                  disabled={!isValidVoteAddress(manualVote)}
-                  onClick={chooseManual}
-                >
-                  Use
-                </button>
-              </div>
-            </div>
-          </>
+    <div className="swap-stake-screen">
+      <FlowHeader title={`Stake ${nativeSymbol}`} onBack={() => onClose(false)} />
+      <main className="swap-stake-scroll">
+        {capabilities && !capabilities.canStake && (
+          <FlowCallout title="Staking unavailable">Staking is not available on this network.</FlowCallout>
         )}
 
-        {step === 'amount' && selected && (
-          <>
-            <div className="form-group">
-              <label>Validator</label>
-              <div className="asset-picker-chip" style={{ cursor: 'default' }}>
-                <span className="asset-picker-chip__main">
-                  <span className="asset-picker-chip__symbol">{validatorLabel(selected)}</span>
-                  <span className="asset-picker-chip__network">
-                    {selected.apyPercent !== null ? `${selected.apyPercent.toFixed(1)}% APY` : ''}
-                    {selected.commissionPercent !== null ? ` · ${selected.commissionPercent}% fee` : ''}
-                  </span>
+        <AmountCard
+          label="Amount to stake"
+          value={amount}
+          onChange={setAmount}
+          asset={<AssetPill symbol={nativeSymbol} src={nativeSymbol === 'SOL' ? solIcon : null} />}
+          balance={availableBalance === undefined ? undefined : formatAmount(Number(availableBalance))}
+          balanceLabel="Available"
+          onMax={availableBalance === undefined ? undefined : () => pickPercent(100)}
+          onPercent={availableBalance === undefined ? undefined : pickPercent}
+          secondary={usdValue}
+          error={amountError}
+        />
+
+        <button className="stake-validator-card" type="button" onClick={() => { setSearch(''); setManualVote(''); setSheet('validator'); }}>
+          <AssetMark label={selected ? validatorLabel(selected) : 'V'} size="large" />
+          <span>
+            <small>Validator</small>
+            <strong>{selected ? validatorLabel(selected) : validatorsLoading ? 'Loading validators…' : 'Choose a validator'}</strong>
+          </span>
+          <span className="stake-validator-card__apy">
+            <strong>{selected?.apyPercent !== null && selected?.apyPercent !== undefined ? `${selected.apyPercent.toFixed(1)}%` : 'n/a'}</strong>
+            <small>APY</small>
+          </span>
+          <Icon name="chevron-right" size={16} decorative />
+        </button>
+
+        {selected?.delinquent && (
+          <FlowCallout tone="danger" title="Validator is delinquent">
+            This validator is not currently voting and may earn no rewards until it recovers.
+          </FlowCallout>
+        )}
+
+        {canReview && (
+          <FlowDetails>
+            <FlowDetailRow label="Est. rewards / year" value={yearlyReward === null ? '—' : `+${formatAmount(yearlyReward)} ${nativeSymbol}`} accent={yearlyReward === null ? 'muted' : 'success'} />
+            <FlowDetailRow label="Validator fee" value={selected?.commissionPercent === null || selected?.commissionPercent === undefined ? '—' : `${selected.commissionPercent}%`} />
+            <FlowDetailRow label="Network fee" value={feeEstimate ? `${feeEstimate} ${nativeSymbol}` : 'Estimating…'} />
+            <FlowDetailRow label="Rewards begin" value="Next epoch" hint={capabilities?.activationNote} />
+            <FlowDetailRow label="Unstaking period" value="~2–3 days" hint={capabilities?.deactivationNote} />
+          </FlowDetails>
+        )}
+      </main>
+
+      <footer className="swap-stake-footer">
+        <FlowButton disabled={!canReview} onClick={() => setSheet('review')}>
+          {amountError || (amount ? selected ? 'Review stake' : 'Choose a validator' : 'Enter an amount')}
+        </FlowButton>
+      </footer>
+
+      <FlowSheet
+        open={sheet === 'validator'}
+        onClose={() => setSheet(null)}
+        title="Choose a validator"
+        subtitle="Sorted by activated stake"
+        footer={(
+          <div className="stake-manual-validator">
+            <label>Or enter a vote address</label>
+            <div>
+              <input
+                value={manualVote}
+                onChange={(event) => setManualVote(event.target.value)}
+                placeholder="Vote address (base58)"
+                aria-invalid={!!manualVote && !isValidSolanaVoteAddress(manualVote)}
+              />
+              <FlowButton disabled={!isValidSolanaVoteAddress(manualVote)} onClick={chooseManualValidator}>Use</FlowButton>
+            </div>
+          </div>
+        )}
+      >
+        <label className="swap-stake-search">
+          <Icon name="search" size={16} decorative />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name or vote address" />
+        </label>
+        <div className="swap-stake-picker-list">
+          {validatorsLoading ? (
+            <div className="swap-stake-picker-empty">Loading validators…</div>
+          ) : filteredValidators.length ? filteredValidators.map((validator) => {
+            const isSelected = selected?.id === validator.id;
+            return (
+              <button className={`swap-stake-picker-row validator-row ${isSelected ? 'is-selected' : ''}`} type="button" key={validator.id} onClick={() => { setSelected(validator); setSheet(null); }}>
+                <AssetMark label={validatorLabel(validator)} />
+                <span className="swap-stake-picker-row__main">
+                  <strong className={!validator.name ? 'is-mono' : ''}>
+                    {validatorLabel(validator)}
+                    {validator.delinquent && <em className="is-danger">Delinquent</em>}
+                  </strong>
+                  <small>{validator.activatedStakeFormatted ? `${validator.activatedStakeFormatted} ${nativeSymbol}` : truncateId(validator.id)}{validator.commissionPercent !== null ? ` · ${validator.commissionPercent}% fee` : ''}</small>
                 </span>
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label>Amount ({nativeSymbol}, min {minStake})</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder={`0.0 ${nativeSymbol}`}
-                value={amount}
-                onChange={(e) => {
-                  setAmount(e.target.value);
-                  setAmountError(null);
-                }}
-              />
-              {amountError && <div className="tx-error-inline">{amountError}</div>}
-            </div>
-
-            <button
-              className="btn btn-primary"
-              style={{ width: '100%' }}
-              onClick={() => {
-                const err = validateAmount(amount);
-                if (err) { setAmountError(err); return; }
-                setStep('confirm');
-              }}
-            >
-              Review
-            </button>
-          </>
-        )}
-
-        {step === 'confirm' && selected && (
-          <>
-            <div className="form-group">
-              <label>Confirm stake</label>
-              <div className="transaction-item" style={{ cursor: 'default' }}>
-                <div className="tx-content">
-                  <div className="tx-row-primary">
-                    <span className="tx-type">Stake</span>
-                    <span className="tx-amount-value">{amount.trim()} {nativeSymbol}</span>
-                  </div>
-                  <div className="tx-row-secondary">
-                    <span className="tx-address">To {validatorLabel(selected)}</span>
-                  </div>
-                  <div className="tx-row-secondary">
-                    <span className="tx-address">{selected.id}</span>
-                  </div>
-                  <div className="tx-row-secondary">
-                    <span className="tx-address">Network fee</span>
-                    <span className="tx-time">
-                      {feeEstimate ? `${feeEstimate} ${nativeSymbol}` : '…'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {capabilities && (
-              <div className="activity-fallback-chip" style={{ marginBottom: 12 }}>
-                <span>{capabilities.activationNote}</span>
-              </div>
-            )}
-
-            {submitError && <div className="tx-error-inline" style={{ marginBottom: 8 }}>{submitError}</div>}
-
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-secondary" style={{ flex: 1 }} disabled={submitting} onClick={() => setStep('amount')}>
-                Back
+                <span className="swap-stake-picker-row__value is-apy">
+                  <strong>{validator.apyPercent !== null ? `${validator.apyPercent.toFixed(1)}%` : 'n/a'}</strong>
+                  <small>APY</small>
+                </span>
+                {isSelected && <Icon name="check" size={16} decorative />}
               </button>
-              <button className="btn btn-primary" style={{ flex: 1 }} disabled={submitting} onClick={submitStake}>
-                {submitting ? 'Staking…' : 'Confirm & Stake'}
-              </button>
-            </div>
-          </>
+            );
+          }) : (
+            <div className="swap-stake-picker-empty">No validators match “{search}”. Enter a vote address below instead.</div>
+          )}
+        </div>
+      </FlowSheet>
+
+      <FlowSheet
+        open={sheet === 'review'}
+        onClose={() => { if (!submitting) setSheet(null); }}
+        title="Review stake"
+        size="medium"
+        footer={submitting ? <FlowButton loading>Staking…</FlowButton> : (
+          <div className="swap-stake-sheet-actions">
+            <FlowButton variant="secondary" onClick={() => setSheet(null)}>Cancel</FlowButton>
+            <FlowButton onClick={submitStake}>Confirm stake</FlowButton>
+          </div>
         )}
-
-        {step === 'result' && result && (
-          <>
-            <div className="form-group">
-              <label>Stake submitted</label>
-              <div className="transaction-item" style={{ cursor: 'default' }}>
-                <div className="tx-content">
-                  <div className="tx-row-primary">
-                    <span className="tx-type">Pending confirmation</span>
-                    <span className="tx-amount-value">{amount.trim()} {nativeSymbol}</span>
-                  </div>
-                  <div className="tx-row-secondary">
-                    <span className="tx-address">Tx {result.txId.slice(0, 8)}…{result.txId.slice(-8)}</span>
-                  </div>
-                  {result.positionId && (
-                    <div className="tx-row-secondary">
-                      <span className="tx-address">Stake account {result.positionId.slice(0, 8)}…{result.positionId.slice(-8)}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
+      >
+        {selected && (
+          <div className="stake-review">
+            <div className="stake-review__hero">
+              <strong>{formatAmount(numericAmount)} <span>{nativeSymbol}</span></strong>
+              {usdValue && <small>{usdValue}</small>}
             </div>
-
-            {capabilities && (
-              <div className="activity-fallback-chip" style={{ marginBottom: 12 }}>
-                <span>{capabilities.activationNote}</span>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 8 }}>
-              {explorerUrl && (
-                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => window.open(explorerUrl, '_blank')}>
-                  View on explorer
-                </button>
-              )}
-              <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => onClose(true)}>
-                Done
-              </button>
-            </div>
-          </>
+            <FlowDetails>
+              <FlowDetailRow label="Validator" value={validatorLabel(selected)} />
+              <FlowDetailRow label="Vote address" value={truncateId(selected.id)} />
+              <FlowDetailRow label="APY" value={selected.apyPercent === null ? '—' : `${selected.apyPercent.toFixed(1)}%`} accent={selected.apyPercent === null ? 'muted' : 'success'} />
+              <FlowDetailRow label="Est. rewards / year" value={yearlyReward === null ? '—' : `+${formatAmount(yearlyReward)} ${nativeSymbol}`} accent={yearlyReward === null ? 'muted' : 'success'} />
+              <FlowDetailRow label="Network fee" value={feeEstimate ? `${feeEstimate} ${nativeSymbol}` : 'Estimating…'} />
+            </FlowDetails>
+            <FlowCallout>{capabilities?.activationNote || 'Stake activates after the next epoch boundary.'}</FlowCallout>
+            {submitError && <FlowCallout tone="danger" title="Stake failed">{submitError}</FlowCallout>}
+          </div>
         )}
-      </div>
+      </FlowSheet>
     </div>
   );
 }
