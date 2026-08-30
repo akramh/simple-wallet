@@ -105,6 +105,23 @@ export interface SolanaEpochInfo {
   slotsInEpoch: number;
 }
 
+/** Normalized inflation reward metadata returned by Solana RPC. */
+export interface SolanaInflationReward {
+  amountLamports: number;
+  epoch: number;
+  effectiveSlot?: number;
+  postBalanceLamports?: number;
+  commissionPercent?: number | null;
+}
+
+/** Earliest indexed activity associated with an on-chain account. */
+export interface SolanaAccountActivity {
+  signature: string;
+  slot: number;
+  /** Unix timestamp in milliseconds; omitted when the RPC lacks block time. */
+  timestamp?: number;
+}
+
 /** On-chain validator summary from getVoteAccounts (no metadata). */
 export interface VoteAccountSummary {
   votePubkey: string;
@@ -812,23 +829,121 @@ export class SolanaProvider {
   }
 
   /**
-   * Fetch the previous epoch's inflation reward for a batch of addresses.
-   * Best-effort data for display only — callers must tolerate a thrown error
-   * (fallback RPCs may not index rewards) as well as null entries.
+   * Fetch inflation rewards for a batch of stake accounts.
    *
-   * @param addresses - Stake account addresses (base58)
-   * @returns Per-address reward in lamports, null where none was paid
+   * @param addresses - Stake account addresses (base58).
+   * @param epoch - Optional reward epoch; omitted for the RPC's latest eligible epoch.
+   * @returns Per-address normalized reward metadata, or null when none was paid.
    * @async
    */
-  async getInflationRewardLamports(addresses: string[]): Promise<Array<number | null>> {
+  async getInflationRewards(
+    addresses: string[],
+    epoch?: number,
+  ): Promise<Array<SolanaInflationReward | null>> {
     if (!addresses.length) return [];
     const keys = addresses.map((a) => new PublicKey(a));
     let lastError: Error | undefined;
 
     for (const connection of this.connections) {
       try {
-        const rewards = await connection.getInflationReward(keys);
-        return rewards.map((r) => (r ? r.amount : null));
+        const rewards = await connection.getInflationReward(
+          keys,
+          epoch,
+          this.config.commitment ?? 'confirmed',
+        );
+        return rewards.map((reward) => reward ? {
+          amountLamports: reward.amount,
+          epoch: reward.epoch,
+          effectiveSlot: reward.effectiveSlot,
+          postBalanceLamports: reward.postBalance,
+          commissionPercent: reward.commission,
+        } : null);
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+
+    throw new Error(
+      `All Solana RPC endpoints failed for ${this.config.networkKey}: ${lastError?.message || 'unknown error'}`
+    );
+  }
+
+  /**
+   * Backward-compatible amount-only inflation reward lookup.
+   *
+   * @param addresses - Stake account addresses (base58).
+   * @returns Per-address reward amounts in lamports, or null.
+   * @async
+   */
+  async getInflationRewardLamports(addresses: string[]): Promise<Array<number | null>> {
+    const rewards = await this.getInflationRewards(addresses);
+    return rewards.map((reward) => reward?.amountLamports ?? null);
+  }
+
+  /**
+   * Fetch recent reward history for one stake account, newest first.
+   *
+   * @param address - Stake account address (base58).
+   * @param currentEpoch - Current chain epoch; rewards are queried before it.
+   * @param limit - Maximum number of preceding epochs to inspect.
+   * @returns Rewards that exist within the inspected epoch window.
+   * @async
+   */
+  async getInflationRewardHistory(
+    address: string,
+    currentEpoch: number,
+    limit: number = 5,
+  ): Promise<SolanaInflationReward[]> {
+    const rewards: SolanaInflationReward[] = [];
+    const safeLimit = Math.max(0, Math.min(limit, 10));
+    for (let offset = 1; offset <= safeLimit; offset += 1) {
+      const epoch = currentEpoch - offset;
+      if (epoch < 0) break;
+      const [reward] = await this.getInflationRewards([address], epoch);
+      if (reward) rewards.push(reward);
+    }
+    return rewards;
+  }
+
+  /**
+   * Find the earliest indexed activity for an account.
+   *
+   * Solana returns signatures newest-first. Pagination is deliberately capped
+   * at 3,000 entries because stake accounts normally have very low activity;
+   * callers treat missing data as an optional enrichment.
+   *
+   * @param address - Account address (base58).
+   * @returns Earliest indexed signature, slot, and optional block time.
+   * @async
+   */
+  async getAccountFirstActivity(address: string): Promise<SolanaAccountActivity | null> {
+    const key = new PublicKey(address);
+    let lastError: Error | undefined;
+
+    for (const connection of this.connections) {
+      try {
+        let before: string | undefined;
+        const finality = this.config.commitment === 'finalized' ? 'finalized' : 'confirmed';
+        let earliest: Awaited<ReturnType<Connection['getSignaturesForAddress']>>[number] | undefined;
+        for (let page = 0; page < 3; page += 1) {
+          const signatures = await connection.getSignaturesForAddress(
+            key,
+            { limit: 1000, ...(before ? { before } : {}) },
+            finality,
+          );
+          if (!signatures.length) break;
+          earliest = signatures[signatures.length - 1];
+          if (signatures.length < 1000) break;
+          before = earliest.signature;
+        }
+        if (!earliest) return null;
+        return {
+          signature: earliest.signature,
+          slot: earliest.slot,
+          timestamp: earliest.blockTime === null || earliest.blockTime === undefined
+            ? undefined
+            : earliest.blockTime * 1000,
+        };
       } catch (err) {
         lastError = err as Error;
       }

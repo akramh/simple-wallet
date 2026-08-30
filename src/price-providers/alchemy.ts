@@ -131,6 +131,22 @@ interface AlchemyByAddressResponse {
   }>;
 }
 
+interface AlchemyHistoricalResponse {
+  symbol?: string;
+  currency?: string;
+  data?: Array<{
+    value: string;
+    timestamp: string;
+  }>;
+}
+
+/** Historical USD price sample nearest a requested timestamp. */
+export interface AlchemyHistoricalPriceSample {
+  price: number;
+  /** Unix timestamp in milliseconds for the returned sample. */
+  timestamp: number;
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -158,6 +174,62 @@ function pickUsd(prices: AlchemyPriceEntry[] | undefined): number | null {
     }
   }
   return null;
+}
+
+/**
+ * Fetch the historical USD price sample nearest a specific time.
+ *
+ * Uses Alchemy's historical Prices endpoint with a narrow 24-hour window and
+ * hourly samples. The result is intentionally marked as a sample by its type;
+ * callers must not present it as an exact execution price.
+ *
+ * @param symbol - Token symbol, such as SOL.
+ * @param timestamp - Target Unix timestamp in milliseconds.
+ * @returns Nearest valid historical USD price sample.
+ * @throws Error when configuration, input, HTTP, or response data is invalid.
+ * @async
+ */
+export async function getAlchemyHistoricalPriceAt(
+  symbol: string,
+  timestamp: number,
+): Promise<AlchemyHistoricalPriceSample> {
+  const apiKey = resolveApiKey();
+  if (!apiKey) throw new Error('Alchemy: ALCHEMY_API_KEY not set');
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    throw new Error('Alchemy: invalid historical price timestamp');
+  }
+
+  const halfWindowMs = 12 * 60 * 60 * 1000;
+  const url = `${ALCHEMY_PRICES_BASE}/${apiKey}/tokens/historical`;
+  const response = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: symbol.toUpperCase(),
+      startTime: new Date(timestamp - halfWindowMs).toISOString(),
+      endTime: new Date(timestamp + halfWindowMs).toISOString(),
+      interval: '1h',
+      withMarketData: false,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Alchemy: historical prices HTTP ${response.status}`);
+  }
+
+  const body = (await response.json()) as AlchemyHistoricalResponse;
+  const samples = (body.data ?? []).flatMap((entry) => {
+    const price = Number.parseFloat(entry.value);
+    const sampleTime = Date.parse(entry.timestamp);
+    return Number.isFinite(price) && Number.isFinite(sampleTime)
+      ? [{ price, timestamp: sampleTime }]
+      : [];
+  });
+  if (!samples.length) throw new Error(`Alchemy: no historical USD price for ${symbol}`);
+  return samples.reduce((nearest, sample) =>
+    Math.abs(sample.timestamp - timestamp) < Math.abs(nearest.timestamp - timestamp)
+      ? sample
+      : nearest
+  );
 }
 
 // ============================================================================

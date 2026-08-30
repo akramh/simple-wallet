@@ -113,18 +113,62 @@ test('accountExists: true when account info is non-null, false otherwise', async
   assert.equal(await missing.accountExists(WALLET), false);
 });
 
-test('getInflationRewardLamports: maps rewards and nulls, short-circuits on empty input', async () => {
+test('getInflationRewards preserves reward metadata and amount-only compatibility', async () => {
   let called = 0;
   const provider = providerWith({
     getInflationReward: async () => {
       called++;
-      return [{ amount: 12345, epoch: 699 }, null];
+      return [{ amount: 12345, epoch: 699, effectiveSlot: 42, postBalance: 90000, commission: 5 }, null];
     },
   });
 
-  assert.deepEqual(await provider.getInflationRewardLamports([]), []);
+  assert.deepEqual(await provider.getInflationRewards([]), []);
   assert.equal(called, 0);
 
+  const detailed = await provider.getInflationRewards([WALLET, WALLET], 699);
+  assert.deepEqual(detailed, [{
+    amountLamports: 12345,
+    epoch: 699,
+    effectiveSlot: 42,
+    postBalanceLamports: 90000,
+    commissionPercent: 5,
+  }, null]);
   const rewards = await provider.getInflationRewardLamports([WALLET, WALLET]);
   assert.deepEqual(rewards, [12345, null]);
+});
+
+test('getInflationRewardHistory returns paid rewards newest first', async () => {
+  const provider = providerWith({
+    getInflationReward: async (_keys, epoch) => [
+      epoch === 699 || epoch === 697 ? { amount: epoch, epoch } : null,
+    ],
+  });
+
+  const rewards = await provider.getInflationRewardHistory(WALLET, 700, 3);
+  assert.deepEqual(rewards.map((reward) => reward.epoch), [699, 697]);
+});
+
+test('getAccountFirstActivity paginates newest-first signatures to the earliest entry', async () => {
+  const calls = [];
+  const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+    signature: `new-${index}`,
+    slot: 2000 - index,
+    blockTime: 2000 - index,
+  }));
+  const provider = providerWith({
+    getSignaturesForAddress: async (_key, options) => {
+      calls.push(options);
+      return options.before
+        ? [{ signature: 'first-signature', slot: 7, blockTime: 1_700_000_000 }]
+        : firstPage;
+    },
+  });
+
+  const activity = await provider.getAccountFirstActivity(WALLET);
+  assert.deepEqual(activity, {
+    signature: 'first-signature',
+    slot: 7,
+    timestamp: 1_700_000_000_000,
+  });
+  assert.equal(calls[1].before, 'new-999');
 });

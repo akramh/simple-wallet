@@ -77,7 +77,10 @@ function makeStakeProvider(networkKey, overrides = {}) {
       return [];
     },
     async getEpochInfo() { return { epoch: 10, slotIndex: 0, slotsInEpoch: 432000 }; },
+    async getInflationRewards(addresses) { return addresses.map(() => null); },
     async getInflationRewardLamports(addresses) { return addresses.map(() => null); },
+    async getInflationRewardHistory() { return []; },
+    async getAccountFirstActivity() { return null; },
     async getVoteAccountsSummary() { return []; },
     async getStakeRentExemptLamports() { return 2_282_880; },
     async accountExists() { return false; },
@@ -183,6 +186,8 @@ test('getStakePositions maps parsed accounts to chain-neutral views', async () =
   assert.equal(p.activationEpoch, 5);
   assert.equal(p.deactivationEpoch, null);
   assert.equal(p.currentEpoch, 10);
+  assert.equal(p.currentEpochSlot, 0);
+  assert.equal(p.slotsInEpoch, 432000);
   // 1.50228288 SOL × $100
   assert.ok(Math.abs(p.usdValue - 150.22828) < 0.01);
 });
@@ -224,11 +229,93 @@ test('getStakePositions: rewards RPC failure is soft', async () => {
   provider.getParsedStakeAccountsByWithdrawer = async () => [
     delegatedFixture('4Nd1m7n4oxTSGEcRcqDfvpL5YqKymhvPf4VQnppshR9z', solAddress),
   ];
-  provider.getInflationRewardLamports = async () => { throw new Error('unsupported'); };
+  provider.getInflationRewards = async () => { throw new Error('unsupported'); };
 
   const positions = await svc.getStakePositions('solana-mainnet');
   assert.equal(positions.length, 1);
   assert.equal(positions[0].lastRewardFormatted, undefined);
+});
+
+test('getStakePositions retains last reward epoch and payout metadata', async () => {
+  const { svc, solAddress, provider } = await buildService('solana-mainnet');
+  provider.getParsedStakeAccountsByWithdrawer = async () => [
+    delegatedFixture('4Nd1m7n4oxTSGEcRcqDfvpL5YqKymhvPf4VQnppshR9z', solAddress),
+  ];
+  provider.getInflationRewards = async () => [{
+    amountLamports: 25_000_000,
+    epoch: 9,
+    effectiveSlot: 99,
+    postBalanceLamports: 1_525_000_000,
+    commissionPercent: 5,
+  }];
+
+  const [position] = await svc.getStakePositions('solana-mainnet');
+  assert.equal(position.lastRewardFormatted, '0.025000000');
+  assert.deepEqual(position.lastReward, {
+    amountFormatted: '0.025000000',
+    epoch: 9,
+    effectiveSlot: 99,
+    postBalanceFormatted: '1.525000000',
+    commissionPercent: 5,
+  });
+});
+
+test('getStakePositionDetails adds creation, historical price, and reward history', async () => {
+  const { svc, solAddress, provider } = await buildService('solana-mainnet');
+  let rewardHistoryRequest;
+  provider.getParsedStakeAccountsByWithdrawer = async () => [
+    delegatedFixture('4Nd1m7n4oxTSGEcRcqDfvpL5YqKymhvPf4VQnppshR9z', solAddress),
+  ];
+  provider.getAccountFirstActivity = async () => ({
+    signature: 'creation-signature',
+    slot: 123,
+    timestamp: 1_700_000_000_000,
+  });
+  provider.getInflationRewardHistory = async (address, currentEpoch, limit) => {
+    rewardHistoryRequest = { address, currentEpoch, limit };
+    return [{
+      amountLamports: 10_000_000,
+      epoch: 9,
+      effectiveSlot: 456,
+      postBalanceLamports: 1_510_000_000,
+      commissionPercent: 5,
+    }];
+  };
+  svc.getSolUsdPriceAt = async () => ({ price: 50, timestamp: 1_700_000_100_000 });
+
+  const detail = await svc.getStakePositionDetails(
+    '4Nd1m7n4oxTSGEcRcqDfvpL5YqKymhvPf4VQnppshR9z',
+    'solana-mainnet',
+  );
+  assert.equal(detail.accountCreationSignature, 'creation-signature');
+  assert.equal(detail.accountCreatedAt, 1_700_000_000_000);
+  assert.equal(detail.priceAtCreationUsd, 50);
+  assert.equal(detail.valueAtCreationUsd, 75);
+  assert.deepEqual(rewardHistoryRequest, {
+    address: '4Nd1m7n4oxTSGEcRcqDfvpL5YqKymhvPf4VQnppshR9z',
+    currentEpoch: 10,
+    limit: 5,
+  });
+  assert.deepEqual(detail.rewardHistory, [{
+    amountFormatted: '0.010000000',
+    epoch: 9,
+    effectiveSlot: 456,
+    postBalanceFormatted: '1.510000000',
+    commissionPercent: 5,
+  }]);
+});
+
+test('getStakePositionDetails rejects a stake account not owned by the wallet', async () => {
+  const { svc, provider } = await buildService('solana-mainnet');
+  provider.getParsedStakeAccountsByWithdrawer = async () => [];
+
+  await assert.rejects(
+    () => svc.getStakePositionDetails(
+      '4Nd1m7n4oxTSGEcRcqDfvpL5YqKymhvPf4VQnppshR9z',
+      'solana-mainnet',
+    ),
+    /Staking position not found/,
+  );
 });
 
 // ---------------------------------------------------------------------------

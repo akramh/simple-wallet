@@ -75,6 +75,7 @@ export {
   parseStakeAccount,
 } from './stake.js';
 export type { SolanaEpochInfo, VoteAccountSummary } from './provider.js';
+export type { SolanaInflationReward, SolanaAccountActivity } from './provider.js';
 export { STAKE_WITHDRAWER_OFFSET } from './provider.js';
 
 // Stakewiz validator metadata (the one non-Alchemy external API for staking)

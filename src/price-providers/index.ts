@@ -72,5 +72,9 @@ export type {
 export { PriceProviderManager } from './provider-manager.js';
 export { CoinPaprikaProvider } from './coinpaprika.js';
 export { CoinGeckoProvider, SYMBOL_TO_COINGECKO_ID, CHAIN_TO_PLATFORM, setCoingeckoApiKey } from './coingecko.js';
-export { AlchemyPriceProvider, setAlchemyApiKey } from './alchemy.js';
-
+export {
+  AlchemyPriceProvider,
+  getAlchemyHistoricalPriceAt,
+  setAlchemyApiKey,
+} from './alchemy.js';
+export type { AlchemyHistoricalPriceSample } from './alchemy.js';
