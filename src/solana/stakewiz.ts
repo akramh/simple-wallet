@@ -38,6 +38,21 @@ export const STAKEWIZ_API_BASE = 'https://api.stakewiz.com';
 export const STAKEWIZ_TIMEOUT_MS = 8000;
 
 /**
+ * Normalize Stakewiz's mixed commission units to a percentage.
+ *
+ * The API historically returned whole percentages (for example, `5`), but
+ * some current validator records use basis points (for example, Jupiter uses
+ * `500` for 5%). Solana validator commission cannot exceed 100%, so values
+ * above 100 can be safely interpreted as basis points.
+ */
+function normalizeCommissionPercent(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  if (value <= 100) return value;
+  if (value <= 10_000) return value / 100;
+  return null;
+}
+
+/**
  * Fetch the Stakewiz validator list and index it by vote pubkey.
  *
  * @param fetchFn - Injection seam for tests; defaults to global fetch
@@ -86,7 +101,7 @@ export async function fetchStakewizValidators(
               ? v.apy_estimate
               : null,
         rank: typeof v.rank === 'number' ? v.rank : null,
-        commissionPercent: typeof v.commission === 'number' ? v.commission : null,
+        commissionPercent: normalizeCommissionPercent(v.commission),
       });
     }
   } catch {

@@ -103,6 +103,74 @@ export function epochProgressPercent(slotIndex, slotsInEpoch) {
 }
 
 /**
+ * Build state-aware totals for the staking portfolio hero.
+ *
+ * Active, activating, and pending positions contribute to the staked balance.
+ * Deactivating and withdrawable balances are reported separately so funds
+ * leaving the staking lifecycle never inflate APY, rewards, or USD totals.
+ *
+ * @param {Array<{
+ *   state: string,
+ *   amountFormatted: string,
+ *   totalFormatted?: string,
+ *   usdValue?: number,
+ *   lastRewardFormatted?: string,
+ *   validator: { apyPercent: number | null }
+ * }>} positions - Current wallet staking positions.
+ * @param {number | null | undefined} nativePriceUsd - Current native-token price.
+ * @returns {{
+ *   total: number,
+ *   usd: number | null,
+ *   rewards: number,
+ *   apy: number,
+ *   deactivatingTotal: number,
+ *   deactivatingCount: number,
+ *   withdrawableTotal: number,
+ *   withdrawableCount: number
+ * }} State-aware portfolio totals.
+ */
+export function summarizeStakePositions(positions, nativePriceUsd) {
+  const staked = positions.filter((position) =>
+    position.state === 'active' || position.state === 'activating' || position.state === 'pending'
+  );
+  const deactivating = positions.filter((position) => position.state === 'deactivating');
+  const withdrawable = positions.filter((position) => position.state === 'withdrawable');
+  const amountOf = (position) => Number(position.amountFormatted) || 0;
+  const total = staked.reduce((sum, position) => sum + amountOf(position), 0);
+  const rewards = staked.reduce(
+    (sum, position) => sum + (Number(position.lastRewardFormatted) || 0),
+    0,
+  );
+  const weightedYield = staked.reduce(
+    (sum, position) => sum + amountOf(position) * (position.validator.apyPercent ?? 0),
+    0,
+  );
+  const hasNativePrice = typeof nativePriceUsd === 'number' && Number.isFinite(nativePriceUsd);
+  const allStakedUsdKnown = staked.length > 0 && staked.every((position) =>
+    typeof position.usdValue === 'number' && Number.isFinite(position.usdValue)
+  );
+  const reportedUsd = allStakedUsdKnown
+    ? staked.reduce((sum, position) => {
+        const delegated = amountOf(position);
+        const accountTotal = Number(position.totalFormatted) || delegated;
+        const delegatedShare = accountTotal > 0 ? delegated / accountTotal : 0;
+        return sum + position.usdValue * delegatedShare;
+      }, 0)
+    : null;
+
+  return {
+    total,
+    rewards,
+    apy: total > 0 ? weightedYield / total : 0,
+    usd: hasNativePrice ? total * nativePriceUsd : reportedUsd,
+    deactivatingTotal: deactivating.reduce((sum, position) => sum + amountOf(position), 0),
+    deactivatingCount: deactivating.length,
+    withdrawableTotal: withdrawable.reduce((sum, position) => sum + amountOf(position), 0),
+    withdrawableCount: withdrawable.length,
+  };
+}
+
+/**
  * Resolve the permitted primary action for a staking position.
  *
  * @param {string} state - Chain-neutral staking lifecycle state.

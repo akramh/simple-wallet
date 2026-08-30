@@ -23,6 +23,7 @@ import {
   epochProgressPercent,
   estimateEpochBoundaryAt,
   stakingPositionAction,
+  summarizeStakePositions,
 } from '../utils/swapStake.js';
 import StakeFlowView from './StakeFlowView';
 import {
@@ -161,14 +162,6 @@ function compactAddress(value?: string): string {
   if (!value) return 'Unavailable';
   if (value.length <= 18) return value;
   return `${value.slice(0, 8)}…${value.slice(-7)}`;
-}
-
-function positionHint(position: StakePositionViewData): string | null {
-  if (position.state === 'activating') return 'Activates at the next epoch boundary';
-  if (position.state === 'deactivating') return 'Withdraw unlocks after deactivation';
-  if (position.state === 'withdrawable') return 'Ready to return to your wallet';
-  if (position.validator.delinquent) return 'Validator is currently delinquent';
-  return null;
 }
 
 function actionLabel(position: StakePositionViewData, capabilities: StakingCapabilitiesData | null): string {
@@ -491,21 +484,7 @@ function StakingView({ network, networks, availableBalance, nativePriceUsd, onBa
   };
 
   const summary = useMemo(() => {
-    const total = positions.reduce((sum, position) => sum + (Number(position.amountFormatted) || 0), 0);
-    const rewards = positions.reduce((sum, position) => sum + (Number(position.lastRewardFormatted) || 0), 0);
-    const weightedYield = positions.reduce((sum, position) => {
-      const amount = Number(position.amountFormatted) || 0;
-      return sum + amount * (position.validator.apyPercent ?? 0);
-    }, 0);
-    const fallbackUsd = nativePriceUsd === null || nativePriceUsd === undefined ? null : total * nativePriceUsd;
-    const reportedUsd = positions.reduce((sum, position) => sum + (position.usdValue ?? 0), 0);
-    const hasReportedUsd = positions.some((position) => position.usdValue !== undefined);
-    return {
-      total,
-      rewards,
-      apy: total > 0 ? weightedYield / total : 0,
-      usd: hasReportedUsd ? reportedUsd : fallbackUsd,
-    };
+    return summarizeStakePositions(positions, nativePriceUsd);
   }, [nativePriceUsd, positions]);
 
   const confirmAction = async () => {
@@ -606,6 +585,18 @@ function StakingView({ network, networks, availableBalance, nativePriceUsd, onBa
               <small>{summary.usd === null ? 'USD value unavailable' : formatUsd(summary.usd)}</small>
             </div>
           </div>
+          {summary.deactivatingTotal > 0 && (
+            <div className="staking-redesign-summary__lifecycle is-deactivating">
+              <span><i />Unstaking{summary.deactivatingCount > 1 ? ` (${summary.deactivatingCount})` : ''}</span>
+              <strong>{formatAmount(String(summary.deactivatingTotal))} {nativeSymbol}</strong>
+            </div>
+          )}
+          {summary.withdrawableTotal > 0 && (
+            <div className="staking-redesign-summary__lifecycle is-withdrawable">
+              <span><i />Ready to withdraw{summary.withdrawableCount > 1 ? ` (${summary.withdrawableCount})` : ''}</span>
+              <strong>{formatAmount(String(summary.withdrawableTotal))} {nativeSymbol}</strong>
+            </div>
+          )}
           <div className="staking-redesign-summary__stats">
             <div><small>Avg. APY</small><strong>{summary.apy ? `${summary.apy.toFixed(1)}%` : '—'}</strong></div>
             <div><small>Latest rewards</small><strong>{summary.rewards ? `+${formatAmount(String(summary.rewards), 6)} ${nativeSymbol}` : '—'}</strong></div>
@@ -653,7 +644,6 @@ function StakingView({ network, networks, availableBalance, nativePriceUsd, onBa
         ) : (
           <div className="staking-redesign-list">
             {positions.map((position) => {
-              const hint = positionHint(position);
               return (
                 <button className="staking-redesign-position" type="button" key={position.positionId} onClick={() => openPosition(position.positionId)} aria-label={`View ${validatorLabel(position.validator)} stake details`}>
                   <div className="staking-redesign-position__top">
@@ -674,7 +664,6 @@ function StakingView({ network, networks, availableBalance, nativePriceUsd, onBa
                       <small>APY</small>
                     </div>
                   </div>
-                  {hint && <div className={`staking-redesign-position__hint ${position.validator.delinquent ? 'is-danger' : ''}`}>{hint}</div>}
                   <div className="staking-redesign-position__footer">
                     <span>{position.positionId.slice(0, 6)}…{position.positionId.slice(-5)}</span>
                     <span className="staking-redesign-position__view">View details <Icon name="chevron-right" size={12} decorative /></span>

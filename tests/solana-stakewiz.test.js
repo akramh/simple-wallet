@@ -25,6 +25,12 @@ const VALIDATORS_BODY = [
     apy_estimate: 6.1,
     commission: 0,
   },
+  {
+    vote_identity: 'vote-jupiter',
+    name: 'Jupiter',
+    total_apy: 5.18,
+    commission: 500,
+  },
   { name: 'missing vote identity — skipped' },
 ];
 
@@ -38,7 +44,7 @@ function okFetch(body) {
 test('fetchStakewizValidators: parses and indexes by vote pubkey', async () => {
   const map = await fetchStakewizValidators(okFetch(VALIDATORS_BODY));
 
-  assert.equal(map.size, 2);
+  assert.equal(map.size, 3);
   assert.deepEqual(map.get('vote-a'), {
     votePubkey: 'vote-a',
     name: 'Validator A',
@@ -51,6 +57,19 @@ test('fetchStakewizValidators: parses and indexes by vote pubkey', async () => {
   assert.equal(b.name, null);
   assert.equal(b.apyPercent, 6.1);
   assert.equal(b.rank, null);
+  // Stakewiz currently mixes whole percentages and basis points across
+  // validator records. Jupiter's live record reports 500 for a 5% fee.
+  assert.equal(map.get('vote-jupiter').commissionPercent, 5);
+});
+
+test('fetchStakewizValidators: rejects commission values outside valid percent or basis-point ranges', async () => {
+  const map = await fetchStakewizValidators(okFetch([{
+    vote_identity: 'vote-invalid-commission',
+    name: 'Invalid',
+    commission: 10_001,
+  }]));
+
+  assert.equal(map.get('vote-invalid-commission').commissionPercent, null);
 });
 
 test('fetchStakewizValidators: HTTP error degrades to empty map', async () => {

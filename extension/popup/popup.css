@@ -4639,6 +4639,13 @@ div.settings-row {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Scroll content must keep its intrinsic height. Allowing direct children to
+ * shrink clips rounded surfaces (notably the staking summary) instead of
+ * increasing the scrollable page height. */
+.swap-stake-scroll > * {
+  flex-shrink: 0;
+}
+
 .swap-stake-footer {
   z-index: 3;
   flex: 0 0 auto;
@@ -5680,6 +5687,50 @@ div.settings-row {
   line-height: 17px;
 }
 
+.staking-redesign-summary__lifecycle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 13px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+  line-height: 16px;
+}
+
+.staking-redesign-summary__lifecycle > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+}
+
+.staking-redesign-summary__lifecycle i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.staking-redesign-summary__lifecycle > strong {
+  font-size: 12px;
+}
+
+.staking-redesign-summary__lifecycle.is-deactivating {
+  color: var(--warning-dark);
+  background: var(--warning-faint);
+}
+
+.theme-dark .staking-redesign-summary__lifecycle.is-deactivating {
+  color: var(--warning-mid);
+  background: color-mix(in srgb, var(--warning) 11%, var(--surface));
+}
+
+.staking-redesign-summary__lifecycle.is-withdrawable {
+  color: var(--info);
+  background: var(--info-light);
+}
+
 .staking-redesign-summary__stats {
   display: grid;
   grid-template-columns: 1fr 1.35fr;
@@ -5816,29 +5867,6 @@ div.settings-row {
   color: var(--text-tertiary);
   font-size: 11.5px;
   line-height: 16px;
-}
-
-.staking-redesign-position__hint {
-  margin: 0 12px 10px 56px;
-  padding: 7px 9px;
-  color: var(--warning-dark);
-  border: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
-  border-radius: 7px;
-  background: var(--warning-faint);
-  font-size: 11.5px;
-  font-weight: 600;
-  line-height: 16px;
-}
-
-.theme-dark .staking-redesign-position__hint {
-  color: var(--warning-mid);
-  border-color: color-mix(in srgb, var(--warning) 34%, transparent);
-  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
-}
-
-.staking-redesign-position__hint.is-danger {
-  color: var(--danger);
-  background: var(--danger-softbg);
 }
 
 .staking-redesign-position__footer {

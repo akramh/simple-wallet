@@ -11,6 +11,7 @@ import {
   isValidSolanaVoteAddress,
   quoteSecondsRemaining,
   stakingPositionAction,
+  summarizeStakePositions,
   validateStakeAmount,
   validateSwapAmount,
 } from '../extension/popup/utils/swapStake.js';
@@ -64,6 +65,7 @@ test('swap and stake takeovers keep a bounded scroll viewport with a fixed actio
   assert.match(popupCss, /\.container\s*\{[^}]*height:\s*100vh;[^}]*overflow:\s*hidden;/s);
   assert.match(popupCss, /\.content\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/s);
   assert.match(popupCss, /\.swap-stake-scroll\s*\{[^}]*overflow-y:\s*auto;/s);
+  assert.match(popupCss, /\.swap-stake-scroll > \*\s*\{[^}]*flex-shrink:\s*0;/s);
   assert.match(popupCss, /\.swap-stake-footer\s*\{[^}]*flex:\s*0 0 auto;/s);
 });
 
@@ -76,7 +78,33 @@ test('stake position cards inherit the wallet font while technical detail values
 test('staking cards use readable type and high-contrast amber lifecycle states', () => {
   assert.match(popupCss, /\.staking-redesign-position__identity strong\s*\{[^}]*font-size:\s*14px;/s);
   assert.match(popupCss, /\.staking-redesign-position__value strong\s*\{[^}]*font-size:\s*17px;/s);
-  assert.match(popupCss, /\.staking-redesign-position__hint\s*\{[^}]*font-size:\s*11\.5px;/s);
   assert.match(popupCss, /\.theme-dark \.swap-stake-status--deactivating\s*\{[^}]*color:\s*var\(--warning-mid\);/s);
-  assert.match(popupCss, /\.theme-dark \.staking-redesign-position__hint\s*\{[^}]*color:\s*var\(--warning-mid\);/s);
+  assert.doesNotMatch(popupCss, /\.staking-redesign-position__hint/);
+});
+
+test('staking summary excludes deactivating and withdrawable balances from total staked', () => {
+  const summary = summarizeStakePositions([
+    { state: 'active', amountFormatted: '10', totalFormatted: '10.1', usdValue: 1010, lastRewardFormatted: '0.1', validator: { apyPercent: 5 } },
+    { state: 'deactivating', amountFormatted: '2', totalFormatted: '2.1', usdValue: 210, lastRewardFormatted: '0.2', validator: { apyPercent: 9 } },
+    { state: 'withdrawable', amountFormatted: '3', totalFormatted: '3.1', usdValue: 310, lastRewardFormatted: '0.3', validator: { apyPercent: 12 } },
+  ], 100);
+
+  assert.equal(summary.total, 10);
+  assert.equal(summary.usd, 1000);
+  assert.equal(summary.apy, 5);
+  assert.equal(summary.rewards, 0.1);
+  assert.equal(summary.deactivatingTotal, 2);
+  assert.equal(summary.withdrawableTotal, 3);
+});
+
+test('staking summary includes activating stake but never invents unavailable USD value', () => {
+  const summary = summarizeStakePositions([
+    { state: 'activating', amountFormatted: '4', validator: { apyPercent: 6 } },
+  ], null);
+
+  assert.equal(summary.total, 4);
+  assert.equal(summary.apy, 6);
+  assert.equal(summary.usd, null);
+  assert.equal(summary.deactivatingTotal, 0);
+  assert.equal(summary.withdrawableTotal, 0);
 });
