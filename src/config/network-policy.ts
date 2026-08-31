@@ -138,6 +138,9 @@ export const ALLOWED_DOMAINS = [
   "price-api.mayan.finance",
   "explorer-api.mayan.finance",
   "relayer-api.mayan.finance",
+  // Jupiter Swap V2 — same-chain Solana quote/order creation and managed
+  // transaction execution. API key travels in x-api-key, never the URL.
+  "api.jup.ag",
 
   // Price Providers (CoinGecko / CoinPaprika)
   // Assuming these are used based on common patterns, though not explicitly in small config snippet

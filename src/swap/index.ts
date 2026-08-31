@@ -6,3 +6,4 @@
 export * from './chains.js';
 export * from './oneinch.js';
 export * from './mayan.js';
+export * from './jupiter.js';

@@ -3,7 +3,7 @@
  *
  * These types are the swap vocabulary the CLI, extension, and mobile app
  * consume. They deliberately contain no provider-specific concepts beyond the
- * `provider` discriminator: routing (same-chain 1inch vs cross-chain Mayan)
+ * `provider` discriminator: routing (same-chain 1inch/Jupiter vs cross-chain Mayan)
  * is decided inside WalletAppService, and each provider's opaque quote
  * payload rides along in `SwapQuoteView.raw` untouched by UIs. Every field a
  * UI renders is a pre-formatted string, so adding a swap provider or chain
@@ -20,7 +20,7 @@
 import type { Token } from './token.js';
 
 /** Which service fulfils a swap. */
-export type SwapProviderId = 'oneinch' | 'mayan';
+export type SwapProviderId = 'oneinch' | 'jupiter' | 'mayan';
 
 /**
  * What swapping looks like from a given source network — UIs render buttons,
@@ -29,7 +29,7 @@ export type SwapProviderId = 'oneinch' | 'mayan';
 export interface SwapCapabilities {
   /** True when this network can be the source of at least one swap kind. */
   canSwap: boolean;
-  /** Same-network token swaps available (1inch; requires ONEINCH_API_KEY). */
+  /** Same-network swaps available (1inch on EVM, Jupiter on Solana; keys required). */
   sameChain: boolean;
   /** Cross-chain swaps available (Mayan). */
   crossChain: boolean;
@@ -81,7 +81,7 @@ export interface SwapQuoteView {
   rateFormatted: string;
   /** Estimated source-chain network fee, formatted with native symbol. */
   feeFormatted: string;
-  /** Mayan relayer/bridge fee line when present; undefined for 1inch. */
+  /** Mayan relayer/bridge fee line when present; undefined for same-chain swaps. */
   bridgeFeeFormatted?: string;
   /** Estimated completion time in seconds (Mayan cross-chain only). */
   etaSeconds?: number;
@@ -96,7 +96,7 @@ export interface SwapQuoteView {
   expiresAt: number;
   /**
    * Opaque provider payload passed back verbatim to executeSwap.
-   * oneinch: the quoted amounts (calldata is fetched fresh at execute time).
+   * oneinch/jupiter: quoted amounts (transaction data is fetched fresh at execute time).
    * mayan: the JSON quote object from fetchQuote.
    * Must be JSON-serializable.
    */

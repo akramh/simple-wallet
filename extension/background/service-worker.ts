@@ -76,12 +76,18 @@ import type {
 } from '../../src/types/unified-portfolio.js';
 import type { Token } from '../../src/types/token.js';
 import { installConsoleRedactor } from '../../src/utils/redact-logs.js';
+import { setOneInchApiKey, setJupiterApiKey } from '../../src/swap/index.js';
+import type { SwapProviderId } from '../../src/types/swap.js';
 
 // Install console redactor as early as possible so any downstream init that
 // logs will already be sanitized. Registers the Alchemy key (and Helius, for
 // legacy configs) as secrets. Does nothing if the var is unset.
 installConsoleRedactor(import.meta.env.VITE_ALCHEMY_API_KEY);
 installConsoleRedactor(import.meta.env.VITE_HELIUS_API_KEY);
+installConsoleRedactor(import.meta.env.VITE_ONEINCH_API_KEY);
+installConsoleRedactor(import.meta.env.VITE_JUPITER_API_KEY);
+setOneInchApiKey(import.meta.env.VITE_ONEINCH_API_KEY);
+setJupiterApiKey(import.meta.env.VITE_JUPITER_API_KEY);
 import type { Config } from '../../src/types/index.js';
 import { getBitcoinExplorer, getBitcoinProvider, satoshisToBtc } from '../../src/bitcoin/index.js';
 import { ethers } from 'ethers';
@@ -2096,7 +2102,7 @@ const swapStatusPollers = new Map<string, NodeJS.Timeout>();
  * @param networkKey - Source network (1inch receipt lookups need it)
  */
 function startSwapStatusPolling(
-  provider: 'oneinch' | 'mayan',
+  provider: SwapProviderId,
   txId: string,
   networkKey: string
 ): void {
@@ -3347,7 +3353,7 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     // Swaps (chain-neutral protocol → WalletAppService swap API)
     // ==========================================================================
     //
-    // Routing (same-chain 1inch vs cross-chain Mayan) lives entirely in
+    // Routing (same-chain 1inch/Jupiter vs cross-chain Mayan) lives entirely in
     // WalletAppService; these cases only marshal payloads. The popup never
     // supplies a password — Solana-source swaps sign with the session
     // password held here, exactly like the Solana branch of SEND_TRANSACTION.

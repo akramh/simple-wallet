@@ -1187,8 +1187,8 @@ async function mainMenu(walletName: string | null): Promise<void> {
   if (walletService.isStakingSupported(config.network)) {
     menuChoices.push(ui.menuChoice('Stake', 'Stake and manage staking positions', 'stake'));
   }
-  // Swap is capability-gated the same way: 1inch/Mayan coverage (and the
-  // 1inch key) decide availability, not chain type.
+  // Swap is capability-gated the same way: provider coverage and configured
+  // 1inch/Jupiter keys decide availability, not chain type.
   if (walletService.isSwapSupported(config.network)) {
     menuChoices.push(ui.menuChoice('Swap', 'Exchange tokens, same-chain or cross-chain', 'swap'));
   }
@@ -3901,7 +3901,12 @@ async function swapMenu(walletName: string | null): Promise<void> {
     if (quote.feeFormatted) console.log(chalk.gray('Network fee:  ') + chalk.white(quote.feeFormatted));
     if (quote.bridgeFeeFormatted) console.log(chalk.gray('Bridge fee:   ') + chalk.white(quote.bridgeFeeFormatted));
     if (typeof quote.etaSeconds === 'number') console.log(chalk.gray('Estimated:    ') + chalk.white(`~${Math.max(1, Math.round(quote.etaSeconds / 60))} min to complete`));
-    console.log(chalk.gray('Via:          ') + chalk.white(quote.provider === 'oneinch' ? '1inch' : 'Mayan'));
+    const providerLabel = quote.provider === 'oneinch'
+      ? '1inch'
+      : quote.provider === 'jupiter'
+        ? 'Jupiter'
+        : 'Mayan';
+    console.log(chalk.gray('Via:          ') + chalk.white(providerLabel));
     if (quote.needsApproval) {
       ui.showInfo(`Requires a token approval first — 2 transactions will be sent.`);
     }
@@ -3961,7 +3966,7 @@ async function swapMenu(walletName: string | null): Promise<void> {
  * @param result - The executeSwap result to track
  */
 async function pollSwapUntilTerminal(result: {
-  provider: 'oneinch' | 'mayan';
+  provider: 'oneinch' | 'jupiter' | 'mayan';
   txId: string;
   fromNetworkKey: string;
 }): Promise<void> {

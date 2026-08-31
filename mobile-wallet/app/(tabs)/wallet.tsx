@@ -209,8 +209,8 @@ export default function WalletScreen() {
                   onPress={() => navigateOnce(() => router.push('/stake'))}
                 />
               )}
-              {/* Capability-gated like Stake: 1inch/Mayan coverage (and the
-                  1inch key) decide availability, not the chain type. */}
+              {/* Capability-gated like Stake: provider coverage and configured
+                  1inch/Jupiter keys decide availability, not chain type. */}
               {walletBridge.isSwapSupported(network) && (
                 <QuickActionButton
                   icon="swap-horizontal"

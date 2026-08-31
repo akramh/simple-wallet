@@ -11,7 +11,7 @@
  * - Presentation only; no secrets, storage, signing, or RPC access.
  */
 
-import React, { type ReactNode, useEffect } from 'react';
+import React, { type ReactNode, useEffect, useState } from 'react';
 import { Icon, type IconName } from './ui';
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger';
@@ -207,8 +207,19 @@ export function FlowDetailRow({
  * @returns Asset mark.
  */
 export function AssetMark({ label, src, size = 'medium' }: { label: string; src?: string | null; size?: 'small' | 'medium' | 'large' }) {
-  return src ? (
-    <img className={`swap-stake-asset-mark swap-stake-asset-mark--${size}`} src={src} alt="" />
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [src]);
+
+  return src && !imageFailed ? (
+    <img
+      className={`swap-stake-asset-mark swap-stake-asset-mark--${size}`}
+      src={src}
+      alt=""
+      onError={() => setImageFailed(true)}
+    />
   ) : (
     <span className={`swap-stake-asset-mark swap-stake-asset-mark--${size}`} aria-hidden="true">
       {label.trim().charAt(0).toUpperCase() || '?'}

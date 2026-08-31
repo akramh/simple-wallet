@@ -238,3 +238,12 @@ export function getAlchemyApiKey(): string | undefined {
 export function getOneInchApiKey(): string | undefined {
   return Constants.expoConfig?.extra?.oneInchApiKey;
 }
+
+/**
+ * Get the Jupiter API key from Expo config for same-chain Solana swaps.
+ *
+ * @returns Jupiter API key or undefined if not configured.
+ */
+export function getJupiterApiKey(): string | undefined {
+  return Constants.expoConfig?.extra?.jupiterApiKey;
+}
