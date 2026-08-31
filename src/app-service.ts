@@ -84,6 +84,11 @@ import {
 import { OneInchClient, resolveOneInchApiKey } from './swap/oneinch.js';
 import { MayanClient, type MayanQuote } from './swap/mayan.js';
 import {
+  JupiterClient,
+  JUPITER_NATIVE_MINT,
+  resolveJupiterApiKey,
+} from './swap/jupiter.js';
+import {
   sendRawEvmTransaction,
   getErc20Allowance,
   approveErc20,
@@ -249,9 +254,15 @@ export class WalletAppService {
   /** TON provider for TON network operations */
   private tonProvider: TonProvider | null = null;
   /** Injected swap clients (test seam); lazily defaulted when absent */
-  private injectedSwapClients?: { oneinch?: OneInchClient; mayan?: MayanClient };
+  private injectedSwapClients?: {
+    oneinch?: OneInchClient;
+    jupiter?: JupiterClient;
+    mayan?: MayanClient;
+  };
   /** Lazily constructed default 1inch client (requires ONEINCH_API_KEY) */
   private defaultOneInchClient: OneInchClient | null = null;
+  /** Lazily constructed default Jupiter client (requires JUPITER_API_KEY) */
+  private defaultJupiterClient: JupiterClient | null = null;
   /** Lazily constructed default Mayan client (keyless) */
   private defaultMayanClient: MayanClient | null = null;
 
@@ -278,7 +289,11 @@ export class WalletAppService {
       storage?: StorageAdapter;
       providerFactory?: ProviderFactory;
       builtInTokens?: TokenRegistry;
-      swapClients?: { oneinch?: OneInchClient; mayan?: MayanClient };
+      swapClients?: {
+        oneinch?: OneInchClient;
+        jupiter?: JupiterClient;
+        mayan?: MayanClient;
+      };
     } = {}
   ) {
     if (options.providerFactory) {
@@ -2566,14 +2581,13 @@ export class WalletAppService {
   }
 
   // ============================================================================
-  // Swaps — chain-neutral API (1inch same-chain, Mayan cross-chain)
+  // Swaps — chain-neutral API (1inch/Jupiter same-chain, Mayan cross-chain)
   // ============================================================================
   //
   // UIs call ONLY the generic methods (isSwapSupported, getSwapCapabilities,
   // getSwapQuote, executeSwap, getSwapStatus). Routing is decided by
-  // classifySwapPair: same EVM network → 1inch Classic Swap, different
-  // networks (EVM↔EVM, EVM↔Solana) → Mayan. Adding a provider or chain means
-  // updating src/swap/chains.ts + a dispatch branch here — no UI changes.
+  // classifySwapPair: same EVM network → 1inch, same Solana mainnet → Jupiter,
+  // and different networks (EVM↔EVM, EVM↔Solana) → Mayan.
 
   /** How long a quote may be executed after it was fetched. */
   private static readonly SWAP_QUOTE_TTL_MS = 45_000;
@@ -2604,6 +2618,21 @@ export class WalletAppService {
     return this.defaultMayanClient;
   }
 
+  /** Resolve the Jupiter client; null when no API key is available. @private */
+  private getJupiterClient(): JupiterClient | null {
+    if (this.injectedSwapClients?.jupiter) {
+      return this.injectedSwapClients.jupiter;
+    }
+    if (!this.defaultJupiterClient) {
+      const apiKey = resolveJupiterApiKey();
+      if (!apiKey) {
+        return null;
+      }
+      this.defaultJupiterClient = new JupiterClient({ apiKey });
+    }
+    return this.defaultJupiterClient;
+  }
+
   /**
    * Whether any swap kind is available with this network as the source.
    * Used by every surface to gate the Swap menu entry / button.
@@ -2616,9 +2645,8 @@ export class WalletAppService {
 
   /**
    * What swapping looks like from a source network: which kinds are
-   * available and which destinations are valid. Same-chain capability
-   * additionally requires a 1inch API key — without one it degrades to
-   * cross-chain-only with an explanatory reason, never a throw.
+   * available and which destinations are valid. Same-chain capability needs
+   * the provider key for that chain (1inch on EVM, Jupiter on Solana).
    *
    * @param networkKey - Source network; defaults to the active network
    */
@@ -2641,9 +2669,18 @@ export class WalletAppService {
     }
 
     const oneInchListed = key in ONEINCH_NETWORKS;
+    const jupiterListed = key === 'solana-mainnet' && isSolanaNetworkConfig(netConfig);
     const hasOneInchKey = this.getOneInchClient() !== null;
-    const sameChain = oneInchListed && hasOneInchKey;
+    const hasJupiterKey = this.getJupiterClient() !== null;
+    const sameChain = (oneInchListed && hasOneInchKey) || (jupiterListed && hasJupiterKey);
     const crossChain = key in MAYAN_NETWORKS;
+
+    const sameChainUnavailableReason =
+      oneInchListed && !hasOneInchKey
+        ? 'Same-chain EVM swaps require a 1inch API key (set ONEINCH_API_KEY)'
+        : jupiterListed && !hasJupiterKey
+          ? 'Same-chain Solana swaps require a Jupiter API key (set JUPITER_API_KEY)'
+          : undefined;
 
     if (!sameChain && !crossChain) {
       const label = netConfig.name ?? key;
@@ -2651,14 +2688,12 @@ export class WalletAppService {
         canSwap: false, sameChain: false, crossChain: false,
         destinationNetworkKeys: [],
         unsupportedReason:
-          oneInchListed && !hasOneInchKey
-            ? 'Same-chain swaps require a 1inch API key (set ONEINCH_API_KEY)'
-            : `Swaps are not supported on ${label}`,
+          sameChainUnavailableReason ?? `Swaps are not supported on ${label}`,
       };
     }
 
-    // Destinations: self first (when 1inch serves this network), then every
-    // Mayan peer present in this config. Order is the picker's display order.
+    // Destinations: self first when a same-chain provider is configured, then
+    // every Mayan peer present in this config. Order is the picker's display order.
     const destinations: string[] = [];
     if (sameChain) {
       destinations.push(key);
@@ -2677,20 +2712,19 @@ export class WalletAppService {
       crossChain,
       destinationNetworkKeys: destinations,
       unsupportedReason:
-        oneInchListed && !hasOneInchKey
-          ? 'Same-chain swaps require a 1inch API key (set ONEINCH_API_KEY)'
-          : undefined,
+        sameChainUnavailableReason,
     };
   }
 
   /**
-   * Price a swap. Routes to 1inch (same EVM network) or Mayan (cross-chain)
+   * Price a swap. Routes to 1inch (same EVM), Jupiter (same Solana), or Mayan
+   * (cross-chain)
    * and returns a display-ready quote. The quote expires (`expiresAt`) —
    * executeSwap refuses stale quotes and the UI must re-quote.
    *
    * @param request - Networks, tokens, amount (human units), slippage
    * @throws Error when the pair is unsupported, the amount is invalid, the
-   *   1inch key is missing (same-chain), or the provider finds no route
+   *   required same-chain provider key is missing, or no route is available
    * @async
    */
   async getSwapQuote(request: SwapQuoteRequest): Promise<SwapQuoteView> {
@@ -2711,6 +2745,9 @@ export class WalletAppService {
 
     if (classification.kind === 'same-evm') {
       return this.getOneInchSwapQuote(request, classification.chainId, amountBaseUnits, slippagePercent);
+    }
+    if (classification.kind === 'same-solana') {
+      return this.getJupiterSwapQuote(request, amountBaseUnits, slippagePercent);
     }
     return this.getMayanSwapQuote(request, amountBaseUnits, slippagePercent);
   }
@@ -2752,6 +2789,12 @@ export class WalletAppService {
     if (classification.kind === 'same-evm') {
       return this.executeOneInchSwap(quote, classification.chainId, options);
     }
+    if (classification.kind === 'same-solana') {
+      if (!options.password) {
+        throw new Error('Password required for Solana swaps');
+      }
+      return this.executeJupiterSwap(quote, options.password, options.onProgress);
+    }
     if (this.isNetworkSolana(request.fromNetworkKey)) {
       if (!options.password) {
         throw new Error('Password required for Solana swaps');
@@ -2777,6 +2820,16 @@ export class WalletAppService {
   }): Promise<SwapStatusView> {
     if (query.provider === 'mayan') {
       return this.getMayanClient().getStatus(query.txId);
+    }
+    if (query.provider === 'jupiter') {
+      const status = await this.getSolanaProviderForNetwork(query.fromNetworkKey)
+        .getSignatureStatus(query.txId);
+      if (status.err) {
+        return { state: 'failed', detail: status.err };
+      }
+      return status.confirmed
+        ? { state: 'completed', destTxId: query.txId }
+        : { state: 'pending' };
     }
     // 1inch: the swap is a single source-chain tx — the receipt is the truth.
     try {
@@ -3042,6 +3095,115 @@ export class WalletAppService {
     await approval.wait();
     onProgress?.('approval-confirmed');
     return approval.hash;
+  }
+
+  // ---- Jupiter (same-chain Solana) --------------------------------------
+
+  private async getJupiterSwapQuote(
+    request: SwapQuoteRequest,
+    amountBaseUnits: bigint,
+    slippagePercent: number
+  ): Promise<SwapQuoteView> {
+    const client = this.getJupiterClient();
+    if (!client) {
+      throw new Error('Same-chain Solana swaps require a Jupiter API key (set JUPITER_API_KEY)');
+    }
+    const inputMint = request.fromToken.address || JUPITER_NATIVE_MINT;
+    const outputMint = request.toToken.address || JUPITER_NATIVE_MINT;
+    if (inputMint === outputMint) {
+      throw new Error('Choose two different tokens to swap');
+    }
+    const slippageBps = Math.round(slippagePercent * 100);
+    const order = await client.fetchOrder({
+      inputMint,
+      outputMint,
+      amount: amountBaseUnits.toString(),
+      slippageBps,
+    });
+    const outAmount = BigInt(order.outAmount);
+    const minOutAmount = BigInt(order.otherAmountThreshold);
+    const amountInFormatted = this.formatSwapAmount(request.amount.trim());
+    const amountOutFormatted = this.formatSwapAmount(
+      ethers.formatUnits(outAmount, request.toToken.decimals)
+    );
+    return {
+      provider: 'jupiter',
+      fromNetworkKey: request.fromNetworkKey,
+      toNetworkKey: request.toNetworkKey,
+      fromTokenSymbol: request.fromToken.symbol,
+      toTokenSymbol: request.toToken.symbol,
+      amountInFormatted,
+      amountOutFormatted,
+      minAmountOutFormatted: this.formatSwapAmount(
+        ethers.formatUnits(minOutAmount, request.toToken.decimals)
+      ),
+      rateFormatted: this.formatSwapRate(
+        amountInFormatted,
+        amountOutFormatted,
+        request.fromToken.symbol,
+        request.toToken.symbol
+      ),
+      // Jupiter chooses compute and priority-fee settings when it builds the
+      // fresh execution order, so a pre-order fee figure would be misleading.
+      feeFormatted: '',
+      needsApproval: false,
+      expiresAt: Date.now() + WalletAppService.SWAP_QUOTE_TTL_MS,
+      raw: {
+        outAmount: order.outAmount,
+        minOutAmount: minOutAmount.toString(),
+        router: order.router,
+        feeBps: order.feeBps,
+      },
+      request: { ...request, slippagePercent },
+    };
+  }
+
+  private async executeJupiterSwap(
+    quote: SwapQuoteView,
+    password: string,
+    onProgress?: (phase: SwapPhase) => void
+  ): Promise<SwapExecuteResult> {
+    const client = this.getJupiterClient();
+    if (!client) {
+      throw new Error('Same-chain Solana swaps require a Jupiter API key (set JUPITER_API_KEY)');
+    }
+    const request = quote.request;
+    const amountBaseUnits = this.parseSwapAmount(request.amount, request.fromToken);
+    const inputMint = request.fromToken.address || JUPITER_NATIVE_MINT;
+    const outputMint = request.toToken.address || JUPITER_NATIVE_MINT;
+    const solInfo = this.wallet.getSolanaAddress(this.wallet.getCurrentAccountIndex());
+    if (!solInfo?.address) {
+      throw new Error('No Solana address available');
+    }
+
+    const executionSlippageBps = Math.round((request.slippagePercent ?? 1) * 100);
+    const order = await client.fetchOrder({
+      inputMint,
+      outputMint,
+      amount: amountBaseUnits.toString(),
+      slippageBps: executionSlippageBps,
+      taker: solInfo.address,
+    });
+    const previousMinimum = BigInt((quote.raw as { minOutAmount?: string })?.minOutAmount ?? '0');
+    const executionMinimum = BigInt(order.otherAmountThreshold);
+    if (executionMinimum < previousMinimum) {
+      throw new Error('Price moved below the reviewed minimum — refresh the quote');
+    }
+
+    const keypair = this.getSolanaSigningKeypair(password);
+    onProgress?.('submitting-swap');
+    const result = await client.executeOrder(order, async (transaction) => {
+      transaction.sign([keypair]);
+      return transaction;
+    });
+    onProgress?.('swap-submitted');
+
+    return {
+      provider: 'jupiter',
+      txId: result.signature,
+      fromNetworkKey: request.fromNetworkKey,
+      toNetworkKey: request.toNetworkKey,
+    };
   }
 
   // ---- Mayan (cross-chain) ----------------------------------------------

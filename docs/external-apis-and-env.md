@@ -20,6 +20,7 @@ one is contacted, and which environment variables configure those calls.
 | CoinGecko API | `https://api.coingecko.com/api/v3`, or `https://pro-api.coingecko.com/api/v3` when a key is set | Price fallback, ERC-20 contract price lookups, historical charts, and token metadata | `COINGECKO_API_KEY`, `VITE_COINGECKO_API_KEY` |
 | CoinPaprika API | `https://api.coinpaprika.com/v1` | Third-tier fallback for current prices, historical prices, and token metadata | None |
 | 1inch Classic Swap API v6 | `https://api.1inch.dev/swap/v6.0/<chainId>/{quote,swap,approve/spender}` | Same-chain EVM swap quotes and ready-to-sign calldata. Required for same-chain swaps; without a key they are disabled (capabilities degrade, cross-chain still works). Free tier is ~1 req/sec — UIs debounce quote inputs | `ONEINCH_API_KEY`, `VITE_ONEINCH_API_KEY`, `EXPO_PUBLIC_ONEINCH_API_KEY` (Bearer header; never in the URL) |
+| Jupiter Swap API V2 | `https://api.jup.ag/swap/v2/{order,execute}` | Same-chain Solana quotes and managed execution. Eligible Jupiter routers compete for the best order; the wallet signs the returned versioned transaction locally | `JUPITER_API_KEY`, `VITE_JUPITER_API_KEY`, `EXPO_PUBLIC_JUPITER_API_KEY` (`x-api-key` header; never in the URL) |
 | Mayan quote API | `https://price-api.mayan.finance/v3/quote` (via `@mayanfinance/swap-sdk`) | Cross-chain swap quotes (EVM↔EVM, EVM↔Solana). Keyless | None |
 | Mayan explorer API | `https://explorer-api.mayan.finance/v3/swap/trx/<txHash>` | Cross-chain swap status polling (`clientStatus`: INPROGRESS / COMPLETED / REFUNDED) | None |
 | Mayan relayer API | `https://relayer-api.mayan.finance/v3/active-relayers` | Consulted by the Mayan SDK when building Solana-source swap transactions | None |
@@ -93,6 +94,9 @@ values below. See [alchemy.md](./alchemy.md#entering-the-key-at-runtime).
 | `ONEINCH_API_KEY` | CLI, mobile | 1inch key enabling same-chain EVM swaps (get one free at https://portal.1inch.dev/) |
 | `VITE_ONEINCH_API_KEY` | Extension | Vite-inlined 1inch key for the extension build |
 | `EXPO_PUBLIC_ONEINCH_API_KEY` | Mobile | Mobile fallback source for the 1inch key when `ONEINCH_API_KEY` is not set |
+| `JUPITER_API_KEY` | CLI, mobile | Jupiter developer key enabling same-chain Solana swaps |
+| `VITE_JUPITER_API_KEY` | Extension | Vite-inlined Jupiter key for the extension build |
+| `EXPO_PUBLIC_JUPITER_API_KEY` | Mobile | Mobile fallback source for the Jupiter key when `JUPITER_API_KEY` is not set |
 
 ### Legacy or Effectively Unused Variables
 

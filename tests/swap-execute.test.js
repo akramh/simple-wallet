@@ -18,6 +18,7 @@ const TEST_MNEMONIC = 'test test test test test test test test test test test ju
 const NATIVE_ETH = { symbol: 'ETH', name: 'Ether', type: 'native', address: '', decimals: 18 };
 const USDC = { symbol: 'USDC', name: 'USD Coin', type: 'erc20', address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', decimals: 6 };
 const NATIVE_SOL = { symbol: 'SOL', name: 'Solana', type: 'native', address: '', decimals: 9 };
+const SOL_USDC = { symbol: 'USDC', name: 'USD Coin', type: 'spl', address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6 };
 
 /** 32-byte ABI-encoded uint256 for allowance responses. */
 const encodeUint = (value) => '0x' + value.toString(16).padStart(64, '0');
@@ -117,6 +118,36 @@ function makeFakeMayan({ calls = [] } = {}) {
   };
 }
 
+function makeFakeJupiter({ calls = [], outAmount = '25000000' } = {}) {
+  return {
+    calls,
+    async fetchOrder(params) {
+      calls.push({ fn: 'fetchOrder', params });
+      return {
+        transaction: params.taker ? 'fake-transaction' : null,
+        requestId: 'jupiter-request',
+        inAmount: params.amount,
+        outAmount,
+        otherAmountThreshold: (
+          BigInt(outAmount) * BigInt(10_000 - params.slippageBps) / 10_000n
+        ).toString(),
+        slippageBps: params.slippageBps,
+        router: 'metis',
+        mode: 'manual',
+        feeBps: 2,
+      };
+    },
+    async executeOrder(order, signTransaction) {
+      const transaction = {
+        sign(keypairs) { calls.push({ fn: 'sign', keypairs }); },
+      };
+      await signTransaction(transaction);
+      calls.push({ fn: 'executeOrder', order });
+      return { status: 'Success', signature: 'jupitersig' };
+    },
+  };
+}
+
 async function buildService(network = 'mainnet', { factory, swapClients } = {}) {
   const storage = new MemoryStorage();
   storage.writeJSON('tokens.json', {});
@@ -145,7 +176,9 @@ function makeRequest(overrides = {}) {
 
 function makeQuoteView(request, overrides = {}) {
   return {
-    provider: request.fromNetworkKey === request.toNetworkKey ? 'oneinch' : 'mayan',
+    provider: request.fromNetworkKey === request.toNetworkKey
+      ? request.fromNetworkKey === 'solana-mainnet' ? 'jupiter' : 'oneinch'
+      : 'mayan',
     fromNetworkKey: request.fromNetworkKey,
     toNetworkKey: request.toNetworkKey,
     fromTokenSymbol: request.fromToken.symbol,
@@ -234,6 +267,33 @@ test('cross-chain quote routes to Mayan with bps slippage and chain names', asyn
     '0x0000000000000000000000000000000000000000',
     'native destination uses the Mayan zero-address sentinel'
   );
+});
+
+test('same-chain Solana quote routes to Jupiter with native SOL mint mapping', async () => {
+  const jupiter = makeFakeJupiter();
+  const { svc } = await buildService('solana-mainnet', { swapClients: { jupiter } });
+  const request = makeRequest({
+    fromNetworkKey: 'solana-mainnet',
+    fromToken: NATIVE_SOL,
+    toNetworkKey: 'solana-mainnet',
+    toToken: SOL_USDC,
+    amount: '1',
+    slippagePercent: 0.5,
+  });
+
+  const quote = await svc.getSwapQuote(request);
+
+  assert.equal(quote.provider, 'jupiter');
+  assert.equal(quote.amountOutFormatted, '25');
+  assert.equal(quote.minAmountOutFormatted, '24.875');
+  assert.equal(quote.needsApproval, false);
+  assert.equal(quote.raw.router, 'metis');
+  const call = jupiter.calls.find((entry) => entry.fn === 'fetchOrder');
+  assert.equal(call.params.inputMint, 'So11111111111111111111111111111111111111112');
+  assert.equal(call.params.outputMint, SOL_USDC.address);
+  assert.equal(call.params.amount, '1000000000');
+  assert.equal(call.params.slippageBps, 50);
+  assert.equal(call.params.taker, undefined, 'display quote does not build a transaction');
 });
 
 test('invalid amounts are rejected before any provider call', async () => {
@@ -370,6 +430,59 @@ test('Mayan swap from Solana signs with the derived keypair and self-addresses',
   assert.equal(call.connection, fakeConnection);
 });
 
+test('Jupiter execution fetches a fresh order, enforces the reviewed floor, and signs locally', async () => {
+  const jupiter = makeFakeJupiter();
+  const phases = [];
+  const { svc, wallet } = await buildService('solana-mainnet', { swapClients: { jupiter } });
+  const request = makeRequest({
+    fromNetworkKey: 'solana-mainnet',
+    fromToken: NATIVE_SOL,
+    toNetworkKey: 'solana-mainnet',
+    toToken: SOL_USDC,
+    amount: '1',
+  });
+  const quote = makeQuoteView(request, {
+    provider: 'jupiter',
+    raw: { outAmount: '25000000', minOutAmount: '24750000' },
+  });
+
+  const result = await svc.executeSwap(quote, {
+    password: 'pw',
+    onProgress: (phase) => phases.push(phase),
+  });
+
+  assert.equal(result.provider, 'jupiter');
+  assert.equal(result.txId, 'jupitersig');
+  const orderCall = jupiter.calls.find((entry) => entry.fn === 'fetchOrder');
+  assert.equal(orderCall.params.taker, wallet.getSolanaAddress(0).address);
+  assert.ok(jupiter.calls.some((entry) => entry.fn === 'sign'), 'wallet signing callback ran');
+  assert.ok(jupiter.calls.some((entry) => entry.fn === 'executeOrder'));
+  assert.deepEqual(phases, ['submitting-swap', 'swap-submitted']);
+});
+
+test('Jupiter execution rejects when the fresh order slippage floor is below the reviewed minimum', async () => {
+  const jupiter = makeFakeJupiter({ outAmount: '24900000' });
+  const { svc } = await buildService('solana-mainnet', { swapClients: { jupiter } });
+  const request = makeRequest({
+    fromNetworkKey: 'solana-mainnet',
+    fromToken: NATIVE_SOL,
+    toNetworkKey: 'solana-mainnet',
+    toToken: SOL_USDC,
+    amount: '1',
+  });
+  const quote = makeQuoteView(request, {
+    provider: 'jupiter',
+    raw: { minOutAmount: '24750000' },
+  });
+
+  await assert.rejects(
+    () => svc.executeSwap(quote, { password: 'pw' }),
+    /reviewed minimum/i
+  );
+  assert.ok(!jupiter.calls.some((entry) => entry.fn === 'sign'));
+  assert.ok(!jupiter.calls.some((entry) => entry.fn === 'executeOrder'));
+});
+
 test('Mayan swap from EVM approves the Forwarder then swaps', async () => {
   const events = [];
   const mayan = makeFakeMayan();
@@ -438,4 +551,12 @@ test('getSwapStatus maps 1inch receipts and delegates Mayan lookups', async () =
   const mayanStatus = await svc.getSwapStatus({ provider: 'mayan', txId: 'sig', fromNetworkKey: 'solana-mainnet' });
   assert.equal(mayanStatus.state, 'completed');
   assert.ok(mayan.calls.some((c) => c.fn === 'getStatus' && c.txId === 'sig'));
+
+  svc.getSolanaProviderForNetwork = () => ({
+    async getSignatureStatus() { return { confirmed: true, err: null }; },
+  });
+  const jupiterStatus = await svc.getSwapStatus({
+    provider: 'jupiter', txId: 'jupitersig', fromNetworkKey: 'solana-mainnet',
+  });
+  assert.equal(jupiterStatus.state, 'completed');
 });

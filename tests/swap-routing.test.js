@@ -1,10 +1,9 @@
 /**
  * @file swap-routing.test.js
  * @description Invariant tests for swap routing and capabilities — same-EVM
- *   pairs route to 1inch, distinct Mayan-served pairs route to Mayan, and
- *   everything else (Solana↔Solana, BTC/XRP/TON, testnets, unknown networks)
- *   is rejected with a reason. Also locks the provider address-mapping
- *   sentinels and the missing-ONEINCH_API_KEY capability degradation.
+ *   pairs route to 1inch, Solana mainnet pairs route to Jupiter, distinct
+ *   Mayan-served pairs route to Mayan, and unsupported chains/testnets are
+ *   rejected. Also locks missing provider-key capability degradation.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -57,6 +56,8 @@ async function buildService(network = 'mainnet', { swapClients } = {}) {
 
 /** A 1inch client stand-in — presence alone enables same-chain capability. */
 const fakeOneInch = {};
+/** A Jupiter client stand-in — presence alone enables same-chain Solana. */
+const fakeJupiter = {};
 
 // ---------------------------------------------------------------------------
 // classifySwapPair
@@ -75,10 +76,9 @@ test('distinct Mayan-served networks route to Mayan', () => {
   assert.deepEqual(classifySwapPair('solana-mainnet', 'mainnet', config), { kind: 'cross-chain' });
 });
 
-test('Solana↔Solana is unsupported (needs Jupiter — future work)', () => {
+test('Solana↔Solana routes to Jupiter', () => {
   const result = classifySwapPair('solana-mainnet', 'solana-mainnet', buildConfig());
-  assert.equal(result.kind, 'unsupported');
-  assert.match(result.reason, /Solana/i);
+  assert.deepEqual(result, { kind: 'same-solana' });
 });
 
 test('Bitcoin, XRP, and TON legs are unsupported', () => {
@@ -164,14 +164,35 @@ test('capabilities degrade without a 1inch key: cross-chain only, with reason', 
   }
 });
 
-test('capabilities on Solana mainnet: cross-chain only, no self destination', async () => {
-  const { svc } = await buildService('solana-mainnet', { swapClients: { oneinch: fakeOneInch } });
+test('capabilities on Solana mainnet with Jupiter: same-chain and cross-chain, self first', async () => {
+  const { svc } = await buildService('solana-mainnet', {
+    swapClients: { oneinch: fakeOneInch, jupiter: fakeJupiter },
+  });
   const caps = svc.getSwapCapabilities();
   assert.equal(caps.canSwap, true);
-  assert.equal(caps.sameChain, false, 'no same-chain Solana swaps');
+  assert.equal(caps.sameChain, true);
   assert.equal(caps.crossChain, true);
-  assert.ok(!caps.destinationNetworkKeys.includes('solana-mainnet'));
+  assert.equal(caps.destinationNetworkKeys[0], 'solana-mainnet');
   assert.ok(caps.destinationNetworkKeys.includes('mainnet'));
+});
+
+test('Solana capabilities degrade to cross-chain-only without a Jupiter key', async () => {
+  const hadKey = process.env.JUPITER_API_KEY;
+  const hadViteKey = process.env.VITE_JUPITER_API_KEY;
+  delete process.env.JUPITER_API_KEY;
+  delete process.env.VITE_JUPITER_API_KEY;
+  try {
+    const { svc } = await buildService('solana-mainnet');
+    const caps = svc.getSwapCapabilities();
+    assert.equal(caps.canSwap, true, 'Mayan cross-chain remains available');
+    assert.equal(caps.sameChain, false);
+    assert.equal(caps.crossChain, true);
+    assert.match(caps.unsupportedReason, /JUPITER_API_KEY/);
+    assert.ok(!caps.destinationNetworkKeys.includes('solana-mainnet'));
+  } finally {
+    if (hadKey !== undefined) process.env.JUPITER_API_KEY = hadKey;
+    if (hadViteKey !== undefined) process.env.VITE_JUPITER_API_KEY = hadViteKey;
+  }
 });
 
 test('unsupported chains and testnets are gated off entirely', async () => {

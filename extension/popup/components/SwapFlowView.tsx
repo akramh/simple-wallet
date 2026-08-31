@@ -64,7 +64,7 @@ interface SwapCapabilitiesData {
 }
 
 interface SwapQuoteData {
-  provider: 'oneinch' | 'mayan';
+  provider: 'oneinch' | 'jupiter' | 'mayan';
   fromNetworkKey: string;
   toNetworkKey: string;
   fromTokenSymbol: string;
@@ -84,7 +84,7 @@ interface SwapQuoteData {
 }
 
 interface SwapResultData {
-  provider: 'oneinch' | 'mayan';
+  provider: 'oneinch' | 'jupiter' | 'mayan';
   txId: string;
   approvalTxId?: string;
   fromNetworkKey: string;
@@ -161,6 +161,12 @@ function formatUsd(amount: string, price?: number | null): string | undefined {
 function truncateId(value: string): string {
   if (value.length <= 16) return value;
   return `${value.slice(0, 7)}…${value.slice(-7)}`;
+}
+
+function swapProviderLabel(provider: SwapQuoteData['provider']): string {
+  if (provider === 'oneinch') return '1inch';
+  if (provider === 'jupiter') return 'Jupiter';
+  return 'Mayan';
 }
 
 function PhaseTracker({ phase }: { phase: string | null }) {
@@ -259,8 +265,15 @@ function SwapResult({
 }) {
   const state = status?.state ?? 'pending';
   const destinationName = networks[result.toNetworkKey]?.name || result.toNetworkKey;
+  const isCrossChain = result.fromNetworkKey !== result.toNetworkKey;
   const meta = {
-    pending: { title: 'Swap in progress', tone: 'warning' as const, note: `Settling on ${destinationName}. Cross-chain delivery may take a few minutes.` },
+    pending: {
+      title: 'Swap in progress',
+      tone: 'warning' as const,
+      note: isCrossChain
+        ? `Settling on ${destinationName}. Cross-chain delivery may take a few minutes.`
+        : `Waiting for confirmation on ${destinationName}.`,
+    },
     completed: { title: 'Swap complete', tone: 'success' as const, note: `${toToken.symbol} has arrived on ${destinationName}.` },
     refunded: { title: 'Swap refunded', tone: 'warning' as const, note: `${fromToken.symbol} was returned on the source chain because the route could not complete.` },
     failed: { title: 'Swap failed', tone: 'danger' as const, note: 'The source transaction failed. Only a network fee may have been charged.' },
@@ -280,7 +293,7 @@ function SwapResult({
         <FlowDetails>
           <FlowDetailRow label="Paid" value={`${quote.amountInFormatted} ${fromToken.symbol}`} strike={state === 'refunded'} />
           <FlowDetailRow label="Received" value={state === 'completed' ? `${quote.amountOutFormatted} ${toToken.symbol}` : '—'} accent={state === 'completed' ? 'success' : 'muted'} />
-          <FlowDetailRow label="Route" value={quote.provider === 'oneinch' ? '1inch' : 'Mayan'} />
+          <FlowDetailRow label="Route" value={swapProviderLabel(quote.provider)} />
           {result.approvalTxId && <FlowDetailRow label="Approval tx" value={truncateId(result.approvalTxId)} />}
           <FlowDetailRow label="Transaction" value={truncateId(result.txId)} />
           {status?.destTxId && status.destTxId !== result.txId && <FlowDetailRow label="Destination tx" value={truncateId(status.destTxId)} />}
@@ -505,8 +518,10 @@ function SwapFlowView({ network, networks, tokens, onClose }: Props) {
         )}
       />
       <main className="swap-stake-scroll">
-        {capabilities && !capabilities.canSwap && (
-          <FlowCallout tone="info" title="Swaps unavailable">{capabilities.unsupportedReason || 'Swaps are not available on this network.'}</FlowCallout>
+        {capabilities?.unsupportedReason && (
+          <FlowCallout tone="info" title={capabilities.canSwap ? 'Some routes unavailable' : 'Swaps unavailable'}>
+            {capabilities.unsupportedReason}
+          </FlowCallout>
         )}
         <div className="swap-canvas">
           <AmountCard
@@ -543,10 +558,10 @@ function SwapFlowView({ network, networks, tokens, onClose }: Props) {
           <FlowDetails>
             <FlowDetailRow label="Rate" value={quote.rateFormatted} />
             <FlowDetailRow label="Minimum received" hint="Guaranteed after max slippage" value={`${quote.minAmountOutFormatted} ${quote.toTokenSymbol}`} />
-            <FlowDetailRow label="Network fee" value={quote.feeFormatted} />
+            {quote.feeFormatted && <FlowDetailRow label="Network fee" value={quote.feeFormatted} />}
             {quote.bridgeFeeFormatted && <FlowDetailRow label="Bridge fee" hint="Mayan relayer fee" value={quote.bridgeFeeFormatted} />}
             {typeof quote.etaSeconds === 'number' && <FlowDetailRow label="Estimated time" value={`~${Math.max(1, Math.round(quote.etaSeconds / 60))} min`} />}
-            <FlowDetailRow label="Route" value={quote.provider === 'oneinch' ? '1inch' : 'Mayan'} accent="muted" />
+            <FlowDetailRow label="Route" value={swapProviderLabel(quote.provider)} accent="muted" />
             <FlowDetailRow label="Quote expires" value={quoteExpired ? 'Expired' : `${secondsLeft}s`} accent={quoteExpired || secondsLeft <= 10 ? 'warning' : undefined} />
           </FlowDetails>
         )}
@@ -604,9 +619,9 @@ function SwapFlowView({ network, networks, tokens, onClose }: Props) {
               <FlowDetailRow label="Rate" value={quote.rateFormatted} />
               <FlowDetailRow label="Minimum received" value={`${quote.minAmountOutFormatted} ${quote.toTokenSymbol}`} />
               <FlowDetailRow label="Max slippage" value={`${quote.request.slippagePercent ?? slippage}%`} />
-              <FlowDetailRow label="Network fee" value={quote.feeFormatted} />
+              {quote.feeFormatted && <FlowDetailRow label="Network fee" value={quote.feeFormatted} />}
               {quote.bridgeFeeFormatted && <FlowDetailRow label="Bridge fee" value={quote.bridgeFeeFormatted} />}
-              <FlowDetailRow label="Route" value={quote.provider === 'oneinch' ? '1inch' : 'Mayan'} />
+              <FlowDetailRow label="Route" value={swapProviderLabel(quote.provider)} />
             </FlowDetails>
             {crossChain && <FlowCallout>Cross-chain swaps settle on {networkLabel(toNetworkKey)} after the source transaction confirms.</FlowCallout>}
             {submitError && <FlowCallout tone="danger" title="Swap failed">{submitError}</FlowCallout>}

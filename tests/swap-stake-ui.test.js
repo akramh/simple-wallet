@@ -17,6 +17,9 @@ import {
 } from '../extension/popup/utils/swapStake.js';
 
 const popupCss = readFileSync(new URL('../extension/popup/popup.css', import.meta.url), 'utf8');
+const swapViewSource = readFileSync(new URL('../extension/popup/components/SwapFlowView.tsx', import.meta.url), 'utf8');
+const serviceWorkerSource = readFileSync(new URL('../extension/background/service-worker.ts', import.meta.url), 'utf8');
+const mobileBridgeSource = readFileSync(new URL('../mobile-wallet/services/WalletBridge.ts', import.meta.url), 'utf8');
 
 test('swap amounts accept a positive decimal within the available balance', () => {
   assert.equal(validateSwapAmount('1.25', '2'), null);
@@ -67,6 +70,18 @@ test('swap and stake takeovers keep a bounded scroll viewport with a fixed actio
   assert.match(popupCss, /\.swap-stake-scroll\s*\{[^}]*overflow-y:\s*auto;/s);
   assert.match(popupCss, /\.swap-stake-scroll > \*\s*\{[^}]*flex-shrink:\s*0;/s);
   assert.match(popupCss, /\.swap-stake-footer\s*\{[^}]*flex:\s*0 0 auto;/s);
+});
+
+test('swap provider keys are registered on extension and mobile startup', () => {
+  assert.match(serviceWorkerSource, /setOneInchApiKey\(import\.meta\.env\.VITE_ONEINCH_API_KEY\)/);
+  assert.match(serviceWorkerSource, /setJupiterApiKey\(import\.meta\.env\.VITE_JUPITER_API_KEY\)/);
+  assert.match(mobileBridgeSource, /setOneInchApiKey\(oneInchApiKey\)/);
+  assert.match(mobileBridgeSource, /setJupiterApiKey\(jupiterApiKey\)/);
+});
+
+test('partial swap availability still explains unavailable same-chain routes', () => {
+  assert.match(swapViewSource, /capabilities\?\.unsupportedReason/);
+  assert.match(swapViewSource, /Some routes unavailable/);
 });
 
 test('stake position cards inherit the wallet font while technical detail values stay scoped', () => {

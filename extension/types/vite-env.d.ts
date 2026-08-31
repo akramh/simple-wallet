@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   readonly VITE_ALCHEMY_API_KEY?: string;
   readonly VITE_HELIUS_API_KEY?: string;
   readonly VITE_COINGECKO_API_KEY?: string;
+  readonly VITE_ONEINCH_API_KEY?: string;
+  readonly VITE_JUPITER_API_KEY?: string;
   readonly VITE_EXPLORER_API_KEY?: string;
   readonly VITE_EXPLORER_API_KEY_MAINNET?: string;
   readonly VITE_EXPLORER_API_KEY_SEPOLIA?: string;

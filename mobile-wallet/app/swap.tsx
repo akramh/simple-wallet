@@ -4,8 +4,8 @@
  *
  * Mirrors the extension's SwapFlowView on mobile: a four-step wizard driven
  * by local step state (the send.tsx / stake.tsx precedent), with quoting
- * debounced on the confirm step. All routing (same-chain 1inch vs cross-chain
- * Mayan) lives behind the chain-neutral WalletBridge swap API; this screen
+ * debounced on the confirm step. All routing (same-chain 1inch/Jupiter vs
+ * cross-chain Mayan) lives behind the chain-neutral WalletBridge swap API; this screen
  * only renders what the quote reports.
  *
  * @responsibilities
@@ -38,6 +38,7 @@ import {
   walletBridge,
   type Token,
   type SwapCapabilities,
+  type SwapProviderId,
 } from '../services';
 import { useDebouncedValue } from '../hooks';
 import { safeGoBack } from '../utils/navigation';
@@ -52,6 +53,12 @@ const PHASE_LABELS: Record<string, string> = {
   'submitting-swap': 'Submitting swap…',
   'swap-submitted': 'Swap submitted',
 };
+
+function swapProviderLabel(provider: SwapProviderId): string {
+  if (provider === 'oneinch') return '1inch';
+  if (provider === 'jupiter') return 'Jupiter';
+  return 'Mayan';
+}
 
 /**
  * Swap wizard screen.
@@ -195,10 +202,10 @@ export default function SwapScreen() {
       </View>
 
       <ScrollView className="flex-1 px-5">
-        {capabilities && !capabilities.canSwap && (
+        {capabilities?.unsupportedReason && (
           <View className="bg-gray-900 border border-amber-400/40 rounded-xl p-3 mt-5">
             <Text className="text-amber-300 text-sm">
-              {capabilities.unsupportedReason || 'Swaps are not available on this network'}
+              {capabilities.unsupportedReason}
             </Text>
           </View>
         )}
@@ -376,7 +383,7 @@ export default function SwapScreen() {
                   <View className="flex-row justify-between">
                     <Text className="text-gray-400">Via</Text>
                     <Text className="text-gray-300">
-                      {swapQuote.provider === 'oneinch' ? '1inch' : 'Mayan'}
+                      {swapProviderLabel(swapQuote.provider)}
                     </Text>
                   </View>
                 </>

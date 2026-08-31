@@ -7,9 +7,9 @@
  * derives from the two matrices here — no UI or service code may hardcode a
  * per-network answer.
  *
- * Routing rule: same EVM network → 1inch Classic Swap; different networks
- * (EVM↔EVM, EVM↔Solana) → Mayan. Bitcoin/XRP/TON, testnets, and
- * Solana↔Solana (would need Jupiter) are unsupported.
+ * Routing rule: same EVM network → 1inch Classic Swap; same Solana mainnet →
+ * Jupiter; different networks (EVM↔EVM, EVM↔Solana) → Mayan.
+ * Bitcoin/XRP/TON and testnets are unsupported.
  *
  * @security Native-token sentinels are provider API contracts; getting them
  * wrong swaps the wrong asset. The repo represents native tokens with
@@ -97,6 +97,7 @@ export function toMayanAddress(token: Token): string {
 /** Outcome of routing a (source, destination) network pair. */
 export type SwapPairClassification =
   | { kind: 'same-evm'; chainId: number }
+  | { kind: 'same-solana' }
   | { kind: 'cross-chain' }
   | { kind: 'unsupported'; reason: string };
 
@@ -106,7 +107,8 @@ export type SwapPairClassification =
  * Invariants encoded here (and locked by tests):
  * - identical EVM network in ONEINCH_NETWORKS → 1inch
  * - two distinct networks both in MAYAN_NETWORKS → Mayan
- * - Solana↔Solana, any Bitcoin/XRP/TON leg, any testnet leg → unsupported
+ * - Solana mainnet↔Solana mainnet → Jupiter
+ * - any Bitcoin/XRP/TON leg or testnet leg → unsupported
  *
  * @param fromKey - Source network key
  * @param toKey - Destination network key
@@ -132,13 +134,14 @@ export function classifySwapPair(
   }
 
   if (fromKey === toKey) {
+    if (fromKey === 'solana-mainnet' && isSolanaNetworkConfig(config.networks[fromKey])) {
+      return { kind: 'same-solana' };
+    }
     const chainId = ONEINCH_NETWORKS[fromKey];
     if (chainId === undefined) {
       return {
         kind: 'unsupported',
-        reason: isSolanaNetworkConfig(config.networks[fromKey])
-          ? 'Same-chain Solana swaps are not supported yet'
-          : `Same-chain swaps are not available on ${fromKey}`,
+        reason: `Same-chain swaps are not available on ${fromKey}`,
       };
     }
     return { kind: 'same-evm', chainId };

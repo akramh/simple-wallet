@@ -313,11 +313,12 @@ class WalletBridge {
     // Load bundled config from parent directory
     // Use require() for Metro/Jest compatibility (avoids Node dynamic import edge cases in tests)
     // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const bundledConfigModule = require("../config/bundled-config");
     const {
       getBundledConfig,
       getCoingeckoApiKey,
       getAlchemyApiKey,
-    } = require("../config/bundled-config");
+    } = bundledConfigModule;
     const bundledConfig = getBundledConfig();
 
     // Configure Alchemy API key — primary for current prices (same key used for RPC + Transfers).
@@ -333,6 +334,17 @@ class WalletBridge {
       const { setCoingeckoApiKey } = require("@wallet/price-providers");
       setCoingeckoApiKey(coingeckoApiKey);
     }
+
+    // Swap-provider keys are registered explicitly because React Native has no
+    // process.env at runtime. Mayan remains keyless for cross-chain routes.
+    const { setOneInchApiKey } = require("@wallet/swap/oneinch");
+    const { setJupiterApiKey } = require("@wallet/swap/jupiter");
+    const oneInchApiKey = bundledConfigModule.getOneInchApiKey?.();
+    const jupiterApiKey = bundledConfigModule.getJupiterApiKey?.();
+    setOneInchApiKey(oneInchApiKey);
+    setJupiterApiKey(jupiterApiKey);
+    installConsoleRedactor(oneInchApiKey);
+    installConsoleRedactor(jupiterApiKey);
 
     // Merge stored config with bundled (user preferences override defaults)
     return {
@@ -1289,7 +1301,7 @@ class WalletBridge {
   // Swap (chain-neutral passthrough to WalletAppService)
   // ============================================================================
   //
-  // Routing (same-chain 1inch vs cross-chain Mayan) lives in WalletAppService.
+  // Routing (same-chain 1inch/Jupiter vs cross-chain Mayan) lives in WalletAppService.
   // The UI never sees or supplies a password: executeSwap injects the
   // in-memory session password for Solana-source swaps, exactly as the
   // staking methods do. EVM sources need no password at all.
