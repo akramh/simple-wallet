@@ -4617,7 +4617,6 @@ div.settings-row {
 .staking-redesign-position:focus-visible,
 .stake-detail-inline-action:focus-visible,
 .stake-detail-explorer:focus-visible,
-.swap-network-tabs button:focus-visible,
 .swap-settings button:focus-visible,
 .swap-stake-quick-amounts button:focus-visible {
   outline: none;
@@ -5362,42 +5361,18 @@ div.settings-row {
   text-align: center;
 }
 
-.swap-network-tabs {
-  display: flex;
-  gap: 6px;
-  margin: 0 -15px 11px;
-  padding: 0 15px 9px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--border-subtle);
-  scrollbar-width: none;
+.swap-network-field {
+  position: relative;
+  z-index: 4;
+  margin-bottom: 11px;
 }
 
-.swap-network-tabs::-webkit-scrollbar { display: none; }
-
-.swap-network-tabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;
-  padding: 5px 8px 5px 5px;
+.swap-network-field > span {
+  display: block;
+  margin-bottom: 6px;
   color: var(--text-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  font: inherit;
   font-size: 10.5px;
   font-weight: 600;
-  cursor: pointer;
-}
-
-.swap-network-tabs button.is-active {
-  color: var(--primary);
-  border-color: var(--primary);
-  background: var(--primary-50);
-}
-
-.swap-network-tabs button span {
-  color: var(--primary);
 }
 
 .swap-settings {

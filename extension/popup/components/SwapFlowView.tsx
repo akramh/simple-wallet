@@ -31,6 +31,7 @@ import {
   FlowSheet,
 } from './SwapStakeUI';
 import { Icon } from './ui';
+import NetworkSelector from './ui/NetworkSelector';
 import { quoteSecondsRemaining, validateSwapAmount } from '../utils/swapStake.js';
 import solIcon from '../../assets/img/solana-logo.svg';
 import ethIcon from '../../assets/img/eth_logo.svg';
@@ -41,6 +42,9 @@ import polIcon from '../../assets/img/pol-token.svg';
 import baseIcon from '../../assets/img/base.svg';
 import arbitrumIcon from '../../assets/img/arbitrum.svg';
 import optimismIcon from '../../assets/img/optimism-logo.svg';
+import avalancheIcon from '../../assets/img/avax-token.svg';
+import lineaIcon from '../../assets/img/linea-logo-mainnet.svg';
+import rayIcon from '../../assets/img/raydium-ray-logo.svg';
 
 interface TokenData {
   symbol: string;
@@ -112,6 +116,22 @@ const SYMBOL_ICONS: Record<string, string> = {
   BNB: bnbIcon,
   POL: polIcon,
   MATIC: polIcon,
+  RAY: rayIcon,
+};
+
+const BUNDLED_ICON_FILES: Record<string, string> = {
+  'solana-logo.svg': solIcon,
+  'eth_logo.svg': ethIcon,
+  'icon-usdc.png': usdcIcon,
+  'usdt.svg': usdtIcon,
+  'bnb.svg': bnbIcon,
+  'pol-token.svg': polIcon,
+  'base.svg': baseIcon,
+  'arbitrum.svg': arbitrumIcon,
+  'optimism-logo.svg': optimismIcon,
+  'avax-token.svg': avalancheIcon,
+  'linea-logo-mainnet.svg': lineaIcon,
+  'raydium-ray-logo.svg': rayIcon,
 };
 
 const NETWORK_ICONS: Record<string, string> = {
@@ -124,6 +144,8 @@ const NETWORK_ICONS: Record<string, string> = {
   optimism: optimismIcon,
   polygon: polIcon,
   bsc: bnbIcon,
+  avalanche: avalancheIcon,
+  linea: lineaIcon,
 };
 
 const PHASE_LABELS: Record<string, string> = {
@@ -142,7 +164,14 @@ function tokenKey(token: TokenData): string {
 
 function tokenIcon(token: TokenData | null): string | null {
   if (!token) return null;
-  return token.logoURI || SYMBOL_ICONS[token.symbol.toUpperCase()] || null;
+  const bundledReference = token.icon || token.logoURI || '';
+  if (BUNDLED_ICON_FILES[bundledReference]) {
+    return BUNDLED_ICON_FILES[bundledReference];
+  }
+  if (token.logoURI && /^(https?:|data:|blob:|chrome-extension:|\/)/i.test(token.logoURI)) {
+    return token.logoURI;
+  }
+  return SYMBOL_ICONS[token.symbol.toUpperCase()] || null;
 }
 
 function displayBalance(value?: string): string | undefined {
@@ -340,6 +369,11 @@ function SwapFlowView({ network, networks, tokens, onClose }: Props) {
   const sourceBalance = fromToken?.balance;
   const amountError = amount ? validateSwapAmount(amount, sourceBalance) : null;
   const destinationKeys = capabilities?.destinationNetworkKeys ?? [];
+  const destinationNetworkOptions = useMemo(() => destinationKeys.map((key) => ({
+    value: key,
+    label: networkLabel(key),
+    icon: NETWORK_ICONS[key],
+  })), [destinationKeys, networkLabel]);
   const crossChain = toNetworkKey !== network;
   const secondsLeft = quote ? quoteSecondsRemaining(quote.expiresAt, now) : 0;
   const quoteExpired = !!quote && secondsLeft === 0;
@@ -581,14 +615,14 @@ function SwapFlowView({ network, networks, tokens, onClose }: Props) {
       <FlowSheet open={sheet === 'source'} onClose={() => setSheet(null)} title="Swap from">
         <TokenRows tokens={tokens.filter((token) => !(toNetworkKey === network && token.symbol === toToken?.symbol))} query={sourceQuery} onQuery={setSourceQuery} onPick={(token) => { setFromToken(token); setSheet(null); }} />
       </FlowSheet>
-      <FlowSheet open={sheet === 'destination'} onClose={() => setSheet(null)} title="Receive" subtitle="Pick a network, then a token">
-        <div className="swap-network-tabs">
-          {destinationKeys.map((key) => (
-            <button className={key === toNetworkKey ? 'is-active' : ''} type="button" key={key} onClick={() => chooseDestinationNetwork(key)}>
-              <AssetMark label={networkLabel(key)} src={NETWORK_ICONS[key]} size="small" />
-              {networkLabel(key)}{key !== network && <span>↗</span>}
-            </button>
-          ))}
+      <FlowSheet open={sheet === 'destination'} onClose={() => setSheet(null)} title="Receive" subtitle="Choose a network and token">
+        <div className="swap-network-field">
+          <span>Destination network</span>
+          <NetworkSelector
+            value={toNetworkKey}
+            options={destinationNetworkOptions}
+            onChange={chooseDestinationNetwork}
+          />
         </div>
         <TokenRows tokens={selectableDestTokens} loading={destTokensLoading} query={destinationQuery} onQuery={setDestinationQuery} onPick={(token) => { setToToken(token); setSheet(null); }} />
       </FlowSheet>

@@ -18,6 +18,7 @@ import {
 
 const popupCss = readFileSync(new URL('../extension/popup/popup.css', import.meta.url), 'utf8');
 const swapViewSource = readFileSync(new URL('../extension/popup/components/SwapFlowView.tsx', import.meta.url), 'utf8');
+const swapUiSource = readFileSync(new URL('../extension/popup/components/SwapStakeUI.tsx', import.meta.url), 'utf8');
 const serviceWorkerSource = readFileSync(new URL('../extension/background/service-worker.ts', import.meta.url), 'utf8');
 const mobileBridgeSource = readFileSync(new URL('../mobile-wallet/services/WalletBridge.ts', import.meta.url), 'utf8');
 
@@ -82,6 +83,20 @@ test('swap provider keys are registered on extension and mobile startup', () => 
 test('partial swap availability still explains unavailable same-chain routes', () => {
   assert.match(swapViewSource, /capabilities\?\.unsupportedReason/);
   assert.match(swapViewSource, /Some routes unavailable/);
+});
+
+test('swap token icons resolve bundled filenames and never leave a broken image', () => {
+  assert.match(swapViewSource, /BUNDLED_ICON_FILES\[bundledReference\]/);
+  assert.match(swapViewSource, /raydium-ray-logo\.svg/);
+  assert.doesNotMatch(swapViewSource, /return token\.logoURI \|\| SYMBOL_ICONS/);
+  assert.match(swapUiSource, /onError=\{\(\) => setImageFailed\(true\)\}/);
+});
+
+test('swap destination network uses the standard selector instead of overflow tabs', () => {
+  assert.match(swapViewSource, /<NetworkSelector/);
+  assert.match(swapViewSource, /className="swap-network-field"/);
+  assert.doesNotMatch(swapViewSource, /className="swap-network-tabs"/);
+  assert.doesNotMatch(popupCss, /\.swap-network-tabs/);
 });
 
 test('stake position cards inherit the wallet font while technical detail values stay scoped', () => {
